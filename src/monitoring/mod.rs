@@ -310,6 +310,11 @@ fn detect_macos_intel_vram() -> Option<(usize, usize)> {
 }
 
 /// Parses strings like `"8192 MB"`, `"8 GB"`, `"16384"` into MB.
+///
+/// Only used by `detect_macos_intel_vram`, which is itself
+/// `cfg(target_os = "macos")` — gating this function the same way prevents
+/// `clippy::dead_code` from firing on Linux/Windows builds.
+#[cfg(target_os = "macos")]
 pub(crate) fn parse_vram_string(s: &str) -> Option<usize> {
     let s = s.trim();
     let upper = s.to_ascii_uppercase();

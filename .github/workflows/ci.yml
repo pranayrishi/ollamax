@@ -9,6 +9,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # Opt into Node.js 24 for JS-based actions. The deprecation of Node.js 20
+  # in GitHub runners (June 2026) flags actions/checkout@v4 and
+  # actions/cache@v4 even though those are the latest versions — they
+  # internally still bundle a Node 20 runtime. Setting this env var forces
+  # the runner to execute them on Node 24.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   test:
