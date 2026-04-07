@@ -6,6 +6,107 @@ All notable changes to Ollama-Forge are documented here. Format follows
 
 ## [Unreleased]
 
+### Added (session 4)
+- **`forge run-skill <name> "<task>"`**: load a skill, pick the right
+  installed model (with size-based fallback if the recommended one isn't
+  pulled), pass the skill's system prompt + planning + execution guidance,
+  stream the model's tokens to stdout. Closes the loop between the skills
+  engine and the user surface.
+- **`forge analyze <dir>`**: combines the local secret scanner with a
+  model-driven code review pass. Token-budgeted by `tiktoken-rs` so a 50 KB
+  src/ doesn't blow out a 16k context — reserves ~30% headroom for the
+  response.
+- **`forge test <file>`**: generates a complete test file for the target,
+  picks the framework based on the source extension (Rust → `#[test]` /
+  `#[tokio::test]`, Python → pytest, TS → Vitest, Go → standard testing,
+  etc.), streams to stdout so the user can pipe to `> tests/foo_test.rs`.
+- **`forge audit --json`**: emits a stable JSON shape (`schema_version: 1`,
+  `forge_version`, findings array with severity/file/line/rule) for CI
+  consumers and pre-commit hooks. `jq`-friendly.
+- **`forge preload`** now ships a braille spinner so a 14 GB cold-load of a
+  big model doesn't look like a hang. Suppress with `FORGE_NO_SPINNER=1`.
+- **`forge status`** now probes Ollama via `/api/tags` and `/api/ps`, prints
+  whether the daemon is reachable, and lists currently-loaded models with
+  their VRAM footprint and `keep_alive` expiry. Single most useful line in
+  the entire CLI.
+- **`forge --version`** now includes the git short SHA (via `build.rs`), so
+  a build can be pinned for replay/debug purposes — the foundation for the
+  deterministic-replay log on the roadmap.
+- **Real BPE token counting** via `tiktoken-rs` (cl100k_base). Replaces the
+  previous `chars/3` estimator. Both `ContextManager` and `forge analyze`
+  use it. ~10% accurate vs Llama/Qwen tokenizers, far better than the
+  whitespace counter from session 1.
+- **Schema-constrained output**: `GenerateOptions::format` carries an
+  Ollama `format` parameter (v0.5+) — either `"json"` for free-form valid
+  JSON or a full JSON Schema for constrained decoding. Wired through
+  `OllamaProvider::generate_streaming` and `generate`. Live integration
+  test in `tests/structured_output.rs` (gated by `FORGE_LIVE_OLLAMA=1`).
+  This is the local-LLM equivalent of OpenAI's `response_format` and the
+  closest thing forge has to "guaranteed-valid tool calls" without dropping
+  into raw GBNF grammars.
+- **SKILL.md (YAML-frontmatter) compatibility**: drop a
+  `<name>/SKILL.md` (Anthropic format) into your skills dir and forge loads
+  it alongside the JSON recipes. Markdown body becomes the system prompt
+  verbatim. 5 unit tests pin the parser contract.
+- **`OllamaProvider::running_models`**: queries `/api/ps` and returns a
+  list of currently-loaded models, their VRAM footprint, and expiry.
+- **`OllamaProvider::try_new`**: fallible constructor for libraries that
+  don't want to take down the process on a TLS-init failure.
+- **`tests/structured_output.rs`**: 1 live test for schema-constrained
+  output (gated).
+- **`tests/skill_md_compat.rs`**: 5 tests for SKILL.md frontmatter parser.
+- **`build.rs`**: stamps the binary with `FORGE_GIT_SHA` so `--version`
+  can include it. Falls back to `unknown` outside a git checkout.
+- **`.github/workflows/release.yml`**: tag-triggered (`v*`) release workflow
+  that builds for `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
+  `x86_64-apple-darwin` on native runners (no cross-compilation), strips +
+  smoke-tests + tarballs each binary, and attaches everything (with
+  SHA-256 sums) to a GitHub release.
+- **`install.sh --prebuilt`**: tries to fetch a release tarball for the
+  detected target triple before falling back to a source build. Closes the
+  loop between the release workflow and the installer.
+
+### Changed (session 4)
+- **Default tracing log level is now `warn`**, not `info`. Previously every
+  user command spammed `INFO ollama_forge::*` lines on stderr — including
+  `--json` consumers. `--verbose` brings the chatty output back when needed.
+- **Section-aware merger** in `ParallelExecutor::merge_results`: each
+  worker's output is wrapped in explicit `// === BEGIN/END section ===`
+  markers and the merger is told they're load-bearing. Replaces the previous
+  "here are some snippets, combine them" prompt that produced hallucinated
+  stitching and dropped sections. Temperature dropped to 0.1 (merging is
+  not creative work). The merger uses the same model the workers used to
+  avoid an extra cold-start mid-build.
+- **`forge build` CLI surface trimmed**: `--output`, `--lang`, and `--test`
+  flags removed. `--output` was captured into `BuildRequest` and never
+  written anywhere. `--lang` was passed through and never read. `--test`
+  was a boolean that did nothing.
+- **`SecurityGuard::audit_directory`** skips `.git/`, `target/`,
+  `node_modules/`, `dist/`, `build/`, `vendor/`, `venv/`, `__pycache__/`,
+  `.cargo/`, and any dotdir. (Already done in session 2; reaffirmed.)
+- **Three-way default-model alignment**: `Config::default`,
+  `OrchestratorConfig::default`, and `STARTER_FORGE_TOML` now agree on
+  `qwen2.5-coder:7b`. Previously the three places said
+  `llama3.2:3b`/`qwen2.5-coder:7b`/`qwen2.5-coder:7b` independently.
+- **`forge skills search`** now lists *all* matching skills, not just the
+  first one. Vague queries like `react` will surface every relevant skill.
+- **`tests/skill_recipes_parse.rs`**: now also asserts `prompts.system` is
+  non-empty and `tags` is non-empty. A skill with an empty system prompt is
+  a no-op when `forge run-skill` is invoked; a skill with no tags is
+  invisible to `forge skills search`.
+- **README status table**: refreshed to show every command implemented in
+  v0.1.0, including `run-skill`, `analyze`, `test`, `audit --json`, the
+  spinner on `preload`, and the new `forge --version` git-SHA stamping.
+
+### Fixed (session 4)
+- **`ContextManager::token_counts`** was a `HashMap<id, tokens>` written by
+  `add()` and cleared by `clear()` but never read by anything — `stats()`
+  iterates `history` directly. It also didn't track evictions from the
+  sliding window, so on a real workload it would have leaked memory and
+  reported incorrect counts to anyone who decided to read it. Removed the
+  field, the `HashMap` import, and both write paths. Lockless win for the
+  hot path of `ContextManager::add`.
+
 ### Added (session 3)
 - **Real streaming for `forge chat`**: new `OllamaProvider::generate_streaming`
   uses `Response::chunk()` to drain Ollama's NDJSON line-by-line and emits

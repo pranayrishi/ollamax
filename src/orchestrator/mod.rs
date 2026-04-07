@@ -42,13 +42,15 @@ pub struct OrchestratorConfig {
 
 impl Default for OrchestratorConfig {
     fn default() -> Self {
+        // Must agree with `Config::default` in lib.rs and `STARTER_FORGE_TOML`
+        // in main.rs. Single source of truth via the qwen2.5-coder ladder.
         Self {
             ollama_url: "http://localhost:11434".to_string(),
-            default_model: "llama3.2:3b".to_string(),
+            default_model: "qwen2.5-coder:7b".to_string(),
             planning_model: "qwen2.5-coder:7b".to_string(),
             max_parallel_workers: 4,
             security_enabled: true,
-            tdd_enforced: true,
+            tdd_enforced: false,
         }
     }
 }
@@ -154,7 +156,10 @@ impl Orchestrator {
                 )
                 .await?;
 
-            let merged = self.executor.merge_results(results).await?;
+            let merged = self
+                .executor
+                .merge_results(results, &complexity.suggested_model, num_ctx)
+                .await?;
 
             if self.config.security_enabled {
                 let audit = self.run_security_audit(&merged).await?;

@@ -1,4 +1,4 @@
-use super::{ChatOptions, GenerateOptions, LlmProvider, LlmResponse, ModelInfo};
+use super::{ChatOptions, GenerateOptions, LlmProvider, LlmResponse, ModelInfo, RunningModel};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,12 @@ struct GenerateRequest {
     /// We always send it because the server default (5m) bites every model switch.
     #[serde(skip_serializing_if = "Option::is_none")]
     keep_alive: Option<String>,
+    /// Ollama `format` parameter (v0.5+). Either the literal string `"json"`
+    /// for free-form valid JSON, or a full JSON Schema document for
+    /// schema-constrained decoding. We pass it through as raw JSON so
+    /// callers can hand us either form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -103,6 +109,24 @@ struct ModelDto {
     size: u64,
     modified_at: String,
     digest: String,
+}
+
+/// `/api/ps` response. Lists models currently loaded into VRAM/RAM.
+#[derive(Debug, Deserialize)]
+struct PsResponse {
+    models: Vec<PsModelDto>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct PsModelDto {
+    name: String,
+    model: String,
+    size: u64,
+    /// Bytes of *VRAM* this model is consuming. May be 0 on CPU-only.
+    size_vram: Option<u64>,
+    digest: String,
+    expires_at: Option<String>,
 }
 
 impl OllamaProvider {
@@ -209,6 +233,30 @@ impl OllamaProvider {
         Ok(total)
     }
 
+    /// Models currently resident in VRAM/RAM (Ollama `/api/ps`).
+    /// Returns `(name, vram_bytes, expires_at)` for each loaded model.
+    pub async fn running_models(&self) -> Result<Vec<RunningModel>> {
+        let resp = self
+            .client
+            .get(format!("{}/api/ps", self.base_url))
+            .send()
+            .await
+            .context("send /api/ps to ollama")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("ollama /api/ps returned {}", resp.status());
+        }
+        let parsed: PsResponse = resp.json().await.context("parse /api/ps response")?;
+        Ok(parsed
+            .models
+            .into_iter()
+            .map(|m| RunningModel {
+                name: m.name,
+                size_vram_bytes: m.size_vram.unwrap_or(0),
+                expires_at: m.expires_at,
+            })
+            .collect())
+    }
+
     pub async fn health_check(&self) -> Result<bool> {
         match self
             .client
@@ -253,6 +301,7 @@ impl OllamaProvider {
             }),
             context: None,
             keep_alive: opts.keep_alive.clone(),
+            format: opts.format.clone(),
         }
     }
 
@@ -441,6 +490,7 @@ impl LlmProvider for OllamaProvider {
             options: None,
             context: None,
             keep_alive: Some(keep_alive.to_string()),
+            format: None,
         };
         let resp = self
             .client

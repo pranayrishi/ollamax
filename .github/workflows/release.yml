@@ -1,0 +1,110 @@
+name: release
+
+# Triggered by pushing a `v*` tag, e.g. `git tag v0.2.0 && git push --tags`.
+# Builds release binaries for the four platforms r/LocalLLaMA actually runs
+# on (NVIDIA Linux x86_64, Apple Silicon, Intel Mac, AMD Linux x86_64) and
+# attaches them to a GitHub release.
+#
+# Cross-compilation is intentionally NOT used — every binary is built on the
+# native runner so we never ship a binary that has never executed on the
+# target architecture. The Linux runner does double duty for both Intel and
+# AMD targets since the binary is the same.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary
+        if: runner.os != 'Windows'
+        run: strip target/${{ matrix.target }}/release/forge || true
+
+      - name: Smoke-test the binary
+        run: target/${{ matrix.target }}/release/forge --version
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          name="forge-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp target/${{ matrix.target }}/release/forge "dist/$name/forge"
+          cp README.md LICENSE CHANGELOG.md "dist/$name/"
+          cp -r skills "dist/$name/"
+          cd dist
+          tar -czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          echo "archive=dist/$name.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "shasum=dist/$name.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+  release:
+    name: publish github release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Use the existing CHANGELOG section for this tag if present;
+          # otherwise GitHub auto-generates from commits.
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+          fail_on_unmatched_files: true

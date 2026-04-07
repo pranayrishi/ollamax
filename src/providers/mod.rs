@@ -35,6 +35,16 @@ pub struct GenerateOptions {
     /// e.g. "30m", "1h", "0" — passed straight to Ollama's `keep_alive`.
     /// `None` lets Ollama use its server-side default (5m as of v0.1.x).
     pub keep_alive: Option<String>,
+    /// Ollama `format` parameter (v0.5+).
+    /// - `Some(json!("json"))` → free-form valid JSON
+    /// - `Some(json!({...}))`  → strict JSON Schema (constrained decoding)
+    /// - `None`                → unconstrained text
+    ///
+    /// This is the local-LLM equivalent of OpenAI's `response_format` and
+    /// the closest thing the harness has to "guaranteed-valid tool calls"
+    /// without dropping into raw GBNF grammars. ECC has nothing equivalent
+    /// for hosted Claude.
+    pub format: Option<serde_json::Value>,
 }
 
 impl Default for GenerateOptions {
@@ -53,6 +63,7 @@ impl Default for GenerateOptions {
             stop: None,
             stream: false,
             keep_alive: Some("30m".to_string()),
+            format: None,
         }
     }
 }
@@ -93,6 +104,15 @@ pub struct ModelInfo {
     pub size_human: String,
     pub modified_at: String,
     pub digest: String,
+}
+
+/// One model currently loaded by Ollama into RAM/VRAM. Surfaced by
+/// `OllamaProvider::running_models` and rendered by `forge status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunningModel {
+    pub name: String,
+    pub size_vram_bytes: u64,
+    pub expires_at: Option<String>,
 }
 
 #[derive(Clone)]

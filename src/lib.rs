@@ -70,20 +70,26 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
+        // These three model defaults must agree with each other AND with
+        // STARTER_FORGE_TOML in main.rs AND with OrchestratorConfig::default
+        // in orchestrator/mod.rs. The qwen2.5-coder family is the canonical
+        // ladder — see monitoring::suggest_model and the rationale there.
         Self {
             ollama_url: "http://localhost:11434".to_string(),
-            default_model: "llama3.2:3b".to_string(),
+            default_model: "qwen2.5-coder:7b".to_string(),
             planning_model: "qwen2.5-coder:7b".to_string(),
             execution_models: vec![
-                "llama3.2:3b".to_string(),
-                "deepseek-coder-v2:16b".to_string(),
-                "llama3.3:70b".to_string(),
+                "qwen2.5-coder:1.5b".to_string(),
+                "qwen2.5-coder:7b".to_string(),
+                "qwen2.5-coder:14b".to_string(),
             ],
-            max_context_tokens: 32768,
+            max_context_tokens: 16384,
             enable_parallel: true,
             max_parallel_workers: 4,
             security_enabled: true,
-            tdd_enforced: true,
+            // TDD enforcement isn't wired into the build path yet; defaulting
+            // it on would mean enforcing a feature that doesn't exist.
+            tdd_enforced: false,
             auto_unload_models: true,
             min_free_vram_mb: 2048,
         }

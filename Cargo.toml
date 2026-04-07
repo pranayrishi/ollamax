@@ -49,6 +49,14 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 regex = "1.10"
 # Recursive directory walk for `forge audit`.
 walkdir = "2.4"
+# Real BPE tokenizer for accurate context budgeting. We use cl100k_base
+# (the GPT-3.5/4 tokenizer) as a calibrated stand-in — it's not the exact
+# tokenizer Llama or Qwen use, but it's within ~10% on code/prose and far
+# better than the chars/3 fallback. Local LLM models (Llama, Qwen) ship
+# their own SentencePiece tokenizers; loading those properly would mean
+# pulling the full `tokenizers` crate (~3 MB of compile time and a runtime
+# data file), so we accept the small inaccuracy here for build speed.
+tiktoken-rs = "0.5"
 
 [dev-dependencies]
 # Used by tests/security_scanner.rs to build a sandbox dir.

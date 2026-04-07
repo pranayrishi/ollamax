@@ -30,6 +30,20 @@ fn all_bundled_recipes_parse() {
             "{}: empty description",
             path.display()
         );
+        // The system prompt is what `forge run-skill` actually feeds the
+        // model. An empty system prompt = a useless skill.
+        assert!(
+            !skill.prompts.system.trim().is_empty(),
+            "{}: empty prompts.system — skill would be a no-op when run",
+            path.display()
+        );
+        // Tags drive search. A skill with zero tags is invisible to
+        // `forge skills search`.
+        assert!(
+            !skill.tags.is_empty(),
+            "{}: zero tags — skill won't appear in `forge skills search`",
+            path.display()
+        );
         checked += 1;
     }
     assert!(checked > 0, "no bundled recipes were checked");

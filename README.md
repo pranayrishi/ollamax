@@ -70,22 +70,42 @@ way to verify your install works without pulling a model.
 
 ## What works in v0.1.0
 
-| Command             | Status | What it does                                                                   |
-| :------------------ | :----: | :----------------------------------------------------------------------------- |
-| `forge status`      |   ✅   | Hardware detection (NVIDIA / AMD / Apple Silicon / Intel / CPU), recommended model |
-| `forge optimize`    |   ✅   | Prints a tuned `Modelfile` for your hardware                                   |
-| `forge audit <dir>` |   ✅   | Walks the dir, runs the secret scanner, exits 1 on Critical/High findings     |
-| `forge preload`     |   ✅   | Warm-loads a model with configurable `--keep-alive` (no cold-start next call) |
-| `forge skills list` |   ✅   | Lists bundled recipe JSONs                                                    |
-| `forge chat`        |   🟡   | Single-shot generate via Ollama HTTP API                                       |
-| `forge build`       |   🟡   | Orchestrator wired (router → preload → parallel executor → merger). Quality of merging is the next thing to land. |
-| `forge init`        |   🟡   | Writes a starter `forge.toml`                                                  |
-| `forge analyze`     |   ❌   | Errors loudly with "not implemented in v0.1.0"                                |
-| `forge parallel`    |   ❌   | Errors loudly with "not implemented in v0.1.0"                                |
-| `forge test`        |   ❌   | Errors loudly with "not implemented in v0.1.0"                                |
-| `forge skills add`  |   ❌   | Stub                                                                          |
+| Command                      | Status | What it does                                                                                  |
+| :--------------------------- | :----: | :-------------------------------------------------------------------------------------------- |
+| `forge status`               |   ✅   | Hardware detection (NVIDIA / AMD / Apple Silicon / Intel / CPU), recommended model, Ollama health, currently-loaded models |
+| `forge --version`            |   ✅   | Includes git short SHA so a build can be pinned for replay/debug                              |
+| `forge optimize`             |   ✅   | Prints a tuned `Modelfile` for your hardware                                                  |
+| `forge audit <dir>`          |   ✅   | Walks the dir, runs the secret scanner, exits 1 on Critical/High; `--json` for CI consumers   |
+| `forge preload [model]`      |   ✅   | Warm-loads a model with `--keep-alive`; braille spinner so a 14B cold-load doesn't look hung |
+| `forge chat "..."`           |   ✅   | Streams tokens to stdout as they arrive (real NDJSON drain, not buffered)                     |
+| `forge run-skill <name>`     |   ✅   | Loads a skill, picks an installed model (with fallback), streams the response                |
+| `forge skills list`          |   ✅   | Lists installed skill recipes                                                                |
+| `forge skills add <path>`    |   ✅   | Adds a JSON skill from a local path (no remote URLs — preserves "no network but Ollama")     |
+| `forge skills search <q>`    |   ✅   | Lists *all* skills matching a name/tag/keyword                                                |
+| `forge analyze <dir>`        |   ✅   | Local secret scan + token-budgeted model code review                                          |
+| `forge test <file>`          |   ✅   | Generates tests for a single source file in the right framework for the language              |
+| `forge build "..."`          |   🟢   | Full orchestrator: router → preload → parallel executor → section-aware merger                 |
+| `forge init`                 |   🟢   | Writes a starter `forge.toml`                                                                 |
+| `forge parallel`             |   ❌   | Errors loudly with "not implemented" — use `forge build`                                      |
 
-✅ = works · 🟡 = partial · ❌ = not implemented (and tells you so)
+✅ = works · 🟢 = works but unproven against real-world workloads · ❌ = not implemented (and tells you so)
+
+### Schema-constrained output
+
+`OllamaProvider::generate` accepts an Ollama `format` parameter (v0.5+),
+either the literal `"json"` for free-form valid JSON or a full JSON Schema
+for constrained decoding. This is the local-LLM equivalent of OpenAI's
+`response_format` and the closest thing forge has to "guaranteed-valid tool
+calls" without dropping into raw GBNF grammars. There is a live integration
+test in [`tests/structured_output.rs`](tests/structured_output.rs) gated by
+`FORGE_LIVE_OLLAMA=1`.
+
+### SKILL.md compatibility
+
+Drop a `<name>/SKILL.md` (Anthropic YAML-frontmatter format) into your
+skills dir and `forge run-skill` will load it alongside the JSON recipes.
+See [`tests/skill_md_compat.rs`](tests/skill_md_compat.rs) for the
+supported frontmatter shape.
 
 ---
 

@@ -208,38 +208,101 @@ impl ParallelExecutor {
         self.provider.generate(opts).await
     }
 
-    pub async fn merge_results(&self, results: Vec<WorkerResult>) -> Result<String> {
+    /// Merge subtask outputs back into a single artifact.
+    ///
+    /// **Strategy: section-aware concatenation, then a model-based dedup
+    /// pass.** The previous merger asked the model to "combine these code
+    /// snippets" with no structure, which produced hallucinated stitching
+    /// (the model would invent imports that no worker emitted, drop sections
+    /// of one worker's output, etc.). The new strategy:
+    ///
+    /// 1. If one worker succeeded → return its output verbatim. No model
+    ///    call. Cheapest, most reliable path.
+    /// 2. If multiple workers succeeded → concatenate them with explicit
+    ///    section markers (`// === Frontend/UI ===`) and ask the model to
+    ///    *only* deduplicate imports and resolve obvious conflicts. The
+    ///    structure stays intact. The model is told the section markers are
+    ///    load-bearing.
+    /// 3. The merger uses the same model the workers used (passed in by
+    ///    `model`) so we don't pay an extra cold-start to load a different
+    ///    one mid-build.
+    /// 4. `temperature=0.1` because merging is not creative work.
+    pub async fn merge_results(
+        &self,
+        results: Vec<WorkerResult>,
+        model: &str,
+        num_ctx: usize,
+    ) -> Result<String> {
         let successful: Vec<_> = results.iter().filter(|r| r.success).collect();
 
         if successful.is_empty() {
-            anyhow::bail!("All workers failed, cannot merge results");
+            // Surface the actual worker errors so the user can debug.
+            let errors: Vec<_> = results
+                .iter()
+                .filter(|r| !r.success)
+                .filter_map(|r| r.error.as_ref())
+                .collect();
+            anyhow::bail!(
+                "all {} workers failed; first error: {}",
+                results.len(),
+                errors.first().map(|s| s.as_str()).unwrap_or("(no error)")
+            );
         }
 
         if successful.len() == 1 {
             return Ok(successful[0].output.clone());
         }
 
+        // Concatenate with section markers. The fence markers tell the model
+        // "these are not optional, do not delete them" — past behavior was
+        // to silently drop a worker's output if the model couldn't figure
+        // out how it fit.
+        let mut concatenated = String::new();
+        for r in &successful {
+            concatenated.push_str(&format!(
+                "// === BEGIN section {} ===\n{}\n// === END section {} ===\n\n",
+                r.task_id, r.output, r.task_id
+            ));
+        }
+
         let merge_prompt = format!(
-            "Merge the following code outputs into a single coherent implementation:\n\n{}",
-            successful
-                .iter()
-                .map(|r| format!("=== {} ===\n{}\n", r.task_id, r.output))
-                .collect::<Vec<_>>()
-                .join("\n")
+            "Below are {} code sections produced by separate worker agents. Each \
+             section is wrapped in BEGIN/END markers. Your job:\n\
+             \n\
+             1. Combine all sections into one coherent file.\n\
+             2. Deduplicate imports/use statements at the top.\n\
+             3. If two sections define the same symbol, keep the more complete \
+                version (longer, with more error handling).\n\
+             4. Do NOT invent imports, types, or functions that are not in any \
+                input section.\n\
+             5. Do NOT delete entire sections — every BEGIN section must be \
+                represented in the output, even if just as a function the rest \
+                of the file calls.\n\
+             6. Strip the BEGIN/END markers from the final output.\n\
+             7. Return only the merged code. No markdown fences. No prose.\n\
+             \n\
+             Sections:\n\
+             {concatenated}",
+            successful.len()
         );
 
         let opts = GenerateOptions {
-            model: "qwen2.5-coder:7b".to_string(),
+            model: model.to_string(),
             prompt: merge_prompt,
             system: Some(
-                "You are a code merging expert. Combine the provided code snippets into a single, \
-                cohesive implementation. Resolve any conflicts by keeping the best version of each \
-                section. Return only the merged code without explanation."
+                "You are a code merger. You combine multiple working drafts into \
+                 one coherent file by deduplicating imports, resolving conflicts \
+                 conservatively, and preserving every input section. You never \
+                 invent code that wasn't in the inputs."
                     .to_string(),
             ),
-            temperature: Some(0.3),
-            num_ctx: Some(16384),
+            // Merging is mechanical, not creative. Low temp + low top_p so
+            // the same inputs produce the same merge.
+            temperature: Some(0.1),
+            top_p: Some(0.5),
+            num_ctx: Some(num_ctx),
             stream: false,
+            keep_alive: Some("1h".to_string()),
             ..Default::default()
         };
 
