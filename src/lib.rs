@@ -32,23 +32,6 @@ pub fn init_tracing(log_level: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn init() -> Result<Config> {
-    let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("ollama-forge");
-
-    std::fs::create_dir_all(&config_dir)?;
-
-    let config_path = config_dir.join("config.yaml");
-    let config = if config_path.exists() {
-        serde_yaml::from_str(&std::fs::read_to_string(&config_path)?)?
-    } else {
-        Config::default()
-    };
-
-    Ok(config)
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Config {

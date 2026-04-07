@@ -2,12 +2,12 @@
 name = "ollama-forge"
 version = "0.1.0"
 edition = "2021"
-authors = ["Ollama-Forge Team"]
-description = "The 'Everything' Framework for Local Coding Agents"
+authors = ["Pranay Rishi Nalem"]
+description = "Harness optimization layer for local coding agents running on Ollama"
 license = "MIT"
-repository = "https://github.com/ollama-forge/ollama-forge"
-homepage = "https://ollama-forge.ai"
+repository = "https://github.com/pranayrishi/ollamax"
 keywords = ["ollama", "llm", "cli", "agent", "coding"]
+categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.75.0"
 
 [[bin]]

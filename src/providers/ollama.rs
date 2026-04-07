@@ -106,16 +106,107 @@ struct ModelDto {
 }
 
 impl OllamaProvider {
+    /// Build a provider against `base_url`. Panics only if `reqwest` itself
+    /// can't construct a TLS-enabled client — which on a healthy install
+    /// effectively never happens. The previous `.expect()` was the same
+    /// behavior; this version surfaces a clearer message if it ever does.
     pub fn new(base_url: impl Into<String>) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(300))
             .build()
-            .expect("Failed to create HTTP client");
+            .unwrap_or_else(|e| panic!("ollama-forge: could not build HTTP client (reqwest): {e}"));
 
         Self {
             base_url: base_url.into(),
             client,
         }
+    }
+
+    /// Fallible variant — for callers (libraries, tests) that don't want to
+    /// take down the process on a TLS-init failure.
+    pub fn try_new(base_url: impl Into<String>) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(300))
+            .build()
+            .context("build reqwest client")?;
+        Ok(Self {
+            base_url: base_url.into(),
+            client,
+        })
+    }
+
+    /// Stream a generate request, calling `on_token` with each text chunk as
+    /// it arrives. Returns the total number of bytes streamed. Used by
+    /// `forge chat` so users see tokens flow in instead of waiting 20s for a
+    /// buffered blob.
+    ///
+    /// Implementation note: we use `Response::chunk()` rather than
+    /// `bytes_stream()` to avoid pulling in the `futures` crate just for
+    /// `StreamExt`. NDJSON line-buffering is done by hand because chunks
+    /// can split a line in half.
+    pub async fn generate_streaming<F>(
+        &self,
+        opts: GenerateOptions,
+        mut on_token: F,
+    ) -> Result<usize>
+    where
+        F: FnMut(&str),
+    {
+        let mut request = Self::build_generate_request(&opts);
+        request.stream = true;
+
+        let resp = self
+            .client
+            .post(format!("{}/api/generate", self.base_url))
+            .json(&request)
+            .send()
+            .await
+            .context("send streaming generate request")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "Ollama API error {status}: {body}\n\
+                 Hint: is `ollama serve` running at {} and is `{}` pulled?",
+                self.base_url,
+                opts.model
+            );
+        }
+
+        let mut response = resp;
+        let mut buf: Vec<u8> = Vec::with_capacity(4096);
+        let mut total = 0usize;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .context("read streaming chunk from Ollama")?
+        {
+            buf.extend_from_slice(&chunk);
+            // Drain complete lines from buf — Ollama emits one JSON object per line.
+            while let Some(nl) = buf.iter().position(|b| *b == b'\n') {
+                let line: Vec<u8> = buf.drain(..=nl).collect();
+                let trimmed = std::str::from_utf8(&line).map(|s| s.trim()).unwrap_or("");
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let parsed: GenerateResponse = match serde_json::from_str(trimmed) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        debug!("skipping malformed NDJSON line: {e}");
+                        continue;
+                    }
+                };
+                if !parsed.response.is_empty() {
+                    total += parsed.response.len();
+                    on_token(&parsed.response);
+                }
+                if parsed.done {
+                    return Ok(total);
+                }
+            }
+        }
+        Ok(total)
     }
 
     pub async fn health_check(&self) -> Result<bool> {

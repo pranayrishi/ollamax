@@ -6,6 +6,29 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
+/// `(filename, raw JSON)` pairs baked into the binary at compile time. The
+/// JSON itself lives in `skills/recipes/*.json` so it stays diff-friendly,
+/// gets validated by `tests/skill_recipes_parse.rs`, and stays in sync with
+/// what gets shipped to users on first run.
+const BUNDLED_RECIPES: &[(&str, &str)] = &[
+    (
+        "docker-expert.json",
+        include_str!("../../skills/recipes/docker-expert.json"),
+    ),
+    (
+        "security-auditor.json",
+        include_str!("../../skills/recipes/security-auditor.json"),
+    ),
+    (
+        "react-native-expert.json",
+        include_str!("../../skills/recipes/react-native-expert.json"),
+    ),
+    (
+        "api-designer.json",
+        include_str!("../../skills/recipes/api-designer.json"),
+    ),
+];
+
 pub struct SkillsEngine {
     skills: Arc<RwLock<HashMap<String, Skill>>>,
     skills_dir: PathBuf,
@@ -67,7 +90,10 @@ impl SkillsEngine {
 
         if !self.skills_dir.exists() {
             tokio::fs::create_dir_all(&self.skills_dir).await?;
-            self.create_default_skills().await?;
+            // First run: copy the bundled recipes from the binary onto disk so
+            // the user can edit them. We `include_str!` rather than relying on
+            // a runtime path because the binary may be installed anywhere.
+            self.write_bundled_recipes().await?;
         }
 
         let mut entries = tokio::fs::read_dir(&self.skills_dir).await?;
@@ -89,109 +115,20 @@ impl SkillsEngine {
         Ok(skills)
     }
 
-    async fn create_default_skills(&self) -> Result<()> {
-        let default_skills = vec![
-            Skill {
-                name: "docker-expert".to_string(),
-                description: "Expert at Docker containerization and orchestration".to_string(),
-                version: "1.0.0".to_string(),
-                author: Some("Forge Team".to_string()),
-                tags: vec!["docker".to_string(), "containers".to_string(), "devops".to_string()],
-                prompts: SkillPrompts {
-                    system: "You are a Docker expert. Provide optimized Dockerfiles and docker-compose configurations.".to_string(),
-                    planning: Some("Analyze the application and suggest optimal Docker architecture.".to_string()),
-                    execution: Some("Write production-ready Docker configurations.".to_string()),
-                    review: Some("Review Docker configs for security and efficiency.".to_string()),
-                },
-                settings: SkillSettings {
-                    model: Some("qwen2.5-coder:7b".to_string()),
-                    temperature: Some(0.5),
-                    max_tokens: Some(2048),
-                    tools: vec!["docker".to_string()],
-                },
-                recipes: vec![
-                    Recipe {
-                        name: "Multi-stage Build".to_string(),
-                        description: "Create optimized multi-stage Docker builds".to_string(),
-                        trigger_keywords: vec!["docker".to_string(), "containerize".to_string(), "dockerfile".to_string()],
-                        steps: vec![
-                            RecipeStep {
-                                name: "Analyze Requirements".to_string(),
-                                prompt_template: "Analyze the application for base image and dependencies".to_string(),
-                                expected_output: Some("Base image recommendation".to_string()),
-                            },
-                        ],
-                    },
-                ],
-            },
-            Skill {
-                name: "security-auditor".to_string(),
-                description: "Comprehensive security auditing for code".to_string(),
-                version: "1.0.0".to_string(),
-                author: Some("Forge Team".to_string()),
-                tags: vec!["security".to_string(), "audit".to_string(), "vulnerabilities".to_string()],
-                prompts: SkillPrompts {
-                    system: "You are a security expert. Identify vulnerabilities and suggest fixes.".to_string(),
-                    planning: Some("Scan code for common security issues.".to_string()),
-                    execution: Some("Generate detailed security report.".to_string()),
-                    review: None,
-                },
-                settings: SkillSettings {
-                    model: Some("deepseek-coder-v2:16b".to_string()),
-                    temperature: Some(0.3),
-                    max_tokens: Some(4096),
-                    tools: vec!["semgrep".to_string(), "gitleaks".to_string()],
-                },
-                recipes: vec![],
-            },
-            Skill {
-                name: "react-native-expert".to_string(),
-                description: "Build production-ready React Native applications".to_string(),
-                version: "1.0.0".to_string(),
-                author: Some("Community".to_string()),
-                tags: vec!["mobile".to_string(), "react-native".to_string(), "ios".to_string(), "android".to_string()],
-                prompts: SkillPrompts {
-                    system: "You are a React Native expert. Build performant, cross-platform mobile applications.".to_string(),
-                    planning: Some("Plan React Native architecture with proper navigation and state management.".to_string()),
-                    execution: Some("Implement components, screens, and native modules.".to_string()),
-                    review: Some("Review for performance and platform-specific issues.".to_string()),
-                },
-                settings: SkillSettings {
-                    model: Some("qwen2.5-coder:14b".to_string()),
-                    temperature: Some(0.7),
-                    max_tokens: Some(4096),
-                    tools: vec!["expo".to_string(), "xcode".to_string()],
-                },
-                recipes: vec![],
-            },
-            Skill {
-                name: "api-designer".to_string(),
-                description: "Design RESTful and GraphQL APIs".to_string(),
-                version: "1.0.0".to_string(),
-                author: Some("Forge Team".to_string()),
-                tags: vec!["api".to_string(), "rest".to_string(), "graphql".to_string(), "backend".to_string()],
-                prompts: SkillPrompts {
-                    system: "You are an API design expert. Create clean, documented APIs following best practices.".to_string(),
-                    planning: Some("Design API endpoints and data models.".to_string()),
-                    execution: Some("Implement API routes and middleware.".to_string()),
-                    review: Some("Review API design for consistency and performance.".to_string()),
-                },
-                settings: SkillSettings {
-                    model: Some("qwen2.5-coder:7b".to_string()),
-                    temperature: Some(0.5),
-                    max_tokens: Some(2048),
-                    tools: vec![],
-                },
-                recipes: vec![],
-            },
-        ];
-
-        for skill in default_skills {
-            let path = self.skills_dir.join(format!("{}.json", skill.name));
-            let json = serde_json::to_string_pretty(&skill)?;
-            tokio::fs::write(&path, json).await?;
+    /// Write the bundled recipes (the actual `skills/recipes/*.json` files in
+    /// the repo) to the user's skills directory on first run.
+    ///
+    /// Previously this was a `create_default_skills` function that
+    /// hand-rolled stripped-down versions of each skill in Rust source — they
+    /// drifted out of sync with the real bundled JSONs (e.g., docker-expert
+    /// had only 1 recipe step instead of the full multi-stage workflow). Now
+    /// the real JSONs are baked in via `include_str!` and there is exactly
+    /// one source of truth.
+    async fn write_bundled_recipes(&self) -> Result<()> {
+        for (filename, contents) in BUNDLED_RECIPES {
+            let path = self.skills_dir.join(filename);
+            tokio::fs::write(&path, contents).await?;
         }
-
         Ok(())
     }
 

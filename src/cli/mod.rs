@@ -20,9 +20,6 @@ pub struct Cli {
     #[arg(short, long, global = true, help = "Quiet mode (less output)")]
     pub quiet: bool,
 
-    #[arg(short, long, global = true, help = "Output format")]
-    pub output: Option<OutputFormat>,
-
     #[arg(short, long, global = true, help = "Config file path")]
     pub config: Option<PathBuf>,
 }
@@ -138,14 +135,6 @@ pub enum Commands {
         #[arg(short, long, help = "Show changes without applying")]
         dry_run: bool,
     },
-}
-
-#[derive(ValueEnum, Debug, Clone)]
-pub enum OutputFormat {
-    Json,
-    Yaml,
-    Toml,
-    Table,
 }
 
 #[derive(ValueEnum, Debug, Clone)]

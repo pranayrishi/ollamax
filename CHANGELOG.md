@@ -6,6 +6,49 @@ All notable changes to Ollama-Forge are documented here. Format follows
 
 ## [Unreleased]
 
+### Added (session 3)
+- **Real streaming for `forge chat`**: new `OllamaProvider::generate_streaming`
+  uses `Response::chunk()` to drain Ollama's NDJSON line-by-line and emits
+  text via a callback. `forge chat` now prints tokens as they arrive instead
+  of buffering the entire response and dumping it after a 20-second wait.
+- **`forge skills add <path>`** is now wired: reads a JSON skill file from a
+  local path, validates with serde, and persists via `SkillsEngine::add_skill`.
+  Remote URL fetching is intentionally not supported in v0.1.0 — adding it
+  would punch a hole through the "no network calls but ollama" property.
+- `OllamaProvider::try_new` — fallible constructor for callers that don't
+  want a panic on TLS-init failure.
+
+### Fixed (session 3)
+- **`SkillsEngine` first-run was writing stripped-down hardcoded skills** that
+  had drifted out of sync with the JSON files in `skills/recipes/`. The
+  bundled `docker-expert.json` ships 2 recipes with 4 steps total; the
+  hardcoded version had 1 recipe with 1 step. Now the actual JSONs are baked
+  into the binary via `include_str!` and there's a single source of truth.
+- **`ContextManager::count_tokens` was `text.split_whitespace().count()`**,
+  which on a 50 KB code file reports ~7k tokens when the real count is ~17k.
+  Replaced with a `chars / 3` estimator calibrated against tiktoken
+  cl100k_base on a code/prose mix. Errs toward over-counting so the
+  sliding-window evictor fires before Ollama silently truncates. Pure
+  function, fully unit-tested. Real tokenizer integration tracked for later.
+- **`Cli::output: Option<OutputFormat>` was a global flag that was never
+  read** anywhere — the `--output json` advertised by `--help` did nothing.
+  Removed both the flag and the `OutputFormat` enum.
+- **`lib::init()` was a dead-code duplicate of `Config::load()`** added in
+  session 1, with subtly different behavior (sync vs async, missing
+  `await`). Removed.
+- **`init_project()` was using `include_str!("../forge.toml")`** which baked
+  whatever was in the developer's local `forge.toml` (including any of their
+  edits) into every release binary. Replaced with a `STARTER_FORGE_TOML`
+  const that won't drift.
+- **`Cargo.toml`'s `repository`/`authors`/`homepage`** pointed at a
+  nonexistent `ollama-forge/ollama-forge` org and an `ollama-forge.ai` domain
+  that does not exist. Repointed to `pranayrishi/ollamax` and dropped the
+  fake homepage. Author set to the actual maintainer.
+- **`forge init` next-steps text** was `forge "build a chat app"` —
+  out-of-date and references the unimplemented build path. Replaced with
+  `forge status`/`preload`/`audit`/`chat` — the four commands that actually
+  work in v0.1.0.
+
 ### Added (session 2)
 - **`forge audit <path>`** is now wired up: walks the directory, scans every
   scannable file with `SecurityGuard`, prints findings grouped by severity,

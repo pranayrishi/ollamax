@@ -82,8 +82,22 @@ async fn async_main() -> Result<()> {
                 stream: true,
                 ..Default::default()
             };
-            let response = ollama.generate(opts).await?;
-            println!("{}", response.content);
+            // Real streaming: print each token as it arrives. Previously we
+            // claimed `stream: true` but `generate()` buffered the whole
+            // response, giving the user a 20s wait for a wall of text.
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            let bytes = ollama
+                .generate_streaming(opts, |chunk| {
+                    let _ = stdout.write_all(chunk.as_bytes());
+                    let _ = stdout.flush();
+                })
+                .await?;
+            // Trailing newline so the next prompt isn't glued to the response.
+            let _ = writeln!(stdout);
+            if bytes == 0 {
+                eprintln!("forge: model returned no tokens");
+            }
         }
 
         Commands::Status { models } => {
@@ -166,7 +180,24 @@ async fn async_main() -> Result<()> {
                     }
                 }
                 SkillsAction::Add { source } => {
-                    println!("Adding skill from: {source}");
+                    // Source must be a local path. Remote URL fetching is
+                    // intentionally not supported in v0.1.0 — pulling
+                    // arbitrary skill JSON over HTTP would punch a hole
+                    // through the "no network calls but ollama" property.
+                    let path = std::path::PathBuf::from(&source);
+                    if !path.exists() {
+                        anyhow::bail!(
+                            "skill file not found: {source}\n\
+                             (remote URLs are not supported in v0.1.0; \
+                             download the file first)"
+                        );
+                    }
+                    let raw = tokio::fs::read_to_string(&path).await?;
+                    let skill: ollama_forge::skills::Skill = serde_json::from_str(&raw)
+                        .map_err(|e| anyhow::anyhow!("invalid skill JSON in {source}: {e}"))?;
+                    let name = skill.name.clone();
+                    engine.add_skill(skill).await?;
+                    println!("✅ added skill `{name}` from {source}");
                 }
                 SkillsAction::Remove { name } => {
                     engine.remove_skill(&name).await?;
@@ -277,6 +308,30 @@ async fn async_main() -> Result<()> {
     Ok(())
 }
 
+/// Starter `forge.toml` written by `forge init`. This is a const string —
+/// previously it was `include_str!("../forge.toml")` which baked the
+/// developer's *own* `forge.toml` (including any local edits) into every
+/// release binary.
+const STARTER_FORGE_TOML: &str = r#"[forge]
+version = "1.0"
+
+[ollama]
+url = "http://localhost:11434"
+default_model = "qwen2.5-coder:7b"
+planning_model = "qwen2.5-coder:7b"
+
+[execution]
+parallel_workers = 4
+max_context_tokens = 16384
+
+[security]
+enabled = true
+scan_secrets = true
+
+[tdd]
+enforced = false
+"#;
+
 async fn init_project(force: bool) -> Result<()> {
     let forge_toml = PathBuf::from("forge.toml");
 
@@ -289,8 +344,7 @@ async fn init_project(force: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = include_str!("../forge.toml");
-    tokio::fs::write(&forge_toml, config).await?;
+    tokio::fs::write(&forge_toml, STARTER_FORGE_TOML).await?;
     info!(
         "initialized forge project at {}",
         std::env::current_dir()?.display()
@@ -298,8 +352,10 @@ async fn init_project(force: bool) -> Result<()> {
     println!("✅ forge.toml written.");
     println!();
     println!("Next:");
-    println!("   forge status            # check hardware + ollama");
-    println!("   forge \"build a chat app\"");
+    println!("   forge status                 # detect hardware, recommend a model");
+    println!("   forge preload                # warm-load the recommended model");
+    println!("   forge audit src/             # scan your code for leaked secrets");
+    println!("   forge chat \"hello\"           # try the model interactively");
     Ok(())
 }
 
