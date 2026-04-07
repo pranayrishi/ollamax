@@ -1,9 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 pub mod ollama;
 
@@ -81,7 +81,9 @@ pub trait LlmProvider: Send + Sync {
     async fn list_models(&self) -> Result<Vec<ModelInfo>>;
     /// Best-effort warm-load: tells Ollama to keep this model resident.
     /// Default impl is a no-op so non-Ollama providers don't have to care.
-    async fn preload(&self, _model: &str, _keep_alive: &str) -> Result<()> { Ok(()) }
+    async fn preload(&self, _model: &str, _keep_alive: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

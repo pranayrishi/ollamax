@@ -1,4 +1,4 @@
-use super::{ChatMessage, ChatOptions, GenerateOptions, LlmProvider, LlmResponse, ModelInfo};
+use super::{ChatOptions, GenerateOptions, LlmProvider, LlmResponse, ModelInfo};
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -70,6 +70,7 @@ struct ChatOptionsDto {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // `context`/`total_duration` arrive from Ollama; surfaced in Debug only
 struct GenerateResponse {
     response: String,
     model: String,
@@ -81,6 +82,7 @@ struct GenerateResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // `total_duration` arrives from Ollama; surfaced in Debug only
 struct ChatResponse {
     message: ChatMessageDto,
     model: String,
@@ -109,7 +111,7 @@ impl OllamaProvider {
             .timeout(Duration::from_secs(300))
             .build()
             .expect("Failed to create HTTP client");
-        
+
         Self {
             base_url: base_url.into(),
             client,
@@ -117,7 +119,8 @@ impl OllamaProvider {
     }
 
     pub async fn health_check(&self) -> Result<bool> {
-        match self.client
+        match self
+            .client
             .get(format!("{}/api/tags", self.base_url))
             .send()
             .await
@@ -171,14 +174,17 @@ impl OllamaProvider {
 
         ChatRequest {
             model: opts.model.clone(),
-            messages: opts.messages.iter().map(|m| ChatMessageDto {
-                role: m.role.clone(),
-                content: m.content.clone(),
-            }).collect(),
+            messages: opts
+                .messages
+                .iter()
+                .map(|m| ChatMessageDto {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                })
+                .collect(),
             stream: opts.stream,
-            options: Some(options).filter(|o| {
-                o.temperature.is_some() || o.top_p.is_some() || o.num_ctx.is_some()
-            }),
+            options: Some(options)
+                .filter(|o| o.temperature.is_some() || o.top_p.is_some() || o.num_ctx.is_some()),
         }
     }
 }
@@ -196,7 +202,8 @@ impl LlmProvider for OllamaProvider {
 
         debug!("Generating with model: {} (stream={})", opts.model, stream);
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/api/generate", self.base_url))
             .json(&request)
             .send()
@@ -211,13 +218,20 @@ impl LlmProvider for OllamaProvider {
                 "Ollama API error {}: {}\n\
                 Hint: is `ollama serve` running at {} and is the model `{}` pulled? \
                 Try `ollama list` and `ollama pull {}`.",
-                status, body, self.base_url, opts.model, opts.model
+                status,
+                body,
+                self.base_url,
+                opts.model,
+                opts.model
             );
         }
 
         // Ollama returns NDJSON when stream=true (one JSON object per line) and a
         // single JSON document when stream=false. `.json()` only handles the latter.
-        let body = response.text().await.context("Failed to read Ollama response body")?;
+        let body = response
+            .text()
+            .await
+            .context("Failed to read Ollama response body")?;
         let (content, model, eval_count, prompt_eval_count) = if stream {
             let mut buf = String::new();
             let mut last_model = opts.model.clone();
@@ -235,9 +249,14 @@ impl LlmProvider for OllamaProvider {
             }
             (buf, last_model, last_eval, last_prompt_eval)
         } else {
-            let result: GenerateResponse = serde_json::from_str(&body)
-                .context("Failed to parse Ollama JSON response")?;
-            (result.response, result.model, result.eval_count, result.prompt_eval_count)
+            let result: GenerateResponse =
+                serde_json::from_str(&body).context("Failed to parse Ollama JSON response")?;
+            (
+                result.response,
+                result.model,
+                result.eval_count,
+                result.prompt_eval_count,
+            )
         };
 
         let duration_ms = start.elapsed().as_millis() as u64;
@@ -257,7 +276,8 @@ impl LlmProvider for OllamaProvider {
 
         debug!("Chatting with model: {} (stream={})", opts.model, stream);
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/api/chat", self.base_url))
             .json(&request)
             .send()
@@ -271,11 +291,17 @@ impl LlmProvider for OllamaProvider {
             anyhow::bail!(
                 "Ollama API error {}: {}\n\
                 Hint: is `ollama serve` running at {} and is the model `{}` pulled?",
-                status, body, self.base_url, opts.model
+                status,
+                body,
+                self.base_url,
+                opts.model
             );
         }
 
-        let body = response.text().await.context("Failed to read Ollama response body")?;
+        let body = response
+            .text()
+            .await
+            .context("Failed to read Ollama response body")?;
         let (content, model, eval_count, prompt_eval_count) = if stream {
             let mut buf = String::new();
             let mut last_model = opts.model.clone();
@@ -293,9 +319,14 @@ impl LlmProvider for OllamaProvider {
             }
             (buf, last_model, last_eval, last_prompt_eval)
         } else {
-            let result: ChatResponse = serde_json::from_str(&body)
-                .context("Failed to parse Ollama JSON response")?;
-            (result.message.content, result.model, result.eval_count, result.prompt_eval_count)
+            let result: ChatResponse =
+                serde_json::from_str(&body).context("Failed to parse Ollama JSON response")?;
+            (
+                result.message.content,
+                result.model,
+                result.eval_count,
+                result.prompt_eval_count,
+            )
         };
 
         let duration_ms = start.elapsed().as_millis() as u64;
@@ -320,7 +351,8 @@ impl LlmProvider for OllamaProvider {
             context: None,
             keep_alive: Some(keep_alive.to_string()),
         };
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/api/generate", self.base_url))
             .json(&req)
             .send()
@@ -333,7 +365,8 @@ impl LlmProvider for OllamaProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        let response = self.client
+        let response = self
+            .client
             .get(format!("{}/api/tags", self.base_url))
             .send()
             .await
@@ -345,13 +378,17 @@ impl LlmProvider for OllamaProvider {
 
         let result: ModelsResponse = response.json().await?;
 
-        Ok(result.models.into_iter().map(|m| ModelInfo {
-            name: m.name,
-            size: m.size,
-            size_human: format_size(m.size),
-            modified_at: m.modified_at,
-            digest: m.digest,
-        }).collect())
+        Ok(result
+            .models
+            .into_iter()
+            .map(|m| ModelInfo {
+                name: m.name,
+                size: m.size,
+                size_human: format_size(m.size),
+                modified_at: m.modified_at,
+                digest: m.digest,
+            })
+            .collect())
     }
 }
 

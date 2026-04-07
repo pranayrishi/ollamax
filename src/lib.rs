@@ -1,19 +1,19 @@
 pub mod cli;
-pub mod orchestrator;
-pub mod router;
-pub mod executor;
 pub mod context;
-pub mod providers;
-pub mod security;
+pub mod executor;
 pub mod monitoring;
+pub mod orchestrator;
+pub mod providers;
+pub mod router;
+pub mod security;
 pub mod skills;
 
-pub use orchestrator::Orchestrator;
-pub use router::TaskRouter;
-pub use executor::ParallelExecutor;
 pub use context::ContextManager;
-pub use providers::ollama::OllamaProvider;
+pub use executor::ParallelExecutor;
 pub use monitoring::VramSentinel;
+pub use orchestrator::Orchestrator;
+pub use providers::ollama::OllamaProvider;
+pub use router::TaskRouter;
 pub use security::SecurityGuard;
 pub use skills::SkillsEngine;
 
@@ -23,12 +23,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 pub fn init_tracing(log_level: &str) -> Result<()> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
-    
+
     tracing_subscriber::registry()
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
         .init();
-    
+
     Ok(())
 }
 
@@ -36,16 +36,16 @@ pub fn init() -> Result<Config> {
     let config_dir = dirs::config_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("ollama-forge");
-    
+
     std::fs::create_dir_all(&config_dir)?;
-    
+
     let config_path = config_dir.join("config.yaml");
     let config = if config_path.exists() {
         serde_yaml::from_str(&std::fs::read_to_string(&config_path)?)?
     } else {
         Config::default()
     };
-    
+
     Ok(config)
 }
 

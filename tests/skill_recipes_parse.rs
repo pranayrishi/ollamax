@@ -20,10 +20,10 @@ fn all_bundled_recipes_parse() {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let raw = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        let skill: Skill = serde_json::from_str(&raw)
-            .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        let raw =
+            fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let skill: Skill =
+            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
         assert!(!skill.name.is_empty(), "{}: empty name", path.display());
         assert!(
             !skill.description.is_empty(),

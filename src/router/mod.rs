@@ -1,10 +1,7 @@
-use crate::providers::{LlmProvider, ModelInfo};
+use crate::providers::ModelInfo;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplexityScore {
@@ -23,7 +20,12 @@ pub enum TaskType {
 }
 
 impl ComplexityScore {
-    pub fn new(score: f32, reasoning: String, suggested_model: String, task_type: TaskType) -> Self {
+    pub fn new(
+        score: f32,
+        reasoning: String,
+        suggested_model: String,
+        task_type: TaskType,
+    ) -> Self {
         Self {
             score,
             reasoning,
@@ -89,29 +91,41 @@ impl TaskRouter {
         }
     }
 
-    pub async fn analyze_complexity(&self, task: &str, available_models: &[ModelInfo]) -> Result<ComplexityScore> {
+    pub async fn analyze_complexity(
+        &self,
+        task: &str,
+        available_models: &[ModelInfo],
+    ) -> Result<ComplexityScore> {
         let task_lower = task.to_lowercase();
-        
+
         let mut score_factors = Vec::new();
-        
+
         let file_indicators = ["file", "read", "write", "rename", "copy", "delete"];
         if file_indicators.iter().any(|i| task_lower.contains(i)) {
             score_factors.push(0.1);
         }
-        
+
         let regex_indicators = ["regex", "pattern", "match", "validate"];
         if regex_indicators.iter().any(|i| task_lower.contains(i)) && task_lower.len() < 100 {
             score_factors.push(0.15);
         }
-        
+
         let lint_indicators = ["lint", "format", "style", "prettier", "eslint"];
         if lint_indicators.iter().any(|i| task_lower.contains(i)) {
             score_factors.push(0.2);
         }
 
         let medium_indicators = [
-            "api", "endpoint", "function", "class", "module", 
-            "component", "route", "query", "database", "auth"
+            "api",
+            "endpoint",
+            "function",
+            "class",
+            "module",
+            "component",
+            "route",
+            "query",
+            "database",
+            "auth",
         ];
         let medium_count = medium_indicators
             .iter()
@@ -122,9 +136,18 @@ impl TaskRouter {
         }
 
         let complex_indicators = [
-            "architecture", "system", "distributed", "microservice",
-            "optimize", "refactor", "algorithm", "concurrent", "parallel",
-            "security", "performance", "scale"
+            "architecture",
+            "system",
+            "distributed",
+            "microservice",
+            "optimize",
+            "refactor",
+            "algorithm",
+            "concurrent",
+            "parallel",
+            "security",
+            "performance",
+            "scale",
         ];
         let complex_count = complex_indicators
             .iter()
@@ -139,7 +162,10 @@ impl TaskRouter {
             score_factors.push(0.2);
         }
 
-        if task_lower.contains("full-stack") || task_lower.contains("complete") || task_lower.contains("app") {
+        if task_lower.contains("full-stack")
+            || task_lower.contains("complete")
+            || task_lower.contains("app")
+        {
             score_factors.push(0.3);
         }
 
@@ -182,51 +208,73 @@ impl TaskRouter {
         ))
     }
 
-    fn select_model_for_task(&self, task_type: &TaskType, available_models: &[ModelInfo]) -> String {
+    fn select_model_for_task(
+        &self,
+        task_type: &TaskType,
+        available_models: &[ModelInfo],
+    ) -> String {
         let available: Vec<&str> = available_models.iter().map(|m| m.name.as_str()).collect();
-        
+
         match task_type {
-            TaskType::Simple => {
-                available.iter()
-                    .find(|m| m.contains("3b") || m.contains("1b"))
-                    .copied()
-                    .unwrap_or(&self.model_config.small_model)
-                    .to_string()
-            }
-            TaskType::Medium => {
-                available.iter()
-                    .find(|m| m.contains("7b") || m.contains("qwen"))
-                    .copied()
-                    .unwrap_or(&self.model_config.medium_model)
-                    .to_string()
-            }
-            TaskType::Complex => {
-                available.iter()
-                    .find(|m| m.contains("16b") || m.contains("coder"))
-                    .copied()
-                    .unwrap_or(&self.model_config.large_model)
-                    .to_string()
-            }
-            TaskType::Architect => {
-                available.iter()
-                    .find(|m| m.contains("70b") || m.contains("671b") || m.contains("llama3.3"))
-                    .copied()
-                    .unwrap_or(&self.model_config.planner_model)
-                    .to_string()
-            }
+            TaskType::Simple => available
+                .iter()
+                .find(|m| m.contains("3b") || m.contains("1b"))
+                .copied()
+                .unwrap_or(&self.model_config.small_model)
+                .to_string(),
+            TaskType::Medium => available
+                .iter()
+                .find(|m| m.contains("7b") || m.contains("qwen"))
+                .copied()
+                .unwrap_or(&self.model_config.medium_model)
+                .to_string(),
+            TaskType::Complex => available
+                .iter()
+                .find(|m| m.contains("16b") || m.contains("coder"))
+                .copied()
+                .unwrap_or(&self.model_config.large_model)
+                .to_string(),
+            TaskType::Architect => available
+                .iter()
+                .find(|m| m.contains("70b") || m.contains("671b") || m.contains("llama3.3"))
+                .copied()
+                .unwrap_or(&self.model_config.planner_model)
+                .to_string(),
         }
     }
 
-    pub fn route_to_model(&self, complexity: &ComplexityScore, available_models: &[ModelInfo]) -> String {
-        if complexity.suggested_model.is_empty() {
-            return self.select_model_for_task(&complexity.task_type, available_models);
+    pub fn route_to_model(
+        &self,
+        complexity: &ComplexityScore,
+        available_models: &[ModelInfo],
+    ) -> String {
+        if available_models.is_empty() {
+            return complexity.suggested_model.clone();
         }
-        
-        if available_models.iter().any(|m| m.name == complexity.suggested_model) {
-            complexity.suggested_model.clone()
-        } else {
-            self.select_model_for_task(&complexity.task_type, available_models)
+        // Honor the analyzer's pick if the user actually has that model.
+        if available_models
+            .iter()
+            .any(|m| m.name == complexity.suggested_model)
+        {
+            return complexity.suggested_model.clone();
         }
+        // Otherwise: walk *available* models in tier order. Bigger first when
+        // the task is hard, smaller first when it's easy. The previous
+        // implementation fell back to a hardcoded default that the user
+        // might not have installed, which produced a misleading 404 from
+        // Ollama at call time.
+        let by_size_desc: Vec<&str> = {
+            let mut v: Vec<&ModelInfo> = available_models.iter().collect();
+            v.sort_by(|a, b| b.size.cmp(&a.size));
+            v.into_iter().map(|m| m.name.as_str()).collect()
+        };
+        let pick = match complexity.task_type {
+            TaskType::Architect | TaskType::Complex => by_size_desc.first(),
+            TaskType::Medium | TaskType::Simple => by_size_desc.last(),
+        };
+        pick.copied()
+            .unwrap_or(available_models[0].name.as_str())
+            .to_string()
     }
 
     pub fn can_parallelize(&self, complexity: &ComplexityScore) -> bool {
@@ -237,16 +285,16 @@ impl TaskRouter {
         let task_lower = task.to_lowercase();
         let mut subtasks = Vec::new();
 
-        let needs_frontend = task_lower.contains("frontend") 
-            || task_lower.contains("ui") 
-            || task_lower.contains("react") 
-            || task_lower.contains("vue") 
+        let needs_frontend = task_lower.contains("frontend")
+            || task_lower.contains("ui")
+            || task_lower.contains("react")
+            || task_lower.contains("vue")
             || task_lower.contains("css")
             || task_lower.contains("component");
 
-        let needs_backend = task_lower.contains("backend") 
-            || task_lower.contains("api") 
-            || task_lower.contains("server") 
+        let needs_backend = task_lower.contains("backend")
+            || task_lower.contains("api")
+            || task_lower.contains("server")
             || task_lower.contains("database")
             || task_lower.contains("auth");
 
@@ -322,8 +370,11 @@ mod tests {
             modified_at: "2024-01-01".to_string(),
             digest: "abc123".to_string(),
         }];
-        
-        let complexity = router.analyze_complexity("rename all .txt files to .md", &models).await.unwrap();
+
+        let complexity = router
+            .analyze_complexity("rename all .txt files to .md", &models)
+            .await
+            .unwrap();
         assert!(complexity.score < 0.3);
         assert_eq!(complexity.task_type, TaskType::Simple);
     }
@@ -338,11 +389,14 @@ mod tests {
             modified_at: "2024-01-01".to_string(),
             digest: "xyz789".to_string(),
         }];
-        
-        let complexity = router.analyze_complexity(
-            "Design a distributed microservices architecture with API gateway",
-            &models
-        ).await.unwrap();
+
+        let complexity = router
+            .analyze_complexity(
+                "Design a distributed microservices architecture with API gateway",
+                &models,
+            )
+            .await
+            .unwrap();
         assert!(complexity.score >= 0.5);
     }
 }

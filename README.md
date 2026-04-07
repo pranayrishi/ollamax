@@ -70,19 +70,22 @@ way to verify your install works without pulling a model.
 
 ## What works in v0.1.0
 
-| Command           | Status | What it does                                                  |
-| :---------------- | :----: | :------------------------------------------------------------ |
-| `forge status`    |   ✅   | Hardware detection, recommended model, VRAM/RAM/CPU summary   |
-| `forge optimize`  |   ✅   | Prints a tuned `Modelfile` for your hardware (no-op without `--dry-run=false`) |
-| `forge skills list` |  ✅   | Lists bundled recipe JSONs                                   |
-| `forge chat`      |   🟡   | Single-shot generate via Ollama HTTP API                      |
-| `forge audit`     |   🟡   | Local regex secret scan (gitleaks-style patterns)             |
-| `forge init`      |   🟡   | Writes a starter `forge.toml`                                 |
-| `forge build`     |   ❌   | Orchestrator is scaffolded; not wired end-to-end              |
-| `forge parallel`  |   ❌   | Stub                                                          |
-| `forge skills add`|   ❌   | Stub                                                          |
+| Command             | Status | What it does                                                                   |
+| :------------------ | :----: | :----------------------------------------------------------------------------- |
+| `forge status`      |   ✅   | Hardware detection (NVIDIA / AMD / Apple Silicon / Intel / CPU), recommended model |
+| `forge optimize`    |   ✅   | Prints a tuned `Modelfile` for your hardware                                   |
+| `forge audit <dir>` |   ✅   | Walks the dir, runs the secret scanner, exits 1 on Critical/High findings     |
+| `forge preload`     |   ✅   | Warm-loads a model with configurable `--keep-alive` (no cold-start next call) |
+| `forge skills list` |   ✅   | Lists bundled recipe JSONs                                                    |
+| `forge chat`        |   🟡   | Single-shot generate via Ollama HTTP API                                       |
+| `forge build`       |   🟡   | Orchestrator wired (router → preload → parallel executor → merger). Quality of merging is the next thing to land. |
+| `forge init`        |   🟡   | Writes a starter `forge.toml`                                                  |
+| `forge analyze`     |   ❌   | Errors loudly with "not implemented in v0.1.0"                                |
+| `forge parallel`    |   ❌   | Errors loudly with "not implemented in v0.1.0"                                |
+| `forge test`        |   ❌   | Errors loudly with "not implemented in v0.1.0"                                |
+| `forge skills add`  |   ❌   | Stub                                                                          |
 
-✅ = works · 🟡 = partial · ❌ = not implemented
+✅ = works · 🟡 = partial · ❌ = not implemented (and tells you so)
 
 ---
 

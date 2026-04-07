@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::debug;
 
 pub struct ContextManager {
     max_tokens: usize,
@@ -45,7 +45,7 @@ impl ContextManager {
     pub async fn add(&self, role: &str, content: &str) -> Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
         let tokens = self.count_tokens(content);
-        
+
         let entry = ContextEntry {
             id: id.clone(),
             role: role.to_string(),
@@ -70,11 +70,14 @@ impl ContextManager {
 
     async fn trim_to_max(&self, history: &mut VecDeque<ContextEntry>) {
         let mut total: usize = history.iter().map(|e| e.tokens).sum();
-        
+
         while total > self.max_tokens && history.len() > 1 {
             if let Some(removed) = history.pop_front() {
                 total = total.saturating_sub(removed.tokens);
-                debug!("Trimmed context entry {} (freed {} tokens)", removed.id, removed.tokens);
+                debug!(
+                    "Trimmed context entry {} (freed {} tokens)",
+                    removed.id, removed.tokens
+                );
             }
         }
     }
@@ -94,10 +97,13 @@ impl ContextManager {
         Ok(context)
     }
 
-    pub async fn get_truncated_context(&self, max_tokens: Option<usize>) -> Result<TruncatedContext> {
+    pub async fn get_truncated_context(
+        &self,
+        max_tokens: Option<usize>,
+    ) -> Result<TruncatedContext> {
         let limit = max_tokens.unwrap_or(self.max_tokens);
         let history = self.history.read().await;
-        
+
         let mut entries = Vec::new();
         let mut total = 0;
         let mut truncated_count = 0;
@@ -121,10 +127,10 @@ impl ContextManager {
     pub async fn clear(&self) {
         let mut history = self.history.write().await;
         history.clear();
-        
+
         let mut counts = self.token_counts.write().await;
         counts.clear();
-        
+
         debug!("Context cleared");
     }
 
@@ -176,7 +182,7 @@ PARAMETER repeat_penalty 1.1
     pub fn generate_optimized(model: &str, vram_gb: f32, target_tps: usize) -> String {
         let num_ctx = Self::calculate_optimal_context(vram_gb);
         let num_gpu = Self::calculate_gpu_layers(vram_gb);
-        
+
         let _ = target_tps; // reserved for future tps-aware tuning
         format!(
             r##"FROM {model}

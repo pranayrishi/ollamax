@@ -1,13 +1,21 @@
 use crate::providers::{GenerateOptions, LlmProvider, LlmResponse};
-use crate::router::{ComplexityScore, SubTask, TaskRouter};
-use anyhow::{Context, Result};
+use crate::router::{SubTask, TaskRouter};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tokio::sync::{mpsc, RwLock};
+use tracing::{error, info, warn};
 
 pub struct ParallelExecutor {
+    /// Held for re-routing on retry/fallback. Not currently used inside the
+    /// executor itself — the orchestrator does the routing — but kept so
+    /// adaptive retry doesn't need a constructor change.
+    #[allow(dead_code)]
     router: Arc<TaskRouter>,
+    /// Soft cap on concurrent subtasks. Not enforced yet — Ollama already
+    /// serializes per-model — but the field is part of the public API
+    /// surface for `ParallelExecutor::new`.
+    #[allow(dead_code)]
     workers: usize,
     provider: Arc<dyn LlmProvider>,
     active_tasks: Arc<RwLock<HashMap<String, TaskStatus>>>,
@@ -46,28 +54,48 @@ impl ParallelExecutor {
         task: &str,
         subtasks: Vec<SubTask>,
         system_prompt: Option<&str>,
+        model: &str,
+        num_ctx: usize,
     ) -> Result<Vec<WorkerResult>> {
-        info!("Executing {} subtasks in parallel", subtasks.len());
-        
-        let (tx, mut rx) = mpsc::channel::<WorkerResult>(subtasks.len());
-        
-        let task_handles: Vec<_> = subtasks.into_iter().map(|subtask| {
-            let provider = self.provider.clone();
-            let tx = tx.clone();
-            let system = system_prompt.map(|s| s.to_string());
-            let task_text = task.to_string();
-            
-            tokio::spawn(async move {
-                let result = Self::execute_subtask(
-                    provider,
-                    &task_text,
-                    &subtask,
-                    system.as_deref(),
-                ).await;
-                
-                let _ = tx.send(result).await;
+        info!(
+            "executing {} subtasks in parallel on `{model}` (num_ctx={num_ctx})",
+            subtasks.len()
+        );
+
+        // Warm-load the model BEFORE fanning out — otherwise the first parallel
+        // worker pays the cold-start tax (5-30s for a 7-14B) and Ollama
+        // serializes the rest of the workers behind it. One preload, all
+        // workers benefit. `1h` keep_alive lets follow-up calls stay warm too.
+        if let Err(e) = self.provider.preload(model, "1h").await {
+            warn!("preload of `{model}` failed (continuing anyway): {e}");
+        }
+
+        let (tx, mut rx) = mpsc::channel::<WorkerResult>(subtasks.len().max(1));
+
+        let task_handles: Vec<_> = subtasks
+            .into_iter()
+            .map(|subtask| {
+                let provider = self.provider.clone();
+                let tx = tx.clone();
+                let system = system_prompt.map(|s| s.to_string());
+                let task_text = task.to_string();
+                let model = model.to_string();
+
+                tokio::spawn(async move {
+                    let result = Self::execute_subtask(
+                        provider,
+                        &task_text,
+                        &subtask,
+                        system.as_deref(),
+                        &model,
+                        num_ctx,
+                    )
+                    .await;
+
+                    let _ = tx.send(result).await;
+                })
             })
-        }).collect();
+            .collect();
 
         let mut results = Vec::new();
         for _ in 0..task_handles.len() {
@@ -90,39 +118,54 @@ impl ParallelExecutor {
         original_task: &str,
         subtask: &SubTask,
         system: Option<&str>,
+        model: &str,
+        num_ctx: usize,
     ) -> WorkerResult {
-        info!("Worker {}: Starting task '{}'", subtask.id, subtask.name);
-        
+        info!(
+            "worker {}: starting '{}' on `{model}`",
+            subtask.id, subtask.name
+        );
+
         let mut prompt = String::new();
-        
+
         if let Some(sys) = system {
-            prompt.push_str(&format!("{}\n\n", sys));
+            prompt.push_str(&format!("{sys}\n\n"));
         }
-        
+
         prompt.push_str(&format!(
-            "Original Task: {}\n\nSubtask: {}\nDescription: {}\n\n",
-            original_task, subtask.name, subtask.description
+            "Original Task: {original_task}\n\nSubtask: {}\nDescription: {}\n\n",
+            subtask.name, subtask.description
         ));
-        
+
         if !subtask.skill_tags.is_empty() {
             prompt.push_str(&format!("Focus on: {}\n\n", subtask.skill_tags.join(", ")));
         }
-        
+
         prompt.push_str("Provide the complete implementation:\n");
 
         let opts = GenerateOptions {
-            model: "llama3.2:3b".to_string(),
+            model: model.to_string(),
             prompt,
-            system: Some("You are a specialized coding assistant. Return only code with minimal explanation.".to_string()),
+            system: Some(
+                "You are a specialized coding assistant. Return only code with minimal explanation."
+                    .to_string(),
+            ),
             temperature: Some(0.7),
-            num_ctx: Some(8192),
+            num_ctx: Some(num_ctx),
+            // Reuse the model that's already warm from `preload()`. The
+            // executor's parent call passed the same `keep_alive` so all
+            // workers share the same residency window.
+            keep_alive: Some("1h".to_string()),
             stream: false,
             ..Default::default()
         };
 
         match provider.generate(opts).await {
             Ok(response) => {
-                info!("Worker {}: Completed successfully ({} tokens)", subtask.id, response.tokens_generated);
+                info!(
+                    "Worker {}: Completed successfully ({} tokens)",
+                    subtask.id, response.tokens_generated
+                );
                 WorkerResult {
                     task_id: subtask.id.clone(),
                     output: response.content,
@@ -146,7 +189,12 @@ impl ParallelExecutor {
         }
     }
 
-    pub async fn execute_single(&self, task: &str, model: &str, system: Option<&str>) -> Result<LlmResponse> {
+    pub async fn execute_single(
+        &self,
+        task: &str,
+        model: &str,
+        system: Option<&str>,
+    ) -> Result<LlmResponse> {
         let opts = GenerateOptions {
             model: model.to_string(),
             prompt: task.to_string(),
@@ -162,7 +210,7 @@ impl ParallelExecutor {
 
     pub async fn merge_results(&self, results: Vec<WorkerResult>) -> Result<String> {
         let successful: Vec<_> = results.iter().filter(|r| r.success).collect();
-        
+
         if successful.is_empty() {
             anyhow::bail!("All workers failed, cannot merge results");
         }
@@ -173,7 +221,8 @@ impl ParallelExecutor {
 
         let merge_prompt = format!(
             "Merge the following code outputs into a single coherent implementation:\n\n{}",
-            successful.iter()
+            successful
+                .iter()
                 .map(|r| format!("=== {} ===\n{}\n", r.task_id, r.output))
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -185,7 +234,8 @@ impl ParallelExecutor {
             system: Some(
                 "You are a code merging expert. Combine the provided code snippets into a single, \
                 cohesive implementation. Resolve any conflicts by keeping the best version of each \
-                section. Return only the merged code without explanation.".to_string()
+                section. Return only the merged code without explanation."
+                    .to_string(),
             ),
             temperature: Some(0.3),
             num_ctx: Some(16384),
@@ -198,7 +248,8 @@ impl ParallelExecutor {
 
     pub async fn get_active_tasks(&self) -> Vec<(String, TaskStatus)> {
         let tasks = self.active_tasks.read().await;
-        tasks.iter()
+        tasks
+            .iter()
             .map(|(id, status)| (id.clone(), status.clone()))
             .collect()
     }
@@ -225,7 +276,8 @@ impl MergingAgent {
             Code Outputs:\n{}\n\n\
             Provide the final merged implementation:",
             lang_context,
-            outputs.iter()
+            outputs
+                .iter()
                 .enumerate()
                 .map(|(i, o)| format!("--- Output {} ---\n{}\n", i + 1, o))
                 .collect::<Vec<_>>()
@@ -238,7 +290,8 @@ impl MergingAgent {
             system: Some(
                 "You are an expert code reviewer and merger. Produce clean, well-structured, \
                 production-ready code. Remove any duplicates or conflicting code. Ensure the \
-                final output is syntactically correct and follows best practices.".to_string()
+                final output is syntactically correct and follows best practices."
+                    .to_string(),
             ),
             temperature: Some(0.2),
             num_ctx: Some(16384),
@@ -253,7 +306,8 @@ impl MergingAgent {
         let conflict_prompt = format!(
             "The following code snippets have conflicts. Analyze each one and produce \
             the correct, merged version:\n\n{}",
-            conflicting_outputs.iter()
+            conflicting_outputs
+                .iter()
                 .enumerate()
                 .map(|(i, o)| format!("=== Version {} ===\n{}\n", i + 1, o))
                 .collect::<Vec<_>>()

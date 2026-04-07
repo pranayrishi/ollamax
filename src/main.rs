@@ -3,6 +3,7 @@ use clap::Parser;
 use ollama_forge::cli::{Cli, Commands, SkillsAction};
 use ollama_forge::orchestrator::{BuildRequest, Orchestrator, OrchestratorConfig};
 use ollama_forge::providers::{GenerateOptions, LlmProvider, OllamaProvider};
+use ollama_forge::security::{SecurityGuard, Severity};
 use ollama_forge::{init_tracing, monitoring::VramSentinel, skills::SkillsEngine, Config};
 use std::path::{Path, PathBuf};
 use tracing::{error, info};
@@ -110,7 +111,10 @@ async fn async_main() -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        eprintln!("forge: could not list models from {}: {e}", config.ollama_url);
+                        eprintln!(
+                            "forge: could not list models from {}: {e}",
+                            config.ollama_url
+                        );
                         eprintln!("       is `ollama serve` running?");
                     }
                 }
@@ -179,8 +183,94 @@ async fn async_main() -> Result<()> {
             }
         }
 
-        _ => {
-            println!("Use 'forge --help' for usage information");
+        Commands::Preload { model, keep_alive } => {
+            let ollama = OllamaProvider::new(&config.ollama_url);
+            let model = model.unwrap_or_else(|| config.default_model.clone());
+            let start = std::time::Instant::now();
+            print!("warming `{model}` (keep_alive={keep_alive})… ");
+            // Flush so the user sees progress before the blocking call.
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            match ollama.preload(&model, &keep_alive).await {
+                Ok(()) => {
+                    println!("ok ({} ms)", start.elapsed().as_millis());
+                    println!();
+                    println!("Next call to this model will skip the cold-start.");
+                    println!("Verify with: ollama ps");
+                }
+                Err(e) => {
+                    println!("failed");
+                    eprintln!("forge: {e:#}");
+                    eprintln!("       is `ollama serve` running at {}?", config.ollama_url);
+                    eprintln!("       has `{model}` been pulled? try `ollama pull {model}`");
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::Audit { path, secrets: _ } => {
+            if !path.exists() {
+                anyhow::bail!("audit path does not exist: {}", path.display());
+            }
+            let guard = SecurityGuard::new(true);
+            let report = guard.audit_directory(&path).await?;
+
+            println!("\n🔒 Security audit: {}", path.display());
+            println!("   {}", report.summary);
+
+            if report.findings.is_empty() {
+                println!("\n✅ No findings.");
+                return Ok(());
+            }
+
+            // Group + count by severity for the header line.
+            let crit = report
+                .findings
+                .iter()
+                .filter(|f| f.rule.severity == Severity::Critical)
+                .count();
+            let high = report
+                .findings
+                .iter()
+                .filter(|f| f.rule.severity == Severity::High)
+                .count();
+            let med = report
+                .findings
+                .iter()
+                .filter(|f| f.rule.severity == Severity::Medium)
+                .count();
+            let low = report
+                .findings
+                .iter()
+                .filter(|f| f.rule.severity == Severity::Low)
+                .count();
+            println!("   critical={crit}  high={high}  medium={med}  low={low}");
+            println!();
+
+            for f in &report.findings {
+                let badge = match f.rule.severity {
+                    Severity::Critical => "CRIT",
+                    Severity::High => "HIGH",
+                    Severity::Medium => "MED ",
+                    Severity::Low => "LOW ",
+                    Severity::Info => "INFO",
+                };
+                let file = f.file.as_deref().unwrap_or("<unknown>");
+                println!("  [{badge}] {}:{}  {}", file, f.line_number, f.rule.name);
+                println!("         {}", f.rule.description);
+            }
+
+            // Non-zero exit when anything Critical/High was found, so this can
+            // be used in CI / pre-commit hooks: `forge audit src/ || exit 1`.
+            if crit > 0 || high > 0 {
+                std::process::exit(1);
+            }
+        }
+
+        Commands::Analyze { .. } | Commands::Parallel { .. } | Commands::Test { .. } => {
+            anyhow::bail!(
+                "this subcommand is not implemented in v0.1.0 — see the status table in README.md"
+            );
         }
     }
 
@@ -191,14 +281,20 @@ async fn init_project(force: bool) -> Result<()> {
     let forge_toml = PathBuf::from("forge.toml");
 
     if forge_toml.exists() && !force {
-        println!("forge: forge.toml already exists in {}.", std::env::current_dir()?.display());
+        println!(
+            "forge: forge.toml already exists in {}.",
+            std::env::current_dir()?.display()
+        );
         println!("       re-run with --force to overwrite.");
         return Ok(());
     }
 
     let config = include_str!("../forge.toml");
     tokio::fs::write(&forge_toml, config).await?;
-    info!("initialized forge project at {}", std::env::current_dir()?.display());
+    info!(
+        "initialized forge project at {}",
+        std::env::current_dir()?.display()
+    );
     println!("✅ forge.toml written.");
     println!();
     println!("Next:");

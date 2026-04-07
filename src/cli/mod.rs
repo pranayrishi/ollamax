@@ -1,4 +1,3 @@
-use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -40,16 +39,20 @@ pub enum Commands {
     Build {
         #[arg(help = "The task or feature to build")]
         task: Vec<String>,
-        
+
         #[arg(short, long, help = "Output directory")]
         output: Option<PathBuf>,
-        
-        #[arg(short, long, help = "Language/framework (auto-detect if not specified)")]
+
+        #[arg(
+            short,
+            long,
+            help = "Language/framework (auto-detect if not specified)"
+        )]
         lang: Option<String>,
-        
+
         #[arg(short, long, help = "Run tests after building")]
         test: bool,
-        
+
         #[arg(short, long, help = "Skip security checks")]
         no_security: bool,
     },
@@ -58,7 +61,7 @@ pub enum Commands {
     Chat {
         #[arg(short, long, help = "Model to use")]
         model: Option<String>,
-        
+
         #[arg(help = "Initial prompt")]
         prompt: Option<String>,
     },
@@ -67,7 +70,7 @@ pub enum Commands {
     Analyze {
         #[arg(help = "File or directory to analyze")]
         path: PathBuf,
-        
+
         #[arg(short, long, help = "Analysis type")]
         analysis_type: Option<AnalysisType>,
     },
@@ -76,7 +79,7 @@ pub enum Commands {
     Audit {
         #[arg(help = "Directory to audit")]
         path: PathBuf,
-        
+
         #[arg(short, long, help = "Include secrets detection")]
         secrets: bool,
     },
@@ -85,7 +88,7 @@ pub enum Commands {
     Parallel {
         #[arg(help = "Number of workers")]
         workers: Option<usize>,
-        
+
         #[arg(help = "Tasks to execute")]
         tasks: Vec<String>,
     },
@@ -94,7 +97,7 @@ pub enum Commands {
     Test {
         #[arg(help = "File or directory to generate tests for")]
         path: PathBuf,
-        
+
         #[arg(short, long, help = "Test framework")]
         framework: Option<String>,
     },
@@ -111,11 +114,27 @@ pub enum Commands {
         action: SkillsAction,
     },
 
+    #[command(about = "Warm-load a model into Ollama (avoids cold-start on the next call)")]
+    Preload {
+        #[arg(
+            help = "Model name (e.g. qwen2.5-coder:7b). Defaults to your config's `default_model`."
+        )]
+        model: Option<String>,
+
+        #[arg(
+            short,
+            long,
+            default_value = "1h",
+            help = "How long Ollama should keep the model resident. Accepts `30m`, `1h`, `0` (immediate unload)."
+        )]
+        keep_alive: String,
+    },
+
     #[command(about = "Optimize Ollama settings for your hardware")]
     Optimize {
         #[arg(short, long, help = "Aggressive optimization")]
         aggressive: bool,
-        
+
         #[arg(short, long, help = "Show changes without applying")]
         dry_run: bool,
     },
@@ -158,15 +177,19 @@ pub enum SkillsAction {
 impl Cli {
     pub fn build_request(&self) -> Option<crate::orchestrator::BuildRequest> {
         match &self.command {
-            Commands::Build { task, output, lang, test, no_security } => {
-                Some(crate::orchestrator::BuildRequest {
-                    task: task.join(" "),
-                    output_dir: output.clone(),
-                    language: lang.clone(),
-                    run_tests: *test,
-                    skip_security: *no_security,
-                })
-            }
+            Commands::Build {
+                task,
+                output,
+                lang,
+                test,
+                no_security,
+            } => Some(crate::orchestrator::BuildRequest {
+                task: task.join(" "),
+                output_dir: output.clone(),
+                language: lang.clone(),
+                run_tests: *test,
+                skip_security: *no_security,
+            }),
             _ => None,
         }
     }

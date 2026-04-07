@@ -1,11 +1,10 @@
-use crate::orchestrator::Orchestrator;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 pub struct SkillsEngine {
     skills: Arc<RwLock<HashMap<String, Skill>>>,
@@ -65,14 +64,14 @@ impl SkillsEngine {
 
     pub async fn load_skills(&self) -> Result<Vec<Skill>> {
         let mut skills = Vec::new();
-        
+
         if !self.skills_dir.exists() {
             tokio::fs::create_dir_all(&self.skills_dir).await?;
             self.create_default_skills().await?;
         }
-        
+
         let mut entries = tokio::fs::read_dir(&self.skills_dir).await?;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("json") {
@@ -85,7 +84,7 @@ impl SkillsEngine {
                 }
             }
         }
-        
+
         info!("Loaded {} skills", skills.len());
         Ok(skills)
     }
@@ -186,39 +185,47 @@ impl SkillsEngine {
                 recipes: vec![],
             },
         ];
-        
+
         for skill in default_skills {
             let path = self.skills_dir.join(format!("{}.json", skill.name));
             let json = serde_json::to_string_pretty(&skill)?;
             tokio::fs::write(&path, json).await?;
         }
-        
+
         Ok(())
     }
 
     pub async fn find_skill(&self, query: &str) -> Option<Skill> {
         let skills = self.skills.read().await;
         let query_lower = query.to_lowercase();
-        
+
         for skill in skills.values() {
             if skill.name.to_lowercase().contains(&query_lower) {
                 return Some(skill.clone());
             }
-            
-            if skill.tags.iter().any(|t| t.to_lowercase().contains(&query_lower)) {
+
+            if skill
+                .tags
+                .iter()
+                .any(|t| t.to_lowercase().contains(&query_lower))
+            {
                 return Some(skill.clone());
             }
-            
+
             for recipe in &skill.recipes {
                 if recipe.name.to_lowercase().contains(&query_lower) {
                     return Some(skill.clone());
                 }
-                if recipe.trigger_keywords.iter().any(|k| query_lower.contains(&k.to_lowercase())) {
+                if recipe
+                    .trigger_keywords
+                    .iter()
+                    .any(|k| query_lower.contains(&k.to_lowercase()))
+                {
                     return Some(skill.clone());
                 }
             }
         }
-        
+
         None
     }
 
@@ -226,10 +233,10 @@ impl SkillsEngine {
         let path = self.skills_dir.join(format!("{}.json", skill.name));
         let json = serde_json::to_string_pretty(&skill)?;
         tokio::fs::write(&path, json).await?;
-        
+
         let mut skills = self.skills.write().await;
         skills.insert(skill.name.clone(), skill);
-        
+
         Ok(())
     }
 
@@ -238,10 +245,10 @@ impl SkillsEngine {
         if path.exists() {
             tokio::fs::remove_file(&path).await?;
         }
-        
+
         let mut skills = self.skills.write().await;
         skills.remove(name);
-        
+
         Ok(())
     }
 
@@ -252,26 +259,29 @@ impl SkillsEngine {
 
     pub async fn match_skill_to_task(&self, task: &str) -> Option<Skill> {
         let task_lower = task.to_lowercase();
-        
+
         let skills = self.skills.read().await;
-        
+
         for skill in skills.values() {
             for recipe in &skill.recipes {
                 for keyword in &recipe.trigger_keywords {
                     if task_lower.contains(&keyword.to_lowercase()) {
-                        debug!("Matched skill '{}' via recipe '{}'", skill.name, recipe.name);
+                        debug!(
+                            "Matched skill '{}' via recipe '{}'",
+                            skill.name, recipe.name
+                        );
                         return Some(skill.clone());
                     }
                 }
             }
-            
+
             for tag in &skill.tags {
                 if task_lower.contains(&tag.to_lowercase()) {
                     return Some(skill.clone());
                 }
             }
         }
-        
+
         None
     }
 }

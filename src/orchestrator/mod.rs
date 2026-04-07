@@ -1,17 +1,16 @@
 use crate::context::ContextManager;
-use crate::executor::{MergingAgent, ParallelExecutor};
-use crate::monitoring::{HealthStatus, OptimizationPlan, VramSentinel};
-use crate::providers::{GenerateOptions, LlmProvider, LlmResponse, OllamaProvider, ModelInfo};
-use crate::router::{ComplexityScore, SubTask, TaskRouter};
-use crate::security::{AuditReport, SecurityGuard, TddEnforcer, TddReport};
-use crate::skills::{Skill, SkillsEngine};
-use anyhow::{Context, Result};
+use crate::executor::ParallelExecutor;
+use crate::monitoring::VramSentinel;
+use crate::providers::{GenerateOptions, LlmProvider, ModelInfo, OllamaProvider};
+use crate::router::TaskRouter;
+use crate::security::{AuditReport, SecurityGuard, TddEnforcer};
+use crate::skills::SkillsEngine;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 pub struct Orchestrator {
     config: OrchestratorConfig,
@@ -21,6 +20,11 @@ pub struct Orchestrator {
     executor: Arc<ParallelExecutor>,
     sentinel: Arc<VramSentinel>,
     security: Arc<SecurityGuard>,
+    /// TDD enforcement is constructed but not yet wired into the build path —
+    /// the enforce-tests-on-every-change feature is tracked in the roadmap.
+    /// Holding the Arc here means we don't have to plumb config through every
+    /// call site once it lands.
+    #[allow(dead_code)]
     tdd: Arc<TddEnforcer>,
     skills: Arc<SkillsEngine>,
     session: Arc<RwLock<SessionState>>,
@@ -61,11 +65,11 @@ pub struct SessionState {
 impl Orchestrator {
     pub async fn new(config: OrchestratorConfig) -> Result<Self> {
         let ollama = Arc::new(OllamaProvider::new(&config.ollama_url));
-        
+
         if !ollama.health_check().await? {
             warn!("Ollama is not responding at {}", config.ollama_url);
         }
-        
+
         let router = Arc::new(TaskRouter::new(Default::default()));
         let context = Arc::new(ContextManager::new(32768));
         let executor = Arc::new(ParallelExecutor::new(
@@ -73,19 +77,19 @@ impl Orchestrator {
             ollama.clone(),
             config.max_parallel_workers,
         ));
-        
+
         let sentinel = Arc::new(VramSentinel::new(2048, true));
         let security = Arc::new(SecurityGuard::new(config.security_enabled));
         let tdd = Arc::new(TddEnforcer::new(config.tdd_enforced));
-        
+
         let skills_dir = dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("ollama-forge")
             .join("skills");
-        
+
         let skills = Arc::new(SkillsEngine::new(skills_dir));
         skills.load_skills().await?;
-        
+
         let session = SessionState {
             id: uuid::Uuid::new_v4().to_string(),
             project_path: None,
@@ -93,9 +97,9 @@ impl Orchestrator {
             context_history: Vec::new(),
             start_time: chrono::Utc::now(),
         };
-        
+
         info!("Orchestrator initialized with session {}", session.id);
-        
+
         Ok(Self {
             config,
             ollama,
@@ -112,34 +116,53 @@ impl Orchestrator {
 
     pub async fn execute(&self, request: BuildRequest) -> Result<BuildResult> {
         info!("Executing build request: {}", request.task);
-        
+
         let health = self.sentinel.check_health(None).await;
         info!("Health check: {:?}", health.hardware_profile);
-        
+
         let available_models = self.ollama.list_models().await?;
-        let complexity = self.router.analyze_complexity(&request.task, &available_models).await?;
-        info!("Complexity score: {} ({:?})", complexity.score, complexity.task_type);
-        
+        let complexity = self
+            .router
+            .analyze_complexity(&request.task, &available_models)
+            .await?;
+        info!(
+            "Complexity score: {} ({:?})",
+            complexity.score, complexity.task_type
+        );
+
         let context_prompt = self.build_system_context(&request).await?;
         self.context.add("system", &context_prompt).await?;
-        
+
         let subtasks = self.router.split_into_subtasks(&request.task);
-        
+
         if self.router.can_parallelize(&complexity) && subtasks.len() > 1 {
-            info!("Running {} tasks in parallel", subtasks.len());
-            let results = self.executor
-                .execute_parallel(&request.task, subtasks, Some(&context_prompt))
+            info!(
+                "running {} tasks in parallel on `{}`",
+                subtasks.len(),
+                complexity.suggested_model
+            );
+            // Pull num_ctx from hardware sentinel so we never overflow VRAM.
+            let num_ctx = health.hardware_profile.optimal_context;
+            let results = self
+                .executor
+                .execute_parallel(
+                    &request.task,
+                    subtasks,
+                    Some(&context_prompt),
+                    &complexity.suggested_model,
+                    num_ctx,
+                )
                 .await?;
-            
+
             let merged = self.executor.merge_results(results).await?;
-            
+
             if self.config.security_enabled {
                 let audit = self.run_security_audit(&merged).await?;
                 if !audit.findings.is_empty() {
                     warn!("Security issues found: {}", audit.summary);
                 }
             }
-            
+
             return Ok(BuildResult {
                 success: true,
                 output: merged,
@@ -149,11 +172,16 @@ impl Orchestrator {
                 warnings: vec![],
             });
         }
-        
-        let response = self.executor
-            .execute_single(&request.task, &complexity.suggested_model, Some(&context_prompt))
+
+        let response = self
+            .executor
+            .execute_single(
+                &request.task,
+                &complexity.suggested_model,
+                Some(&context_prompt),
+            )
             .await?;
-        
+
         Ok(BuildResult {
             success: true,
             output: response.content,
@@ -166,28 +194,27 @@ impl Orchestrator {
 
     async fn build_system_context(&self, request: &BuildRequest) -> Result<String> {
         let mut context = String::new();
-        
+
         context.push_str("You are Ollama-Forge, an expert coding assistant.\n\n");
-        
+
         if let Some(ref path) = request.output_dir {
             context.push_str(&format!("Project directory: {}\n", path.display()));
         }
-        
+
         if let Some(ref lang) = request.language {
             context.push_str(&format!("Language: {}\n", lang));
         }
-        
+
         let health = self.sentinel.check_health(None).await;
         context.push_str(&format!(
             "Available VRAM: {} MB\nOptimal context: {}\n",
-            health.hardware_profile.free_vram_mb,
-            health.hardware_profile.optimal_context
+            health.hardware_profile.free_vram_mb, health.hardware_profile.optimal_context
         ));
-        
+
         if let Some(skill) = self.skills.match_skill_to_task(&request.task).await {
             context.push_str(&format!("\nSkill context: {}\n", skill.prompts.system));
         }
-        
+
         Ok(context)
     }
 
@@ -207,17 +234,20 @@ impl Orchestrator {
             Generate a corrected version that fixes the error.",
             error, context
         );
-        
+
         let opts = GenerateOptions {
             model: "deepseek-coder-v2:16b".to_string(),
             prompt: correction_prompt,
-            system: Some("You are a code debugging expert. Fix the error and return corrected code.".to_string()),
+            system: Some(
+                "You are a code debugging expert. Fix the error and return corrected code."
+                    .to_string(),
+            ),
             temperature: Some(0.3),
             num_ctx: Some(16384),
             stream: false,
             ..Default::default()
         };
-        
+
         self.ollama.generate(opts).await.map(|r| r.content)
     }
 
@@ -227,17 +257,20 @@ impl Orchestrator {
             Provide a detailed audit report.",
             code
         );
-        
+
         let opts = GenerateOptions {
             model: "llama3.3:70b".to_string(),
             prompt: audit_prompt,
-            system: Some("You are a senior code auditor. Review thoroughly and provide actionable feedback.".to_string()),
+            system: Some(
+                "You are a senior code auditor. Review thoroughly and provide actionable feedback."
+                    .to_string(),
+            ),
             temperature: Some(0.3),
             num_ctx: Some(32768),
             stream: false,
             ..Default::default()
         };
-        
+
         self.ollama.generate(opts).await.map(|r| r.content)
     }
 
@@ -246,7 +279,7 @@ impl Orchestrator {
         let models = self.ollama.list_models().await?;
         let context_stats = self.context.stats().await;
         let session = self.session.read().await;
-        
+
         Ok(StatusReport {
             hardware: health.hardware_profile,
             ollama_healthy: self.ollama.health_check().await?,
