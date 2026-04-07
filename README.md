@@ -72,23 +72,86 @@ way to verify your install works without pulling a model.
 
 | Command                      | Status | What it does                                                                                  |
 | :--------------------------- | :----: | :-------------------------------------------------------------------------------------------- |
-| `forge status`               |   ✅   | Hardware detection (NVIDIA / AMD / Apple Silicon / Intel / CPU), recommended model, Ollama health, currently-loaded models |
+| `forge research "<q>"`       |   ✅   | **Tool-using research agent.** Local Ollama + free public tools (DuckDuckGo, Wikipedia, arXiv, plain HTTP). Configurable `--max-iterations`. |
+| `forge tools`                |   ✅   | Lists the four bundled tools and the JSON schema the agent uses to call them                 |
+| `forge replay <log>`         |   ✅   | Re-issues every Ollama call in a JSONL replay log against locally-installed models, reports hash drift |
+| `forge build "..." -o dir/`  |   🟢   | Heterogeneous parallel orchestration with per-worker progress events; `--output` extracts labeled code blocks to disk |
+| `forge status`               |   ✅   | Hardware (NVIDIA / AMD / Apple Silicon / Intel / CPU), recommended model, Ollama health, loaded models |
 | `forge --version`            |   ✅   | Includes git short SHA so a build can be pinned for replay/debug                              |
 | `forge optimize`             |   ✅   | Prints a tuned `Modelfile` for your hardware                                                  |
 | `forge audit <dir>`          |   ✅   | Walks the dir, runs the secret scanner, exits 1 on Critical/High; `--json` for CI consumers   |
 | `forge preload [model]`      |   ✅   | Warm-loads a model with `--keep-alive`; braille spinner so a 14B cold-load doesn't look hung |
 | `forge chat "..."`           |   ✅   | Streams tokens to stdout as they arrive (real NDJSON drain, not buffered)                     |
 | `forge run-skill <name>`     |   ✅   | Loads a skill, picks an installed model (with fallback), streams the response                |
-| `forge skills list`          |   ✅   | Lists installed skill recipes                                                                |
-| `forge skills add <path>`    |   ✅   | Adds a JSON skill from a local path (no remote URLs — preserves "no network but Ollama")     |
-| `forge skills search <q>`    |   ✅   | Lists *all* skills matching a name/tag/keyword                                                |
+| `forge skills list/add/search` | ✅   | Recipe management; `add` is local-path only by design                                         |
 | `forge analyze <dir>`        |   ✅   | Local secret scan + token-budgeted model code review                                          |
 | `forge test <file>`          |   ✅   | Generates tests for a single source file in the right framework for the language              |
-| `forge build "..."`          |   🟢   | Full orchestrator: router → preload → parallel executor → section-aware merger                 |
 | `forge init`                 |   🟢   | Writes a starter `forge.toml`                                                                 |
-| `forge parallel`             |   ❌   | Errors loudly with "not implemented" — use `forge build`                                      |
+| `forge parallel`             |   ❌   | Errors loudly — use `forge build`                                                             |
 
 ✅ = works · 🟢 = works but unproven against real-world workloads · ❌ = not implemented (and tells you so)
+
+### Research agent
+
+`forge research "<question>"` runs a tool-using agent loop entirely on
+local Ollama + free public tools. No paid APIs. No keys. Example:
+
+```bash
+forge research "what is the airspeed velocity of a barn swallow" --trace
+```
+
+Bundled tools (all free, all keyless):
+
+| Tool          | Source                                | Purpose                                          |
+| :------------ | :------------------------------------ | :----------------------------------------------- |
+| `web_search`  | DuckDuckGo Instant Answer JSON API    | General factual queries, definition discovery    |
+| `wikipedia`   | Wikipedia REST `summary` + opensearch | Direct article lookups + fuzzy title search      |
+| `arxiv`       | arXiv Atom API                        | Academic papers (top 5 hits, with PDF links)     |
+| `fetch_url`   | plain HTTP GET                        | Read a specific page after discovering its URL   |
+
+The agent runs in a JSON-constrained loop: each iteration the model emits
+either `{action: "use_tool", tool, args}` or `{action: "answer", text}`,
+the loop dispatches accordingly, and tool results are fed back into the
+transcript. Capped at `--max-iterations` (default 6). Per-tool rate limit
+of 250 ms prevents the loop from hammering DDG into a temporary IP ban.
+
+### Heterogeneous parallel execution
+
+`forge build` runs multiple workers in parallel on **different models at
+the same time**. Architecture work routes to the largest installed model,
+boilerplate (frontend / tests) routes to the smallest, balanced work uses
+the analyzer's pick. Distinct models are preloaded *concurrently* into
+Ollama (which serializes per-model but not across models), so a 32B and a
+3B can warm up at the same time.
+
+The router is **VRAM-aware**: if the sum of selected models wouldn't fit
+in `free_vram_mb`, the router collapses the assignment to the largest
+single model that does fit. No silent OOM kills mid-build.
+
+`forge build "..." --output ./generated/` extracts every labeled fenced
+code block (e.g., ` ```rust src/main.rs ` or ` ```yaml file=.github/workflows/ci.yml `)
+and writes it to the right path under `./generated/`. Path traversal
+(`..`) and absolute paths are rejected.
+
+### Deterministic replay (compliance / audit trail)
+
+Set `FORGE_REPLAY_LOG=path/to/log.jsonl` and every Ollama call from
+`forge chat` and `forge research` is appended to the log with:
+
+- the `model_digest` from `/api/tags` (so a future `ollama pull` of the
+  same tag is detectable),
+- the seed, temperature, top_p, num_ctx, system prompt, and prompt itself,
+- a real **SHA-256** of the prompt and response (not a `DefaultHasher`
+  shim that drifts across Rust versions),
+- the `forge_version` string including the git SHA.
+
+Then `forge replay path/to/log.jsonl` re-issues every call against
+locally-installed models and reports any hash drift. With `seed=0` and
+`temperature=0` (which `chat` switches to automatically when the env var
+is set), this gives bit-identical replays of past sessions, forever, on
+the user's own hardware. **No hosted tool can offer this** because
+providers rotate weights silently. The compliance pitch — finance,
+healthcare, defense, legal — depends on this property.
 
 ### Schema-constrained output
 

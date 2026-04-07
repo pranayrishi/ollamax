@@ -32,6 +32,10 @@ pub struct GenerateOptions {
     pub repeat_penalty: Option<f32>,
     pub stop: Option<Vec<String>>,
     pub stream: bool,
+    /// PRNG seed forwarded to Ollama (`options.seed`). Combined with
+    /// `temperature: 0`, this gives bit-for-bit deterministic output —
+    /// the foundation of `forge replay`.
+    pub seed: Option<i64>,
     /// e.g. "30m", "1h", "0" — passed straight to Ollama's `keep_alive`.
     /// `None` lets Ollama use its server-side default (5m as of v0.1.x).
     pub keep_alive: Option<String>,
@@ -64,6 +68,7 @@ impl Default for GenerateOptions {
             stream: false,
             keep_alive: Some("30m".to_string()),
             format: None,
+            seed: None,
         }
     }
 }

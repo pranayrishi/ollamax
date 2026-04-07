@@ -6,6 +6,34 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 
+/// Progress event emitted by `ParallelExecutor::execute_parallel` so the CLI
+/// can stream a live status to stderr while a long parallel build runs.
+#[derive(Debug, Clone)]
+pub enum ProgressEvent {
+    /// A unique model is being preloaded into Ollama.
+    PreloadStarted { model: String },
+    /// A model finished preloading.
+    PreloadFinished {
+        model: String,
+        ok: bool,
+        elapsed_ms: u64,
+    },
+    /// A subtask worker started.
+    WorkerStarted {
+        subtask_id: String,
+        subtask_name: String,
+        model: String,
+    },
+    /// A subtask worker finished.
+    WorkerFinished {
+        subtask_id: String,
+        subtask_name: String,
+        ok: bool,
+        elapsed_ms: u64,
+        tokens: usize,
+    },
+}
+
 pub struct ParallelExecutor {
     /// Held for re-routing on retry/fallback. Not currently used inside the
     /// executor itself — the orchestrator does the routing — but kept so
@@ -49,25 +77,91 @@ impl ParallelExecutor {
         }
     }
 
+    /// Backwards-compatible thin wrapper that drops progress events on the
+    /// floor. Existing call sites stay unchanged.
     pub async fn execute_parallel(
         &self,
         task: &str,
         subtasks: Vec<SubTask>,
         system_prompt: Option<&str>,
-        model: &str,
-        num_ctx: usize,
+        default_model: &str,
+        default_num_ctx: usize,
+    ) -> Result<Vec<WorkerResult>> {
+        self.execute_parallel_with_progress(
+            task,
+            subtasks,
+            system_prompt,
+            default_model,
+            default_num_ctx,
+            None,
+        )
+        .await
+    }
+
+    /// Like `execute_parallel`, plus a progress channel. Each preload and
+    /// each worker emits a `ProgressEvent` so the CLI can render a
+    /// real-time status board on stderr instead of staring at a blank
+    /// terminal for 5 minutes.
+    pub async fn execute_parallel_with_progress(
+        &self,
+        task: &str,
+        subtasks: Vec<SubTask>,
+        system_prompt: Option<&str>,
+        default_model: &str,
+        default_num_ctx: usize,
+        progress: Option<mpsc::UnboundedSender<ProgressEvent>>,
     ) -> Result<Vec<WorkerResult>> {
         info!(
-            "executing {} subtasks in parallel on `{model}` (num_ctx={num_ctx})",
+            "executing {} subtasks in parallel (default model: `{default_model}`)",
             subtasks.len()
         );
 
-        // Warm-load the model BEFORE fanning out — otherwise the first parallel
-        // worker pays the cold-start tax (5-30s for a 7-14B) and Ollama
-        // serializes the rest of the workers behind it. One preload, all
-        // workers benefit. `1h` keep_alive lets follow-up calls stay warm too.
-        if let Err(e) = self.provider.preload(model, "1h").await {
-            warn!("preload of `{model}` failed (continuing anyway): {e}");
+        // **Heterogeneous parallel preload.** Each subtask may carry its
+        // own `model_override`. We collect every distinct model that will
+        // be used in this batch and preload them *concurrently* — Ollama
+        // serializes per-model but not across models, so a 32B and a 3B
+        // can load in parallel. This is the entire reason this method
+        // exists rather than the previous "one model name for everyone"
+        // version.
+        let mut needed_models: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for s in &subtasks {
+            needed_models.insert(
+                s.model_override
+                    .clone()
+                    .unwrap_or_else(|| default_model.to_string()),
+            );
+        }
+        info!(
+            "preloading {} unique model(s) in parallel: {:?}",
+            needed_models.len(),
+            needed_models
+        );
+        let preload_futures = needed_models.into_iter().map(|m| {
+            let provider = self.provider.clone();
+            let progress = progress.clone();
+            async move {
+                if let Some(tx) = &progress {
+                    let _ = tx.send(ProgressEvent::PreloadStarted { model: m.clone() });
+                }
+                let start = std::time::Instant::now();
+                let result = provider.preload(&m, "1h").await;
+                let ok = result.is_ok();
+                if let Err(e) = result {
+                    warn!("preload of `{m}` failed (continuing anyway): {e}");
+                }
+                if let Some(tx) = &progress {
+                    let _ = tx.send(ProgressEvent::PreloadFinished {
+                        model: m,
+                        ok,
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                    });
+                }
+            }
+        });
+        let preload_handles: Vec<_> = preload_futures.map(tokio::spawn).collect();
+        for h in preload_handles {
+            let _ = h.await;
         }
 
         let (tx, mut rx) = mpsc::channel::<WorkerResult>(subtasks.len().max(1));
@@ -79,9 +173,25 @@ impl ParallelExecutor {
                 let tx = tx.clone();
                 let system = system_prompt.map(|s| s.to_string());
                 let task_text = task.to_string();
-                let model = model.to_string();
+                let model = subtask
+                    .model_override
+                    .clone()
+                    .unwrap_or_else(|| default_model.to_string());
+                let num_ctx = subtask.num_ctx_override.unwrap_or(default_num_ctx);
+                let progress = progress.clone();
+                let subtask_id = subtask.id.clone();
+                let subtask_name = subtask.name.clone();
+                let model_name = model.clone();
 
                 tokio::spawn(async move {
+                    if let Some(tx) = &progress {
+                        let _ = tx.send(ProgressEvent::WorkerStarted {
+                            subtask_id: subtask_id.clone(),
+                            subtask_name: subtask_name.clone(),
+                            model: model_name.clone(),
+                        });
+                    }
+                    let start = std::time::Instant::now();
                     let result = Self::execute_subtask(
                         provider,
                         &task_text,
@@ -91,6 +201,15 @@ impl ParallelExecutor {
                         num_ctx,
                     )
                     .await;
+                    if let Some(tx) = &progress {
+                        let _ = tx.send(ProgressEvent::WorkerFinished {
+                            subtask_id,
+                            subtask_name,
+                            ok: result.success,
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            tokens: result.tokens_generated,
+                        });
+                    }
 
                     let _ = tx.send(result).await;
                 })

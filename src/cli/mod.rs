@@ -44,6 +44,13 @@ pub enum Commands {
 
         #[arg(short, long, help = "Skip the post-build security scan")]
         no_security: bool,
+
+        #[arg(
+            short = 'o',
+            long,
+            help = "Write extracted code blocks (\"```LANG path\\n...```\") into this directory"
+        )]
+        output: Option<PathBuf>,
     },
 
     #[command(about = "Chat with a local model")]
@@ -121,6 +128,46 @@ pub enum Commands {
         task: Vec<String>,
     },
 
+    #[command(about = "Run the research agent against a question. \
+                 Uses local Ollama for inference + free public tools \
+                 (DuckDuckGo, Wikipedia, arXiv, plain HTTP) for sources.")]
+    Research {
+        #[arg(help = "Question to research")]
+        question: Vec<String>,
+
+        #[arg(
+            short,
+            long,
+            help = "Override the model used by the agent (default: config default_model)"
+        )]
+        model: Option<String>,
+
+        #[arg(long, help = "Print the full tool-call trace to stderr")]
+        trace: bool,
+
+        #[arg(
+            long,
+            default_value = "6",
+            help = "Maximum number of tool-call rounds before forcing an answer"
+        )]
+        max_iterations: usize,
+    },
+
+    #[command(about = "List the tools the research agent can call")]
+    Tools,
+
+    #[command(
+        about = "Replay a deterministic log against the locally-installed model. \
+                 Reports any response drift since the log was captured."
+    )]
+    Replay {
+        #[arg(help = "Path to a JSON Lines replay log produced by an earlier forge run")]
+        log: PathBuf,
+
+        #[arg(long, help = "Print full responses (default: just hash drift)")]
+        verbose: bool,
+    },
+
     #[command(about = "Warm-load a model into Ollama (avoids cold-start on the next call)")]
     Preload {
         #[arg(
@@ -176,9 +223,13 @@ pub enum SkillsAction {
 impl Cli {
     pub fn build_request(&self) -> Option<crate::orchestrator::BuildRequest> {
         match &self.command {
-            Commands::Build { task, no_security } => Some(crate::orchestrator::BuildRequest {
+            Commands::Build {
+                task,
+                no_security,
+                output,
+            } => Some(crate::orchestrator::BuildRequest {
                 task: task.join(" "),
-                output_dir: None,
+                output_dir: output.clone(),
                 language: None,
                 run_tests: false,
                 skip_security: *no_security,

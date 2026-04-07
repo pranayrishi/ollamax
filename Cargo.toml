@@ -57,6 +57,13 @@ walkdir = "2.4"
 # pulling the full `tokenizers` crate (~3 MB of compile time and a runtime
 # data file), so we accept the small inaccuracy here for build speed.
 tiktoken-rs = "0.5"
+# Real SHA-256 for the replay log. We previously used
+# `std::hash::DefaultHasher` which is documented as "may change between Rust
+# releases" — meaning replay hashes wouldn't be reproducible across stdlib
+# versions. The whole audit-trail pitch hinges on stable hashes, so this
+# dep is mandatory, not optional. `sha2` is small (~30 KB compiled), well
+# audited, and pure Rust.
+sha2 = "0.10"
 
 [dev-dependencies]
 # Used by tests/security_scanner.rs to build a sandbox dir.

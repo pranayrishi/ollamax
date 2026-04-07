@@ -117,6 +117,16 @@ impl Orchestrator {
     }
 
     pub async fn execute(&self, request: BuildRequest) -> Result<BuildResult> {
+        self.execute_with_progress(request, None).await
+    }
+
+    /// Execute with an optional progress channel. The CLI uses this to
+    /// stream worker status to stderr while a long parallel build runs.
+    pub async fn execute_with_progress(
+        &self,
+        request: BuildRequest,
+        progress: Option<tokio::sync::mpsc::UnboundedSender<crate::executor::ProgressEvent>>,
+    ) -> Result<BuildResult> {
         info!("Executing build request: {}", request.task);
 
         let health = self.sentinel.check_health(None).await;
@@ -135,24 +145,42 @@ impl Orchestrator {
         let context_prompt = self.build_system_context(&request).await?;
         self.context.add("system", &context_prompt).await?;
 
-        let subtasks = self.router.split_into_subtasks(&request.task);
+        // Tiered routing: each subtask gets a model override based on its
+        // role (architecture → biggest installed model, boilerplate →
+        // smallest, default work → analyzer's pick). VRAM-aware: if the
+        // sum of selected models wouldn't fit in free VRAM, we collapse
+        // back to a single model. When only one model is installed this
+        // already falls through to a uniform run.
+        let subtasks = self.router.split_into_tiered_subtasks_vram_aware(
+            &request.task,
+            &available_models,
+            &complexity.suggested_model,
+            health.hardware_profile.free_vram_mb,
+        );
 
         if self.router.can_parallelize(&complexity) && subtasks.len() > 1 {
-            info!(
-                "running {} tasks in parallel on `{}`",
-                subtasks.len(),
-                complexity.suggested_model
-            );
+            // Log the heterogeneous routing decision so the user can see
+            // which model is doing what when they pass --verbose.
+            for s in &subtasks {
+                info!(
+                    "  subtask `{}` → {}",
+                    s.name,
+                    s.model_override
+                        .as_deref()
+                        .unwrap_or(&complexity.suggested_model)
+                );
+            }
             // Pull num_ctx from hardware sentinel so we never overflow VRAM.
             let num_ctx = health.hardware_profile.optimal_context;
             let results = self
                 .executor
-                .execute_parallel(
+                .execute_parallel_with_progress(
                     &request.task,
                     subtasks,
                     Some(&context_prompt),
                     &complexity.suggested_model,
                     num_ctx,
+                    progress,
                 )
                 .await?;
 

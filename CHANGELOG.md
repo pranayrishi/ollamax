@@ -6,6 +6,121 @@ All notable changes to Ollama-Forge are documented here. Format follows
 
 ## [Unreleased]
 
+### Added (session 5)
+
+#### Limitation 1 — Tool-using research agent (free-only)
+
+- **`src/tools/`**: new module with a `Tool` trait, `ToolRegistry`, and four
+  bundled tools. **Every tool hits a free, no-API-key endpoint:**
+  - `web_search` → DuckDuckGo Instant Answer JSON API
+  - `wikipedia` → Wikipedia REST `summary` + opensearch
+  - `arxiv` → arXiv Atom API (hand-rolled minimal parser, no XML dep)
+  - `fetch_url` → plain HTTP GET with a tag-stripping HTML→text pass
+- **`src/agent/`**: tool-calling loop. Uses Ollama's `format: "json"`
+  parameter so the model is forced to emit parseable JSON, then dispatches
+  either to a tool or to a final answer. Few-shot examples in the system
+  prompt teach small (7-8B) models how to populate args. Capped at
+  `max_iterations` rounds (default 6, configurable). Recovers from
+  malformed-JSON responses by retrying with a hint instead of crashing.
+- **`forge research "<question>"`**: end-to-end command. Picks an installed
+  model with size-based fallback, prints a per-step trace to stderr,
+  streams the final answer to stdout. **Validated end-to-end against real
+  Ollama on this machine** — Llama 3.1 8B successfully called arXiv twice
+  with proper args and synthesized an answer.
+- **`forge tools`**: lists the four bundled tools and the JSON schema the
+  agent uses to call them.
+- **Per-tool rate limit (250 ms)** in `ToolRegistry::get_rate_limited` so
+  the agent loop can't hammer DDG/Wikipedia/arXiv into a temporary IP ban.
+
+#### Limitation 2 — Heterogeneous parallel execution
+
+- **`SubTask::model_override` and `num_ctx_override`**: each subtask in a
+  parallel build can now declare a different model. Closes the previous
+  "every worker uses the same model" limitation.
+- **`TaskRouter::split_into_tiered_subtasks`**: assigns architecture work
+  to the largest installed model, boilerplate (frontend/tests) to the
+  smallest, balanced work to the analyzer's pick. Inserts an explicit
+  Architecture subtask at position 0 if the user's task doesn't already
+  have one — gives the big model something useful to do that's *different*
+  from what the small model is doing in parallel.
+- **`TaskRouter::split_into_tiered_subtasks_vram_aware`**: VRAM-aware
+  variant. If the sum of selected models wouldn't fit in `free_vram_mb`
+  (with a 30% safety margin for KV cache), collapses every override to
+  the largest single model that does fit. Prevents silent OOM kills.
+- **`ParallelExecutor::execute_parallel_with_progress`**: collects every
+  unique model used in the batch and **preloads them concurrently**
+  (Ollama serializes per-model, not across models, so a 32B and a 3B can
+  warm up at the same time). Each worker then dispatches with its
+  per-subtask model + num_ctx.
+- **`ProgressEvent` channel**: every preload and worker emits start/finish
+  events on a `tokio::mpsc::UnboundedSender` so the CLI can stream a live
+  status board to stderr during long parallel builds.
+
+#### Compliance / replay
+
+- **`src/replay/`**: append-only JSONL log of every Ollama call. Records
+  the model name, **`/api/tags` digest** (so a `ollama pull` of the same
+  tag is detectable), seed, temperature, top_p, num_ctx, format, system
+  prompt, prompt, **real SHA-256** of prompt and response, and the
+  forge version string including the git SHA.
+- **`forge replay <log>`**: re-issues every Ollama call in a JSONL log
+  against locally-installed models and reports hash drift. Exits 1 on
+  any drift, so this can wedge into CI as a "the model rotated under us"
+  detector.
+- **`GenerateOptions::seed`**: PRNG seed forwarded to Ollama
+  (`options.seed`). Combined with `temperature: 0` this gives
+  bit-identical output on the same model — the foundation of replay.
+  Validated end-to-end: a `chat` call written to `FORGE_REPLAY_LOG=` and
+  then replayed produces a byte-identical SHA-256.
+- **`FORGE_REPLAY_LOG=path` env var**: opt-in replay logging. Wired into
+  `forge chat` and `forge research` (the agent loop logs every iteration).
+  When set, `forge chat` automatically switches to `seed=0`/`temp=0` so
+  the resulting log is replayable instead of unrepeatable.
+
+#### `forge build --output`
+
+- **Labeled-code-block extractor**: ` ```rust src/main.rs ` style fenced
+  blocks are extracted and written to disk under `--output dir/`. Tolerates
+  `// `, `# `, and `file=` prefixes on the path. Rejects `..` and
+  absolute paths to prevent escape from the output dir. Pinned by 6 unit
+  tests in `tests/build_extractor.rs`.
+
+### Fixed (session 5)
+
+- **`replay::quick_hash` was using `std::hash::DefaultHasher`** which is
+  documented as "may change between Rust releases" and uses SipHash-1-3.
+  Replay logs would have silently drifted on a future stdlib bump,
+  invalidating the entire compliance pitch. Replaced with real SHA-256
+  via `sha2 = "0.10"`. The test pins the SHA-256 of `"hello"` so any
+  future bump that breaks the hash function trips immediately.
+- **`agent::run` propagated `serde_json::from_str` errors via `?`** which
+  killed the whole research session on a single malformed model output.
+  Small models hiccup ~5% of the time even with `format: "json"`. Added
+  `extract_first_json_object` recovery (handles `Sure, here you go: {...}`
+  prefixes via a brace-counting parser that skips over quoted strings),
+  and on total failure appends an "your last response was malformed"
+  hint to the transcript and retries instead of crashing.
+- **Replay records had `model_digest: ""`** because we were trying to
+  read it from `/api/show` which doesn't expose the field on this Ollama
+  version. Switched to `/api/tags` (the list endpoint) which has been
+  stable since v0.1.x. **Validated against real Ollama** — digest now
+  populates correctly.
+- **Replay logging only ran from `forge chat`**. The agent loop, where
+  deterministic replay is most valuable, bypassed it. Wired
+  `FORGE_REPLAY_LOG` directly into `Agent::run` with a cached digest
+  (one `/api/tags` call per session, not per iteration).
+- **Heterogeneous routing assigned models without checking combined
+  VRAM**. On an 8 GB card with a 7B and a 1.5B installed, both would be
+  scheduled and the second load would OOM. Added the VRAM-aware variant.
+- **`MAX_ITERATIONS = 6` was hardcoded**. Deep research questions need
+  8-10 rounds. Now configurable via `AgentConfig::max_iterations` and the
+  `--max-iterations` CLI flag.
+- **`fetch_url` called `Response::bytes()`** which buffers the entire
+  body before truncation. A 1 GB blob would have OOM'd the process before
+  hitting the 32 KB cap. Now streams chunks via `Response::chunk()` and
+  breaks at the cap. Also rejects up-front if `Content-Length` declares
+  more than 4× the cap.
+
 ### Added (session 4)
 - **`forge run-skill <name> "<task>"`**: load a skill, pick the right
   installed model (with size-based fallback if the recommended one isn't

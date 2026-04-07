@@ -52,6 +52,8 @@ struct GenerateOptionsDto {
     repeat_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -233,6 +235,24 @@ impl OllamaProvider {
         Ok(total)
     }
 
+    /// Look up a model's manifest digest. This is the SHA the replay log
+    /// records — pinning it lets `forge replay` detect when the user has
+    /// pulled a different version of the same tag.
+    ///
+    /// Strategy: query `/api/tags` (the list endpoint) and find the entry
+    /// matching `model`. Older Ollama versions don't expose `digest` on
+    /// `/api/show` reliably; the list endpoint has been stable since v0.1.x.
+    /// Returns `None` (not an error) if Ollama is unreachable, so callers
+    /// can fall back gracefully.
+    pub async fn model_digest(&self, model: &str) -> Option<String> {
+        let models = self.list_models().await.ok()?;
+        models
+            .into_iter()
+            .find(|m| m.name == model)
+            .map(|m| m.digest)
+            .filter(|d| !d.is_empty())
+    }
+
     /// Models currently resident in VRAM/RAM (Ollama `/api/ps`).
     /// Returns `(name, vram_bytes, expires_at)` for each loaded model.
     pub async fn running_models(&self) -> Result<Vec<RunningModel>> {
@@ -282,6 +302,7 @@ impl OllamaProvider {
             main_gpu: opts.main_gpu,
             repeat_penalty: opts.repeat_penalty,
             stop: opts.stop.clone(),
+            seed: opts.seed,
         };
 
         GenerateRequest {
@@ -298,6 +319,7 @@ impl OllamaProvider {
                     || o.main_gpu.is_some()
                     || o.repeat_penalty.is_some()
                     || o.stop.is_some()
+                    || o.seed.is_some()
             }),
             context: None,
             keep_alive: opts.keep_alive.clone(),

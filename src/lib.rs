@@ -1,12 +1,15 @@
+pub mod agent;
 pub mod cli;
 pub mod context;
 pub mod executor;
 pub mod monitoring;
 pub mod orchestrator;
 pub mod providers;
+pub mod replay;
 pub mod router;
 pub mod security;
 pub mod skills;
+pub mod tools;
 
 pub use context::ContextManager;
 pub use executor::ParallelExecutor;

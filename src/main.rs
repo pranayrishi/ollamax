@@ -1,9 +1,13 @@
 use anyhow::Result;
 use clap::Parser;
+use ollama_forge::agent::{Agent, AgentConfig};
 use ollama_forge::cli::{Cli, Commands, SkillsAction};
+use ollama_forge::executor::ProgressEvent;
 use ollama_forge::orchestrator::{BuildRequest, Orchestrator, OrchestratorConfig};
 use ollama_forge::providers::{GenerateOptions, LlmProvider, OllamaProvider};
+use ollama_forge::replay::{quick_hash, read_log};
 use ollama_forge::security::{SecurityGuard, Severity};
+use ollama_forge::tools::ToolRegistry;
 use ollama_forge::{init_tracing, monitoring::VramSentinel, skills::SkillsEngine, Config};
 use std::path::{Path, PathBuf};
 use tracing::{error, info};
@@ -47,7 +51,11 @@ async fn async_main() -> Result<()> {
     match cli.command {
         Commands::Init { force } => init_project(force).await?,
 
-        Commands::Build { task, no_security } => {
+        Commands::Build {
+            task,
+            no_security,
+            output,
+        } => {
             if task.is_empty() {
                 anyhow::bail!("forge build: task is required");
             }
@@ -69,21 +77,95 @@ async fn async_main() -> Result<()> {
             })
             .await?;
 
-            // Surface progress to stderr so the user knows the orchestrator
-            // is alive during a long parallel run. The actual generated
-            // artifact still goes to stdout so it can be piped to a file.
+            // Real per-event progress to stderr. The orchestrator emits a
+            // ProgressEvent for each model preload and each worker; we
+            // render them as a flat live log so the user knows what's
+            // happening during a long parallel build.
             eprintln!("🏗  forge build: orchestrating…");
-            let result = orchestrator.execute(request).await?;
+            let (prog_tx, mut prog_rx) = tokio::sync::mpsc::unbounded_channel::<ProgressEvent>();
+            let progress_task = tokio::spawn(async move {
+                while let Some(ev) = prog_rx.recv().await {
+                    match ev {
+                        ProgressEvent::PreloadStarted { model } => {
+                            eprintln!("   ⏳ preload  start  {model}");
+                        }
+                        ProgressEvent::PreloadFinished {
+                            model,
+                            ok,
+                            elapsed_ms,
+                        } => {
+                            let mark = if ok { "✅" } else { "❌" };
+                            eprintln!("   {mark} preload  done   {model}  ({elapsed_ms}ms)");
+                        }
+                        ProgressEvent::WorkerStarted {
+                            subtask_name,
+                            model,
+                            ..
+                        } => {
+                            eprintln!("   ⏳ worker   start  {subtask_name:<16} on {model}");
+                        }
+                        ProgressEvent::WorkerFinished {
+                            subtask_name,
+                            ok,
+                            elapsed_ms,
+                            tokens,
+                            ..
+                        } => {
+                            let mark = if ok { "✅" } else { "❌" };
+                            eprintln!(
+                                "   {mark} worker   done   {subtask_name:<16} {elapsed_ms}ms  {tokens} tok"
+                            );
+                        }
+                    }
+                }
+            });
+
+            let result = orchestrator
+                .execute_with_progress(request, Some(prog_tx))
+                .await?;
+            // Drop side effects + wait for the renderer to drain.
+            let _ = progress_task.await;
+
             eprintln!("✅ build completed on `{}`", result.model_used);
-            println!("{}", result.output);
+
+            if let Some(out_dir) = output {
+                let written = extract_and_write_code_blocks(&out_dir, &result.output)?;
+                if written.is_empty() {
+                    eprintln!(
+                        "⚠️  --output was set but the model produced no \
+                         labeled code blocks (`\\`\\`\\`lang path/to/file`). \
+                         Writing the raw response to {}/build_output.md instead.",
+                        out_dir.display()
+                    );
+                    std::fs::create_dir_all(&out_dir)?;
+                    std::fs::write(out_dir.join("build_output.md"), &result.output)?;
+                } else {
+                    eprintln!(
+                        "📦 wrote {} file(s) to {}:",
+                        written.len(),
+                        out_dir.display()
+                    );
+                    for w in &written {
+                        eprintln!("   - {}", w.display());
+                    }
+                }
+            } else {
+                println!("{}", result.output);
+            }
         }
 
         Commands::Chat { model, prompt } => {
             let ollama = OllamaProvider::new(&config.ollama_url);
+            // If FORGE_REPLAY_LOG is set we want deterministic output —
+            // otherwise the chat is unrepeatable and the log is meaningless.
+            // Default to seed=0 + temp=0 in that mode.
+            let replay_mode = std::env::var_os("FORGE_REPLAY_LOG").is_some();
             let opts = GenerateOptions {
                 model: model.unwrap_or_else(|| config.default_model.clone()),
                 prompt: prompt.unwrap_or_default(),
                 stream: true,
+                temperature: if replay_mode { Some(0.0) } else { Some(0.7) },
+                seed: if replay_mode { Some(0) } else { None },
                 ..Default::default()
             };
             // Real streaming: print each token as it arrives. Previously we
@@ -91,17 +173,20 @@ async fn async_main() -> Result<()> {
             // response, giving the user a 20s wait for a wall of text.
             use std::io::Write;
             let mut stdout = std::io::stdout().lock();
+            let mut full = String::new();
             let bytes = ollama
-                .generate_streaming(opts, |chunk| {
+                .generate_streaming(opts.clone(), |chunk| {
                     let _ = stdout.write_all(chunk.as_bytes());
                     let _ = stdout.flush();
+                    full.push_str(chunk);
                 })
                 .await?;
-            // Trailing newline so the next prompt isn't glued to the response.
             let _ = writeln!(stdout);
             if bytes == 0 {
                 eprintln!("forge: model returned no tokens");
             }
+            // Append to replay log if FORGE_REPLAY_LOG is set.
+            maybe_log_replay(&opts, &full, &config.ollama_url).await;
         }
 
         Commands::Status { models } => {
@@ -203,6 +288,174 @@ async fn async_main() -> Result<()> {
                 println!("PARAMETER num_ctx {}", plan.optimal_context);
                 println!("PARAMETER num_gpu {}", plan.optimal_num_gpu);
                 println!("EOF");
+            }
+        }
+
+        Commands::Replay { log, verbose } => {
+            if !log.exists() {
+                anyhow::bail!("replay log not found: {}", log.display());
+            }
+            let records = read_log(&log).await?;
+            if records.is_empty() {
+                eprintln!("forge replay: log is empty, nothing to do");
+                return Ok(());
+            }
+            eprintln!(
+                "🎬 replaying {} record(s) from {}",
+                records.len(),
+                log.display()
+            );
+            let ollama = OllamaProvider::new(&config.ollama_url);
+            let mut drifted = 0usize;
+            let mut matched = 0usize;
+            let mut errored = 0usize;
+
+            for (i, rec) in records.iter().enumerate() {
+                let opts = GenerateOptions {
+                    model: rec.model.clone(),
+                    prompt: rec.prompt.clone(),
+                    system: rec.system.clone(),
+                    temperature: rec.temperature,
+                    top_p: rec.top_p,
+                    num_ctx: rec.num_ctx,
+                    keep_alive: rec.keep_alive.clone(),
+                    seed: rec.seed,
+                    format: rec.format.clone(),
+                    stream: false,
+                    ..Default::default()
+                };
+                eprintln!(
+                    "  [{}/{}] {} ({}…) →",
+                    i + 1,
+                    records.len(),
+                    rec.model,
+                    &rec.prompt_hash[..rec.prompt_hash.len().min(16)]
+                );
+                match ollama.generate(opts).await {
+                    Ok(resp) => {
+                        let new_hash = quick_hash(resp.content.as_bytes());
+                        if new_hash == rec.response_hash {
+                            matched += 1;
+                            eprintln!("       ✅ match");
+                        } else {
+                            drifted += 1;
+                            eprintln!(
+                                "       ⚠️  drift  was={}  now={}",
+                                rec.response_hash, new_hash
+                            );
+                            if verbose {
+                                eprintln!("       --- recorded response ---");
+                                eprintln!("{}", rec.response);
+                                eprintln!("       --- new response ---");
+                                eprintln!("{}", resp.content);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        errored += 1;
+                        eprintln!("       ❌ error: {e}");
+                    }
+                }
+            }
+            eprintln!();
+            eprintln!(
+                "replay summary: {} match, {} drift, {} error",
+                matched, drifted, errored
+            );
+            if drifted > 0 || errored > 0 {
+                std::process::exit(1);
+            }
+        }
+
+        Commands::Tools => {
+            let registry = ToolRegistry::with_defaults();
+            println!(
+                "\n🛠  Tools available to the research agent ({} total):",
+                registry.len()
+            );
+            println!();
+            // We can't iterate through registry directly without leaking
+            // its internal map; print via the description function which
+            // is what the model itself sees.
+            print!("{}", registry.describe_for_model());
+            println!();
+            println!("All tool endpoints are free, no API key required:");
+            println!("  - web_search → DuckDuckGo Instant Answer JSON API");
+            println!("  - wikipedia  → Wikipedia REST + opensearch");
+            println!("  - arxiv      → arXiv Atom API");
+            println!("  - fetch_url  → plain HTTP GET (no service in front)");
+        }
+
+        Commands::Research {
+            question,
+            model,
+            trace,
+            max_iterations,
+        } => {
+            if question.is_empty() {
+                anyhow::bail!("forge research: question is required");
+            }
+            let question = question.join(" ");
+
+            let ollama = std::sync::Arc::new(OllamaProvider::new(&config.ollama_url));
+            let chosen_model = match model {
+                Some(m) => m,
+                None => pick_installed_model(&config, &ollama).await?,
+            };
+
+            let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
+            let hw = sentinel.detect_hardware().await;
+
+            let registry = ToolRegistry::with_defaults();
+            eprintln!(
+                "🔬 research: `{question}`\n   model: `{chosen_model}`  num_ctx: {}  tools: {}",
+                hw.optimal_context,
+                registry.len()
+            );
+            eprintln!();
+
+            let mut agent = Agent::new(
+                ollama,
+                registry,
+                AgentConfig {
+                    model: chosen_model,
+                    num_ctx: hw.optimal_context,
+                    keep_alive: "1h".to_string(),
+                    max_iterations,
+                },
+            );
+
+            let agent_trace = agent
+                .run(&question, |step| {
+                    eprintln!(
+                        "   [round {}] {} ({}) → {}",
+                        step.iteration,
+                        step.tool,
+                        if step.ok { "ok" } else { "FAIL" },
+                        step.result_preview
+                            .replace('\n', " ")
+                            .chars()
+                            .take(100)
+                            .collect::<String>()
+                    );
+                })
+                .await?;
+
+            eprintln!();
+            if agent_trace.iteration_capped {
+                eprintln!("⚠️  agent hit iteration cap before producing an answer.");
+            }
+            println!("{}", agent_trace.answer);
+
+            if trace {
+                eprintln!();
+                eprintln!("📋 trace ({} steps):", agent_trace.steps.len());
+                for s in &agent_trace.steps {
+                    eprintln!(
+                        "   round {} | {} | args={} | ok={}",
+                        s.iteration, s.tool, s.args, s.ok
+                    );
+                }
             }
         }
 
@@ -554,6 +807,151 @@ async fn spinner_task(label: String, mut cancel: tokio::sync::oneshot::Receiver<
     let mut stderr = std::io::stderr().lock();
     let _ = write!(stderr, "\r\x1b[2K");
     let _ = stderr.flush();
+}
+
+/// If `FORGE_REPLAY_LOG` is set, append a record for this Ollama call to it.
+/// Best-effort: failures here only log a warning, never break the user's
+/// command. The log is opt-in because not every user wants their prompts
+/// persisted to disk.
+async fn maybe_log_replay(opts: &GenerateOptions, response: &str, ollama_url: &str) {
+    let Ok(path) = std::env::var("FORGE_REPLAY_LOG") else {
+        return;
+    };
+    // Look up the model digest via /api/show. Best-effort: empty string in
+    // the log just means we couldn't reach Ollama mid-write. Without the
+    // digest, replay can't tell if the user pulled a different version of
+    // the same tag — so this lookup is critical to the audit-trail pitch.
+    let provider_for_digest = OllamaProvider::new(ollama_url);
+    let digest = provider_for_digest
+        .model_digest(&opts.model)
+        .await
+        .unwrap_or_default();
+    let log = ollama_forge::replay::ReplayLog::new(std::path::PathBuf::from(path));
+    // Hash everything that determines a deterministic response so the
+    // replay can detect drift on weights/sampler/format changes.
+    let mut prompt_material = String::new();
+    if let Some(s) = &opts.system {
+        prompt_material.push_str(s);
+        prompt_material.push('\n');
+    }
+    prompt_material.push_str(&opts.prompt);
+    if let Some(f) = &opts.format {
+        prompt_material.push('\n');
+        prompt_material.push_str(&f.to_string());
+    }
+    let record = ollama_forge::replay::ReplayRecord {
+        ts: chrono::Utc::now().to_rfc3339(),
+        forge_version: ollama_forge::cli::VERSION.to_string(),
+        model: opts.model.clone(),
+        model_digest: digest,
+        temperature: opts.temperature,
+        top_p: opts.top_p,
+        num_ctx: opts.num_ctx,
+        keep_alive: opts.keep_alive.clone(),
+        seed: opts.seed,
+        format: opts.format.clone(),
+        system: opts.system.clone(),
+        prompt: opts.prompt.clone(),
+        prompt_hash: ollama_forge::replay::quick_hash(prompt_material.as_bytes()),
+        response_hash: ollama_forge::replay::quick_hash(response.as_bytes()),
+        response: response.chars().take(16_384).collect(),
+    };
+    if let Err(e) = log.append(&record).await {
+        tracing::warn!("forge replay log append failed: {e}");
+    }
+}
+
+/// Walk a model's response, find labeled fenced code blocks, and write each
+/// one as a real file under `out_dir`. Returns the list of paths written.
+///
+/// **Recognized label syntaxes** (everything after the language tag is the
+/// path):
+/// - ` ```rust src/main.rs `
+/// - ` ```python tests/test_foo.py `
+/// - ` ```ts // src/index.ts ` (the leading `//` is tolerated)
+/// - ` ```yaml file=.github/workflows/ci.yml ` (the `file=` prefix is tolerated)
+///
+/// Blocks without a path label are skipped — there's no safe place to put
+/// them. The user can re-run with no `--output` to get the raw blob, or
+/// edit the prompt to ask the model to label its blocks.
+///
+/// **Path safety**: any extracted path containing `..` or starting with `/`
+/// is rejected and skipped (with a stderr warning). We will not let a model
+/// pick `--output ./build` then emit ` ```rust ../../../etc/passwd `.
+fn extract_and_write_code_blocks(out_dir: &Path, response: &str) -> anyhow::Result<Vec<PathBuf>> {
+    use std::io::Write as _;
+    let mut written = Vec::new();
+    let mut lines = response.lines().peekable();
+    while let Some(line) = lines.next() {
+        // Look for an opening fence: ``` followed by an info string.
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("```") {
+            continue;
+        }
+        let info = trimmed.trim_start_matches('`').trim();
+        if info.is_empty() {
+            // No info string at all → unlabeled block, skip until close.
+            consume_until_fence_close(&mut lines);
+            continue;
+        }
+
+        // Split: first whitespace-separated token is the language; the rest
+        // (if any) is interpreted as a path label.
+        let mut parts = info.splitn(2, char::is_whitespace);
+        let _lang = parts.next().unwrap_or("");
+        let raw_path = parts.next().unwrap_or("").trim();
+        if raw_path.is_empty() {
+            consume_until_fence_close(&mut lines);
+            continue;
+        }
+
+        // Tolerate leading `//`, `#`, or `file=` so models can use whichever
+        // convention they prefer.
+        let cleaned = raw_path
+            .trim_start_matches("//")
+            .trim_start_matches('#')
+            .trim_start_matches("file=")
+            .trim();
+
+        // Reject path traversal and absolute paths. We're writing into the
+        // user's chosen `out_dir` and nowhere else.
+        let p = PathBuf::from(cleaned);
+        if p.is_absolute()
+            || p.components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            eprintln!("⚠️  refusing unsafe path in code block: {cleaned}");
+            consume_until_fence_close(&mut lines);
+            continue;
+        }
+
+        // Collect the body until the closing fence.
+        let mut body = String::new();
+        for inner in lines.by_ref() {
+            if inner.trim_start().starts_with("```") {
+                break;
+            }
+            body.push_str(inner);
+            body.push('\n');
+        }
+
+        let target = out_dir.join(&p);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut f = std::fs::File::create(&target)?;
+        f.write_all(body.as_bytes())?;
+        written.push(target);
+    }
+    Ok(written)
+}
+
+fn consume_until_fence_close<'a, I: Iterator<Item = &'a str>>(lines: &mut std::iter::Peekable<I>) {
+    for inner in lines.by_ref() {
+        if inner.trim_start().starts_with("```") {
+            return;
+        }
+    }
 }
 
 /// Starter `forge.toml` written by `forge init`. This is a const string —
