@@ -1,0 +1,213 @@
+use anyhow::Result;
+use clap::Parser;
+use ollama_forge::cli::{Cli, Commands, SkillsAction};
+use ollama_forge::orchestrator::{BuildRequest, Orchestrator, OrchestratorConfig};
+use ollama_forge::providers::{GenerateOptions, LlmProvider, OllamaProvider};
+use ollama_forge::{init_tracing, monitoring::VramSentinel, skills::SkillsEngine, Config};
+use std::path::{Path, PathBuf};
+use tracing::{error, info};
+
+fn main() {
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("forge: failed to start tokio runtime: {e}");
+            std::process::exit(2);
+        }
+    };
+
+    if let Err(e) = runtime.block_on(async_main()) {
+        error!("fatal: {e:#}");
+        eprintln!("forge: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+async fn async_main() -> Result<()> {
+    let cli = Cli::parse();
+
+    let log_level = if cli.verbose {
+        "debug"
+    } else if cli.quiet {
+        "warn"
+    } else {
+        "info"
+    };
+    init_tracing(log_level)?;
+
+    let config = match cli.config.as_deref() {
+        Some(path) => load_config_from(path)?,
+        None => Config::load().await?,
+    };
+
+    match cli.command {
+        Commands::Init { force } => init_project(force).await?,
+
+        Commands::Build {
+            task,
+            output,
+            lang,
+            test,
+            no_security,
+        } => {
+            let request = BuildRequest {
+                task: task.join(" "),
+                output_dir: output,
+                language: lang,
+                run_tests: test,
+                skip_security: no_security,
+            };
+
+            let orchestrator = Orchestrator::new(OrchestratorConfig {
+                ollama_url: config.ollama_url.clone(),
+                default_model: config.default_model.clone(),
+                planning_model: config.planning_model.clone(),
+                max_parallel_workers: config.max_parallel_workers,
+                security_enabled: config.security_enabled && !no_security,
+                tdd_enforced: config.tdd_enforced,
+            })
+            .await?;
+
+            let result = orchestrator.execute(request).await?;
+            println!("\n✅ Build completed using {}:", result.model_used);
+            println!("{}", result.output);
+        }
+
+        Commands::Chat { model, prompt } => {
+            let ollama = OllamaProvider::new(&config.ollama_url);
+            let opts = GenerateOptions {
+                model: model.unwrap_or_else(|| config.default_model.clone()),
+                prompt: prompt.unwrap_or_default(),
+                stream: true,
+                ..Default::default()
+            };
+            let response = ollama.generate(opts).await?;
+            println!("{}", response.content);
+        }
+
+        Commands::Status { models } => {
+            let ollama = OllamaProvider::new(&config.ollama_url);
+            let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
+            let health = sentinel.detect_hardware().await;
+
+            println!("\n🖥️  Hardware Profile:");
+            println!("   OS: {}", health.os);
+            println!("   RAM: {} MB total", health.total_ram_mb);
+            println!(
+                "   VRAM: {} MB ({} MB free)",
+                health.total_vram_mb, health.free_vram_mb
+            );
+            println!("   CPU Cores: {}", health.cpu_cores);
+            println!("   Recommended Model: {}", health.recommended_model);
+            println!("   Optimal Context: {}", health.optimal_context);
+
+            if models {
+                println!("\n📦 Available Models:");
+                match ollama.list_models().await {
+                    Ok(model_list) => {
+                        for model in model_list {
+                            println!("   - {} ({})", model.name, model.size_human);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("forge: could not list models from {}: {e}", config.ollama_url);
+                        eprintln!("       is `ollama serve` running?");
+                    }
+                }
+            }
+        }
+
+        Commands::Optimize {
+            aggressive: _,
+            dry_run,
+        } => {
+            let sentinel = VramSentinel::new(config.min_free_vram_mb, true);
+            let plan = sentinel.auto_optimize().await?;
+
+            println!("\n⚙️  Optimization Plan:");
+            println!("   Recommended Model: {}", plan.recommended_model);
+            println!("   Optimal Context: {}", plan.optimal_context);
+            println!("   GPU Layers: {}", plan.optimal_num_gpu);
+            println!("   Keep Alive: {}s", plan.keep_alive_duration);
+
+            if plan.apply_onnx {
+                println!("   ⚡ ONNX acceleration recommended for your hardware");
+            }
+
+            if !dry_run {
+                println!("\nTo apply these settings to Ollama:");
+                println!("   ollama create optimized -f - << EOF");
+                println!("FROM {}", plan.recommended_model);
+                println!("PARAMETER num_ctx {}", plan.optimal_context);
+                println!("PARAMETER num_gpu {}", plan.optimal_num_gpu);
+                println!("EOF");
+            }
+        }
+
+        Commands::Skills { action } => {
+            let skills_dir = dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("ollama-forge")
+                .join("skills");
+
+            let engine = SkillsEngine::new(skills_dir);
+            engine.load_skills().await?;
+
+            match action {
+                SkillsAction::List => {
+                    let skills = engine.list_skills().await;
+                    println!("\n📚 Available Skills:");
+                    for skill in skills {
+                        println!("   {} - {}", skill.name, skill.description);
+                    }
+                }
+                SkillsAction::Add { source } => {
+                    println!("Adding skill from: {source}");
+                }
+                SkillsAction::Remove { name } => {
+                    engine.remove_skill(&name).await?;
+                    println!("Removed skill: {name}");
+                }
+                SkillsAction::Search { query } => {
+                    if let Some(skill) = engine.find_skill(&query).await {
+                        println!("\n🔍 Found skill: {}", skill.name);
+                        println!("   {}", skill.description);
+                    } else {
+                        println!("No skill found matching: {query}");
+                    }
+                }
+            }
+        }
+
+        _ => {
+            println!("Use 'forge --help' for usage information");
+        }
+    }
+
+    Ok(())
+}
+
+async fn init_project(force: bool) -> Result<()> {
+    let forge_toml = PathBuf::from("forge.toml");
+
+    if forge_toml.exists() && !force {
+        println!("forge: forge.toml already exists in {}.", std::env::current_dir()?.display());
+        println!("       re-run with --force to overwrite.");
+        return Ok(());
+    }
+
+    let config = include_str!("../forge.toml");
+    tokio::fs::write(&forge_toml, config).await?;
+    info!("initialized forge project at {}", std::env::current_dir()?.display());
+    println!("✅ forge.toml written.");
+    println!();
+    println!("Next:");
+    println!("   forge status            # check hardware + ollama");
+    println!("   forge \"build a chat app\"");
+    Ok(())
+}
+
+fn load_config_from(path: &Path) -> Result<Config> {
+    let content = std::fs::read_to_string(path)?;
+    Ok(serde_yaml::from_str(&content)?)
+}

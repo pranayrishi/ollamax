@@ -1,0 +1,64 @@
+{
+  "name": "security-auditor",
+  "description": "Comprehensive security auditing for code. Identifies vulnerabilities, secrets, and security anti-patterns using static analysis and LLM-powered review.",
+  "version": "1.0.0",
+  "author": "Forge Team",
+  "tags": ["security", "audit", "vulnerabilities", "secrets", "owasp"],
+  "prompts": {
+    "system": "You are a security expert specializing in application security, secure coding practices, and vulnerability assessment. Follow OWASP guidelines and security best practices.",
+    "planning": "Scan the codebase for common security issues: SQL injection, XSS, CSRF, authentication bypass, and sensitive data exposure.",
+    "execution": "Generate detailed security reports with severity ratings and remediation steps.",
+    "review": "Perform deep security review of code changes, identify potential attack vectors, and suggest security improvements."
+  },
+  "settings": {
+    "model": "deepseek-coder-v2:16b",
+    "temperature": 0.3,
+    "max_tokens": 4096,
+    "tools": ["semgrep", "gitleaks", "bandit", "trivy"]
+  },
+  "recipes": [
+    {
+      "name": "Secrets Scanner",
+      "description": "Detect hardcoded secrets, API keys, and credentials",
+      "trigger_keywords": ["secret", "api-key", "credentials", "scan"],
+      "steps": [
+        {
+          "name": "Pattern Detection",
+          "prompt_template": "Scan code for common secret patterns: AWS keys, GitHub tokens, database URLs, JWT tokens",
+          "expected_output": "List of detected secrets with line numbers"
+        },
+        {
+          "name": "Risk Assessment",
+          "prompt_template": "Assess the risk level of each detected secret",
+          "expected_output": "Risk matrix with severity ratings"
+        }
+      ]
+    },
+    {
+      "name": "OWASP Top 10 Audit",
+      "description": "Comprehensive audit against OWASP Top 10 vulnerabilities",
+      "trigger_keywords": ["owasp", "vulnerability", "injection", "xss"],
+      "steps": [
+        {
+          "name": "Injection Check",
+          "prompt_template": "Check for SQL injection, command injection, and LDAP injection vulnerabilities",
+          "expected_output": "List of potential injection points"
+        },
+        {
+          "name": "Auth Review",
+          "prompt_template": "Review authentication and session management implementation",
+          "expected_output": "Security gaps in auth flow"
+        }
+      ]
+    }
+  ],
+  "security_checks": [
+    "SQL Injection",
+    "XSS Vulnerabilities",
+    "CSRF Protection",
+    "Authentication Bypass",
+    "Sensitive Data Exposure",
+    "Cryptographic Issues",
+    "Security Misconfiguration"
+  ]
+}

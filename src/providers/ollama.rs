@@ -1,0 +1,387 @@
+use super::{ChatMessage, ChatOptions, GenerateOptions, LlmProvider, LlmResponse, ModelInfo};
+use anyhow::{Context, Result};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
+use tracing::{debug, error};
+
+#[derive(Debug, Clone)]
+pub struct OllamaProvider {
+    base_url: String,
+    client: Client,
+}
+
+#[derive(Debug, Serialize)]
+struct GenerateRequest {
+    model: String,
+    prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<GenerateOptionsDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<Vec<i32>>,
+    /// Ollama's keep_alive — accepts "30m", "1h", "0", or seconds as a number.
+    /// We always send it because the server default (5m) bites every model switch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    keep_alive: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct GenerateOptionsDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_ctx: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_gpu: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    main_gpu: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repeat_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<ChatMessageDto>,
+    stream: bool,
+    options: Option<ChatOptionsDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ChatMessageDto {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ChatOptionsDto {
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    num_ctx: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GenerateResponse {
+    response: String,
+    model: String,
+    done: bool,
+    context: Option<Vec<i32>>,
+    total_duration: Option<u64>,
+    eval_count: Option<usize>,
+    prompt_eval_count: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatResponse {
+    message: ChatMessageDto,
+    model: String,
+    done: bool,
+    total_duration: Option<u64>,
+    eval_count: Option<usize>,
+    prompt_eval_count: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    models: Vec<ModelDto>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelDto {
+    name: String,
+    size: u64,
+    modified_at: String,
+    digest: String,
+}
+
+impl OllamaProvider {
+    pub fn new(base_url: impl Into<String>) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(300))
+            .build()
+            .expect("Failed to create HTTP client");
+        
+        Self {
+            base_url: base_url.into(),
+            client,
+        }
+    }
+
+    pub async fn health_check(&self) -> Result<bool> {
+        match self.client
+            .get(format!("{}/api/tags", self.base_url))
+            .send()
+            .await
+        {
+            Ok(resp) => Ok(resp.status().is_success()),
+            Err(e) => {
+                error!("Ollama health check failed: {}", e);
+                Ok(false)
+            }
+        }
+    }
+
+    fn build_generate_request(opts: &GenerateOptions) -> GenerateRequest {
+        let options = GenerateOptionsDto {
+            temperature: opts.temperature,
+            top_p: opts.top_p,
+            top_k: opts.top_k,
+            num_ctx: opts.num_ctx,
+            num_gpu: opts.num_gpu,
+            main_gpu: opts.main_gpu,
+            repeat_penalty: opts.repeat_penalty,
+            stop: opts.stop.clone(),
+        };
+
+        GenerateRequest {
+            model: opts.model.clone(),
+            prompt: opts.prompt.clone(),
+            system: opts.system.clone(),
+            stream: opts.stream,
+            options: Some(options).filter(|o| {
+                o.temperature.is_some()
+                    || o.top_p.is_some()
+                    || o.top_k.is_some()
+                    || o.num_ctx.is_some()
+                    || o.num_gpu.is_some()
+                    || o.main_gpu.is_some()
+                    || o.repeat_penalty.is_some()
+                    || o.stop.is_some()
+            }),
+            context: None,
+            keep_alive: opts.keep_alive.clone(),
+        }
+    }
+
+    fn build_chat_request(opts: &ChatOptions) -> ChatRequest {
+        let options = ChatOptionsDto {
+            temperature: opts.temperature,
+            top_p: opts.top_p,
+            num_ctx: opts.num_ctx,
+        };
+
+        ChatRequest {
+            model: opts.model.clone(),
+            messages: opts.messages.iter().map(|m| ChatMessageDto {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            }).collect(),
+            stream: opts.stream,
+            options: Some(options).filter(|o| {
+                o.temperature.is_some() || o.top_p.is_some() || o.num_ctx.is_some()
+            }),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for OllamaProvider {
+    fn name(&self) -> &str {
+        "ollama"
+    }
+
+    async fn generate(&self, opts: GenerateOptions) -> Result<LlmResponse> {
+        let start = Instant::now();
+        let stream = opts.stream;
+        let request = Self::build_generate_request(&opts);
+
+        debug!("Generating with model: {} (stream={})", opts.model, stream);
+
+        let response = self.client
+            .post(format!("{}/api/generate", self.base_url))
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send generate request to Ollama")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            error!("Ollama returned error: {} - {}", status, body);
+            anyhow::bail!(
+                "Ollama API error {}: {}\n\
+                Hint: is `ollama serve` running at {} and is the model `{}` pulled? \
+                Try `ollama list` and `ollama pull {}`.",
+                status, body, self.base_url, opts.model, opts.model
+            );
+        }
+
+        // Ollama returns NDJSON when stream=true (one JSON object per line) and a
+        // single JSON document when stream=false. `.json()` only handles the latter.
+        let body = response.text().await.context("Failed to read Ollama response body")?;
+        let (content, model, eval_count, prompt_eval_count) = if stream {
+            let mut buf = String::new();
+            let mut last_model = opts.model.clone();
+            let mut last_eval = None;
+            let mut last_prompt_eval = None;
+            for line in body.lines().filter(|l| !l.trim().is_empty()) {
+                let chunk: GenerateResponse = serde_json::from_str(line)
+                    .with_context(|| format!("Failed to parse NDJSON chunk: {}", line))?;
+                buf.push_str(&chunk.response);
+                last_model = chunk.model;
+                if chunk.done {
+                    last_eval = chunk.eval_count;
+                    last_prompt_eval = chunk.prompt_eval_count;
+                }
+            }
+            (buf, last_model, last_eval, last_prompt_eval)
+        } else {
+            let result: GenerateResponse = serde_json::from_str(&body)
+                .context("Failed to parse Ollama JSON response")?;
+            (result.response, result.model, result.eval_count, result.prompt_eval_count)
+        };
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+        Ok(LlmResponse {
+            content,
+            model,
+            tokens_generated: eval_count.unwrap_or(0),
+            context_used: prompt_eval_count.unwrap_or(0),
+            duration_ms,
+        })
+    }
+
+    async fn chat(&self, opts: ChatOptions) -> Result<LlmResponse> {
+        let start = Instant::now();
+        let stream = opts.stream;
+        let request = Self::build_chat_request(&opts);
+
+        debug!("Chatting with model: {} (stream={})", opts.model, stream);
+
+        let response = self.client
+            .post(format!("{}/api/chat", self.base_url))
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send chat request to Ollama")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            error!("Ollama returned error: {} - {}", status, body);
+            anyhow::bail!(
+                "Ollama API error {}: {}\n\
+                Hint: is `ollama serve` running at {} and is the model `{}` pulled?",
+                status, body, self.base_url, opts.model
+            );
+        }
+
+        let body = response.text().await.context("Failed to read Ollama response body")?;
+        let (content, model, eval_count, prompt_eval_count) = if stream {
+            let mut buf = String::new();
+            let mut last_model = opts.model.clone();
+            let mut last_eval = None;
+            let mut last_prompt_eval = None;
+            for line in body.lines().filter(|l| !l.trim().is_empty()) {
+                let chunk: ChatResponse = serde_json::from_str(line)
+                    .with_context(|| format!("Failed to parse NDJSON chunk: {}", line))?;
+                buf.push_str(&chunk.message.content);
+                last_model = chunk.model;
+                if chunk.done {
+                    last_eval = chunk.eval_count;
+                    last_prompt_eval = chunk.prompt_eval_count;
+                }
+            }
+            (buf, last_model, last_eval, last_prompt_eval)
+        } else {
+            let result: ChatResponse = serde_json::from_str(&body)
+                .context("Failed to parse Ollama JSON response")?;
+            (result.message.content, result.model, result.eval_count, result.prompt_eval_count)
+        };
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+        Ok(LlmResponse {
+            content,
+            model,
+            tokens_generated: eval_count.unwrap_or(0),
+            context_used: prompt_eval_count.unwrap_or(0),
+            duration_ms,
+        })
+    }
+
+    async fn preload(&self, model: &str, keep_alive: &str) -> Result<()> {
+        // Empty prompt + non-zero keep_alive = warm-load only.
+        // See ollama/ollama docs: /api/generate with empty prompt loads the model.
+        let req = GenerateRequest {
+            model: model.to_string(),
+            prompt: String::new(),
+            system: None,
+            stream: false,
+            options: None,
+            context: None,
+            keep_alive: Some(keep_alive.to_string()),
+        };
+        let resp = self.client
+            .post(format!("{}/api/generate", self.base_url))
+            .json(&req)
+            .send()
+            .await
+            .context("Failed to send preload request to Ollama")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("Ollama preload of `{}` failed: {}", model, resp.status());
+        }
+        Ok(())
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+        let response = self.client
+            .get(format!("{}/api/tags", self.base_url))
+            .send()
+            .await
+            .context("Failed to list models from Ollama")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("Failed to list models: {}", response.status());
+        }
+
+        let result: ModelsResponse = response.json().await?;
+
+        Ok(result.models.into_iter().map(|m| ModelInfo {
+            name: m.name,
+            size: m.size,
+            size_human: format_size(m.size),
+            modified_at: m.modified_at,
+            digest: m.digest,
+        }).collect())
+    }
+}
+
+fn format_size(bytes: u64) -> String {
+    // Binary (1024-based) units, labeled correctly per IEC 80000-13.
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+
+    if bytes >= GIB {
+        format!("{:.1} GiB", bytes as f64 / GIB as f64)
+    } else if bytes >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_size;
+
+    #[test]
+    fn format_size_uses_binary_units() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(1023), "1023 B");
+        assert_eq!(format_size(1024), "1.0 KiB");
+        assert_eq!(format_size(1024 * 1024), "1.0 MiB");
+        assert_eq!(format_size(2 * 1024 * 1024 * 1024), "2.0 GiB");
+    }
+}

@@ -1,0 +1,85 @@
+{
+  "name": "react-native-expert",
+  "description": "Build production-ready React Native applications with proper navigation, state management, native modules, and cross-platform optimization.",
+  "version": "1.0.0",
+  "author": "Community",
+  "tags": [
+    "mobile",
+    "react-native",
+    "ios",
+    "android",
+    "expo",
+    "cross-platform"
+  ],
+  "prompts": {
+    "system": "You are a React Native expert with deep knowledge of mobile development, native modules, performance optimization, and cross-platform compatibility.",
+    "planning": "Design mobile-first architecture with proper navigation, state management, and component structure.",
+    "execution": "Implement React Native components, screens, navigation, and native modules with TypeScript best practices.",
+    "review": "Review mobile code for performance issues, platform-specific bugs, and accessibility compliance."
+  },
+  "settings": {
+    "model": "qwen2.5-coder:14b",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "tools": ["expo", "xcode", "android-studio", "react-native-cli"]
+  },
+  "recipes": [
+    {
+      "name": "Expo Project Setup",
+      "description": "Create a complete Expo project with best practices",
+      "trigger_keywords": [
+        "react-native",
+        "expo",
+        "mobile-app",
+        "ios",
+        "android"
+      ],
+      "steps": [
+        {
+          "name": "Project Structure",
+          "prompt_template": "Design React Native project structure with clean architecture",
+          "expected_output": "Folder structure and key files"
+        },
+        {
+          "name": "Navigation Setup",
+          "prompt_template": "Implement React Navigation with proper routing",
+          "expected_output": "Navigation configuration and screens"
+        },
+        {
+          "name": "State Management",
+          "prompt_template": "Set up Zustand or Redux Toolkit for state management",
+          "expected_output": "Store configuration and slices"
+        }
+      ]
+    },
+    {
+      "name": "Native Module Integration",
+      "description": "Create and integrate native modules with React Native",
+      "trigger_keywords": [
+        "native-module",
+        "bridge",
+        "ios-native",
+        "android-native"
+      ],
+      "steps": [
+        {
+          "name": "Module Design",
+          "prompt_template": "Design native module interface and data flow",
+          "expected_output": "Module specification"
+        },
+        {
+          "name": "Implementation",
+          "prompt_template": "Implement native module for iOS and Android",
+          "expected_output": "Native code for both platforms"
+        }
+      ]
+    }
+  ],
+  "performance_checks": [
+    "FlatList optimization",
+    "Image caching",
+    "Navigation performance",
+    "Bundle size",
+    "Memory leaks"
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "name": "docker-expert",
+  "description": "Expert at Docker containerization and orchestration. Creates optimized multi-stage builds, docker-compose configurations, and production-ready Dockerfiles.",
+  "version": "1.0.0",
+  "author": "Forge Team",
+  "tags": ["docker", "containers", "devops", "kubernetes", "orchestration"],
+  "prompts": {
+    "system": "You are a Docker and containerization expert with deep knowledge of Dockerfile best practices, multi-stage builds, security scanning, and production deployment patterns.",
+    "planning": "Analyze the application architecture and dependencies. Determine optimal base image, build strategy, and runtime configuration.",
+    "execution": "Write production-ready Dockerfiles using multi-stage builds. Optimize for layer caching, image size, and security.",
+    "review": "Review Docker configurations for security vulnerabilities, efficiency improvements, and best practice compliance."
+  },
+  "settings": {
+    "model": "qwen2.5-coder:7b",
+    "temperature": 0.5,
+    "max_tokens": 2048,
+    "tools": ["docker", "docker-compose", "hadolint"]
+  },
+  "recipes": [
+    {
+      "name": "Multi-stage Build Optimizer",
+      "description": "Create optimized multi-stage Docker builds for minimal image size",
+      "trigger_keywords": [
+        "docker",
+        "containerize",
+        "dockerfile",
+        "multi-stage"
+      ],
+      "steps": [
+        {
+          "name": "Analyze Dependencies",
+          "prompt_template": "Analyze application dependencies for Docker build optimization",
+          "expected_output": "Dependency tree and build order optimization"
+        },
+        {
+          "name": "Generate Dockerfile",
+          "prompt_template": "Write a multi-stage Dockerfile with optimal layer caching",
+          "expected_output": "Complete Dockerfile with build stages"
+        }
+      ]
+    },
+    {
+      "name": "Kubernetes Deployment",
+      "description": "Generate Kubernetes manifests for containerized applications",
+      "trigger_keywords": ["kubernetes", "k8s", "deployment", "helm"],
+      "steps": [
+        {
+          "name": "Design Architecture",
+          "prompt_template": "Design Kubernetes architecture with replicas, services, and ingress",
+          "expected_output": "K8s architecture diagram in text"
+        },
+        {
+          "name": "Generate Manifests",
+          "prompt_template": "Generate Kubernetes YAML manifests",
+          "expected_output": "deployment.yaml, service.yaml, ingress.yaml"
+        }
+      ]
+    }
+  ],
+  "security_checks": [
+    "Non-root user",
+    "Read-only filesystem",
+    "No secrets in image",
+    "Minimal base image",
+    "Security updates"
+  ]
+}

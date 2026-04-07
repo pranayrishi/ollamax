@@ -1,0 +1,39 @@
+# Build artifacts
+/target/
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.a
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config
+.env
+.env.local
+forge.local.toml
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+*.prof
+
+# Secrets
+*.pem
+*.key
+*.crt
+credentials.json
+secrets.yaml

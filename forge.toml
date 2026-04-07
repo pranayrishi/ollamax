@@ -1,0 +1,37 @@
+[forge]
+version = "1.0"
+
+[ollama]
+url = "http://localhost:11434"
+default_model = "llama3.2:3b"
+planning_model = "qwen2.5-coder:7b"
+execution_models = [
+    "llama3.2:3b",
+    "qwen2.5-coder:7b",
+    "deepseek-coder-v2:16b",
+    "llama3.3:70b"
+]
+
+[execution]
+parallel_workers = 4
+max_context_tokens = 32768
+
+[security]
+enabled = true
+scan_secrets = true
+scan_vulnerabilities = true
+dangerous_command_check = true
+
+[tdd]
+enforced = true
+min_coverage = 80
+
+[optimization]
+auto_tune = true
+auto_unload_models = true
+min_free_vram_mb = 2048
+
+[router]
+simple_threshold = 0.3
+medium_threshold = 0.6
+complex_threshold = 0.8

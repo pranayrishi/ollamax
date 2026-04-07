@@ -1,0 +1,68 @@
+{
+  "name": "api-designer",
+  "description": "Design RESTful and GraphQL APIs following best practices. Create clean, documented APIs with proper authentication, validation, and error handling.",
+  "version": "1.0.0",
+  "author": "Forge Team",
+  "tags": ["api", "rest", "graphql", "backend", "endpoint", "swagger"],
+  "prompts": {
+    "system": "You are an API design expert specializing in REST and GraphQL APIs. Follow OpenAPI specifications and REST best practices.",
+    "planning": "Design API endpoints, data models, and authentication flow based on requirements.",
+    "execution": "Implement API routes with proper validation, error handling, and documentation.",
+    "review": "Review API design for consistency, performance, and security."
+  },
+  "settings": {
+    "model": "qwen2.5-coder:7b",
+    "temperature": 0.5,
+    "max_tokens": 2048,
+    "tools": ["openapi", "swagger", "postman"]
+  },
+  "recipes": [
+    {
+      "name": "REST API Generator",
+      "description": "Create a complete REST API with CRUD operations",
+      "trigger_keywords": ["api", "rest", "endpoint", "crud", "backend"],
+      "steps": [
+        {
+          "name": "Schema Design",
+          "prompt_template": "Design database schema and API data models",
+          "expected_output": "Schema definitions and relationships"
+        },
+        {
+          "name": "Route Planning",
+          "prompt_template": "Plan REST endpoints following best practices",
+          "expected_output": "Endpoint list with HTTP methods"
+        },
+        {
+          "name": "Implementation",
+          "prompt_template": "Implement API routes with validation",
+          "expected_output": "Complete API implementation"
+        }
+      ]
+    },
+    {
+      "name": "GraphQL Schema",
+      "description": "Design and implement GraphQL schema and resolvers",
+      "trigger_keywords": ["graphql", "schema", "resolver", "mutation"],
+      "steps": [
+        {
+          "name": "Type Design",
+          "prompt_template": "Design GraphQL types and relationships",
+          "expected_output": "Type definitions"
+        },
+        {
+          "name": "Resolver Implementation",
+          "prompt_template": "Implement resolvers with data fetching",
+          "expected_output": "Resolver functions"
+        }
+      ]
+    }
+  ],
+  "best_practices": [
+    "REST naming conventions",
+    "Proper HTTP status codes",
+    "Request validation",
+    "Error response format",
+    "Pagination patterns",
+    "Authentication headers"
+  ]
+}
