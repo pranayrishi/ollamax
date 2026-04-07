@@ -6,6 +6,91 @@ All notable changes to Ollama-Forge are documented here. Format follows
 
 ## [Unreleased]
 
+### Added (session 7)
+
+This session closes every item still on session 6's "what's still on the
+table" list. After this, the only deferred work in the project is
+intentionally out-of-scope (publishing a tagged release, running real
+`forge build` against a real 50-file repo).
+
+#### `forge rules edit`
+
+- New `RulesAction::Edit { name }` subcommand. Resolves the editor from
+  `$VISUAL > $EDITOR` and shells out via `sh -c` so any editor command
+  works (`vim`, `code -w`, `subl -w`, `emacs`, etc.). With no arg it
+  opens the rules dir; with a name it opens (or creates) that specific
+  rule file. Refuses to fall back to a hardcoded editor — installing
+  forge shouldn't drag in nano.
+
+#### Streaming JSONL replay reader
+
+- New `replay::stream_log` that walks the log line-by-line via
+  `tokio::io::BufReader::lines`. Memory usage is O(longest line), not
+  O(file). `read_log` is now a thin wrapper. `instincts::from_log` uses
+  the streaming path so a multi-megabyte log doesn't get fully loaded
+  into RAM up front.
+
+#### `forge instincts` on agent tool sequences
+
+- New `InstinctsReport::repeated_tool_chains` field. The analyzer now
+  greps `[round N] You called tool \`<name>\`` markers out of agent
+  records and surfaces repeated tool chains (e.g., `web_search → wikipedia
+  → fetch_url`) as candidate skill recipes. Promotes itself to the
+  print path so users see the chain alongside repeated tasks/system
+  prompts. 3 new tests cover the extractor and the sort.
+
+#### LoRA fine-tune skill + `forge finetune`
+
+- **`skills/recipes/lora-finetune.json`**: a real bundled recipe walking
+  the user through a local fine-tune via Unsloth. The recipe outputs the
+  dataset-prep script, the QLoRA training script, the `convert-hf-to-gguf`
+  conversion script, and the Ollama Modelfile — all as labeled fenced
+  code blocks so `forge build --output dir/` can extract them straight
+  to disk. License-aware (refuses proprietary/no-derivatives), VRAM-honest
+  (no overcommit), and **explicitly local-only** — the system prompt
+  forbids the model from suggesting hosted training services.
+- **`forge finetune [<repo>] [-m model]`** helper: walks the target dir,
+  detects the primary language and source-file count, queries the
+  hardware sentinel for free VRAM/GPU kind, then runs the
+  `lora-finetune` skill with all of that as ground-truth context. Picks
+  the largest installed model as the planner unless overridden.
+
+#### `forge.nvim` Neovim plugin
+
+- New `editor-integrations/forge.nvim/` directory with a complete
+  minimal plugin: `lua/forge/init.lua` (the runtime entrypoint) +
+  `plugin/forge.lua` (user-command registration) + `README.md` with
+  install snippets for lazy.nvim, packer.nvim, and manual symlink.
+- **Intentionally thin**. Every command shells out to the `forge` CLI via
+  `vim.fn.jobstart` with `on_stdout`/`on_stderr` callbacks, so the
+  plugin never embeds forge logic and a `forge` upgrade can't break it.
+  Streams output into a scratch markdown buffer in real time.
+- Commands: `:Forge research`, `:Forge chat`, `:Forge runskill`,
+  `:Forge audit`, `:Forge build`, plus `:Forge` (no args) for a picker.
+
+#### i18n READMEs
+
+- Above-the-fold translations of the README into:
+  - **`README.zh.md`** (Simplified Chinese)
+  - **`README.ja.md`** (Japanese)
+  - **`README.de.md`** (German)
+  - **`README.pt.md`** (Portuguese)
+- Each translation links to the others in the header and points users
+  back to the English README for the full command list. Aimed at
+  r/LocalLLaMA's international audience — the brief identified Chinese,
+  Japanese, German, and Portuguese as the highest-leverage locales.
+- The English README now has a language selector at the top.
+
+### Fixed (session 7)
+
+- **Bundled recipes weren't installed for existing users.**
+  `SkillsEngine::load_skills` previously only wrote bundled JSONs when
+  the skills dir didn't exist — meaning anyone who'd used forge once
+  would never see new bundled recipes (e.g., the `lora-finetune` recipe
+  added this session). Replaced `write_bundled_recipes` (called only on
+  first run) with `sync_bundled_recipes` (called on every load,
+  add-only, never overwrites a recipe the user has edited).
+
 ### Added (session 6)
 
 #### Persistent always-rules

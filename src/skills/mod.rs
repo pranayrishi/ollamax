@@ -111,6 +111,10 @@ const BUNDLED_RECIPES: &[(&str, &str)] = &[
         "api-designer.json",
         include_str!("../../skills/recipes/api-designer.json"),
     ),
+    (
+        "lora-finetune.json",
+        include_str!("../../skills/recipes/lora-finetune.json"),
+    ),
 ];
 
 pub struct SkillsEngine {
@@ -174,11 +178,13 @@ impl SkillsEngine {
 
         if !self.skills_dir.exists() {
             tokio::fs::create_dir_all(&self.skills_dir).await?;
-            // First run: copy the bundled recipes from the binary onto disk so
-            // the user can edit them. We `include_str!` rather than relying on
-            // a runtime path because the binary may be installed anywhere.
-            self.write_bundled_recipes().await?;
         }
+        // Always sync any *new* bundled recipes that don't yet exist on disk.
+        // The previous version only wrote bundled recipes on first run, so
+        // existing users never got new recipes (e.g., `lora-finetune` shipped
+        // in session 7) without manually deleting their skills dir. This
+        // sync only adds — it never overwrites a recipe the user has edited.
+        self.sync_bundled_recipes().await?;
 
         // Walk the dir non-recursively. Two formats are accepted:
         //   1. `*.json` — forge-native skill JSON.
@@ -232,19 +238,21 @@ impl SkillsEngine {
         Ok(skills)
     }
 
-    /// Write the bundled recipes (the actual `skills/recipes/*.json` files in
-    /// the repo) to the user's skills directory on first run.
+    /// Sync any bundled recipes that don't yet exist on disk into the
+    /// user's skills directory. Add-only — never overwrites a file the
+    /// user may have edited. This is what gives existing users access
+    /// to new bundled recipes (e.g., `lora-finetune` added in session 7)
+    /// without forcing them to delete their skills dir.
     ///
-    /// Previously this was a `create_default_skills` function that
-    /// hand-rolled stripped-down versions of each skill in Rust source — they
-    /// drifted out of sync with the real bundled JSONs (e.g., docker-expert
-    /// had only 1 recipe step instead of the full multi-stage workflow). Now
-    /// the real JSONs are baked in via `include_str!` and there is exactly
-    /// one source of truth.
-    async fn write_bundled_recipes(&self) -> Result<()> {
+    /// Idempotent: safe to call on every `load_skills`. The cost is one
+    /// `Path::exists` syscall per bundled recipe, which is negligible.
+    async fn sync_bundled_recipes(&self) -> Result<()> {
         for (filename, contents) in BUNDLED_RECIPES {
             let path = self.skills_dir.join(filename);
-            tokio::fs::write(&path, contents).await?;
+            if !path.exists() {
+                tokio::fs::write(&path, contents).await?;
+                debug!("synced bundled recipe to {}", path.display());
+            }
         }
         Ok(())
     }

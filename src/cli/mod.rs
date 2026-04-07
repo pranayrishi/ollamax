@@ -157,6 +157,27 @@ pub enum Commands {
     Tools,
 
     #[command(
+        about = "Bootstrap a local LoRA fine-tune of a Qwen2.5-Coder model on your codebase. \
+                 Runs the `lora-finetune` skill against your repo. Output is a set of scripts \
+                 you run yourself — no model training happens inside forge. Local-only, no \
+                 hosted services."
+    )]
+    Finetune {
+        #[arg(
+            help = "Path to the repo to fine-tune on (defaults to current directory)",
+            default_value = "."
+        )]
+        repo: PathBuf,
+
+        #[arg(
+            short,
+            long,
+            help = "Override the model used by the planner (default: largest installed)"
+        )]
+        model: Option<String>,
+    },
+
+    #[command(
         about = "Manage user 'always-rules' that get prepended to every system prompt. \
                  Drop Markdown files into ~/.config/ollama-forge/rules/ — they're picked \
                  up automatically by chat, research, run-skill, analyze, test, and build."
@@ -240,6 +261,13 @@ pub enum RulesAction {
     Init,
     /// Print the rendered concatenation that gets injected into prompts.
     Show,
+    /// Open `$EDITOR` (or `$VISUAL`) on the rules directory.
+    Edit {
+        /// Open this specific rule file instead of the directory.
+        /// `forge rules edit 00-style` opens `00-style.md`.
+        #[arg(help = "Optional rule name (without .md). Opens the dir when omitted.")]
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]

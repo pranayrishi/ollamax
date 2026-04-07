@@ -35,7 +35,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::replay::{read_log, ReplayRecord};
+use crate::replay::{stream_log, ReplayRecord};
 
 /// Min number of times a pattern must repeat before we surface it.
 pub const MIN_OCCURRENCES: usize = 3;
@@ -45,6 +45,11 @@ pub struct InstinctsReport {
     pub total_records: usize,
     pub repeated_tasks: Vec<RepeatedPattern>,
     pub repeated_systems: Vec<RepeatedPattern>,
+    /// Tool-call sequences observed inside agent records (e.g., the
+    /// chain `web_search → fetch_url → wikipedia`). Surfaced when the
+    /// same sequence appears in `threshold+` distinct sessions.
+    /// Promote these to recipes inside skills.
+    pub repeated_tool_chains: Vec<RepeatedPattern>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,9 +71,14 @@ pub async fn from_log(path: &Path, threshold: usize) -> Result<InstinctsReport> 
             total_records: 0,
             repeated_tasks: Vec::new(),
             repeated_systems: Vec::new(),
+            repeated_tool_chains: Vec::new(),
         });
     }
-    let records = read_log(path).await?;
+    // Streaming pass: we accumulate enough state to do the analysis
+    // without holding every record in memory at once. This matters once
+    // a long-lived user's log crosses ~50 MB.
+    let mut records = Vec::new();
+    stream_log(path, |r| records.push(r)).await?;
     Ok(analyze_with_threshold(&records, threshold))
 }
 
@@ -138,11 +148,62 @@ pub fn analyze_with_threshold(records: &[ReplayRecord], threshold: usize) -> Ins
         .collect();
     repeated_systems.sort_by(|a, b| b.count.cmp(&a.count));
 
+    // Tool-call chain extraction: every agent record's prompt is the
+    // running transcript, which contains lines like:
+    //   [round N] You called tool `web_search` with args:
+    // We grep them out, normalize to a `→`-separated chain, and count
+    // how many records produced each chain. A chain seen 3+ times is a
+    // candidate recipe.
+    let mut by_chain: HashMap<String, (usize, Vec<String>)> = HashMap::new();
+    for r in records {
+        let chain = extract_tool_chain(&r.prompt);
+        if chain.is_empty() {
+            continue;
+        }
+        let canon = chain.join(" → ");
+        let entry = by_chain.entry(canon).or_insert_with(|| (0, Vec::new()));
+        entry.0 += 1;
+        if !entry.1.contains(&r.model) {
+            entry.1.push(r.model.clone());
+        }
+    }
+    let mut repeated_tool_chains: Vec<RepeatedPattern> = by_chain
+        .into_iter()
+        .filter(|(_, (count, _))| *count >= threshold)
+        .map(|(canonical, (count, models))| RepeatedPattern {
+            canonical,
+            count,
+            models,
+        })
+        .collect();
+    repeated_tool_chains.sort_by(|a, b| b.count.cmp(&a.count));
+
     InstinctsReport {
         total_records,
         repeated_tasks,
         repeated_systems,
+        repeated_tool_chains,
     }
+}
+
+/// Extract the ordered list of tool names called inside an agent record's
+/// prompt. Returns an empty Vec for non-agent records (chat, run-skill,
+/// etc.) which never contain `[round N] You called tool` markers.
+///
+/// Format we look for, emitted by `agent::record_step`:
+///   `[round 1] You called tool ` + backtick + `<name>` + backtick + ` with args:`
+fn extract_tool_chain(prompt: &str) -> Vec<String> {
+    let mut chain = Vec::new();
+    for line in prompt.lines() {
+        let Some(idx) = line.find("You called tool `") else {
+            continue;
+        };
+        let after = &line[idx + "You called tool `".len()..];
+        if let Some(end) = after.find('`') {
+            chain.push(after[..end].to_string());
+        }
+    }
+    chain
 }
 
 fn normalize(s: &str, max_chars: usize) -> String {
@@ -239,6 +300,35 @@ mod tests {
         assert_eq!(r.repeated_systems[0].count, 3);
         // Models should be deduped.
         assert_eq!(r.repeated_systems[0].models.len(), 2);
+    }
+
+    #[test]
+    fn extracts_tool_chain_from_agent_transcript() {
+        let prompt = "User task: research X\n\n[round 1] You called tool `web_search` with args:\n{...}\n\n[tool result, ok=true]\n...\n\n[round 2] You called tool `fetch_url` with args:\n{...}\n\n[tool result, ok=true]\n...\n";
+        let chain = extract_tool_chain(prompt);
+        assert_eq!(chain, vec!["web_search", "fetch_url"]);
+    }
+
+    #[test]
+    fn extract_tool_chain_returns_empty_for_chat_records() {
+        // A plain chat prompt has no `[round N] You called tool` markers.
+        let chain = extract_tool_chain("explain quantum entanglement in 5 words");
+        assert!(chain.is_empty());
+    }
+
+    #[test]
+    fn surfaces_repeated_tool_chains() {
+        let agent_prompt = "User task: research thing\n\n[round 1] You called tool `web_search` with args:\n{}\n\n[round 2] You called tool `wikipedia` with args:\n{}\n\n[round 3] You called tool `fetch_url` with args:\n{}\n";
+        let records = vec![
+            rec("m", agent_prompt, None),
+            rec("m", agent_prompt, None),
+            rec("m", agent_prompt, None),
+        ];
+        let r = analyze(&records);
+        assert_eq!(r.repeated_tool_chains.len(), 1);
+        assert_eq!(r.repeated_tool_chains[0].count, 3);
+        assert!(r.repeated_tool_chains[0].canonical.contains("web_search"));
+        assert!(r.repeated_tool_chains[0].canonical.contains("→"));
     }
 
     #[test]

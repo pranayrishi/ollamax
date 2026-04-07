@@ -127,21 +127,51 @@ pub fn quick_hash(bytes: &[u8]) -> String {
 /// Read a replay log into memory. Returns one `ReplayRecord` per non-empty
 /// line; lines that fail to parse are skipped with a warning so a
 /// truncated log doesn't kill the whole replay.
+/// Read the entire replay log into memory. Convenience for callers that
+/// need every record. **For long-lived users this can be 100 MB+** —
+/// prefer `stream_log` when you can process records one at a time.
 pub async fn read_log(path: &Path) -> Result<Vec<ReplayRecord>> {
-    let content = tokio::fs::read_to_string(path)
-        .await
-        .with_context(|| format!("read replay log {}", path.display()))?;
     let mut out = Vec::new();
-    for (line_num, line) in content.lines().enumerate() {
+    stream_log(path, |rec| {
+        out.push(rec);
+    })
+    .await?;
+    Ok(out)
+}
+
+/// Stream a replay log line-by-line, calling `on_record` for each parsed
+/// `ReplayRecord`. Memory usage is O(longest line), not O(file). This is
+/// what `forge instincts` and `forge replay` should use as a long-running
+/// user's log grows past a few megabytes.
+///
+/// Lines that fail to parse are skipped with a warning so a truncated
+/// trailing line (mid-write crash) doesn't kill the whole pass.
+pub async fn stream_log<F>(path: &Path, mut on_record: F) -> Result<()>
+where
+    F: FnMut(ReplayRecord),
+{
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let file = tokio::fs::File::open(path)
+        .await
+        .with_context(|| format!("open replay log {}", path.display()))?;
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+    let mut line_num = 0usize;
+    while let Some(line) = lines
+        .next_line()
+        .await
+        .with_context(|| format!("read line from {}", path.display()))?
+    {
+        line_num += 1;
         if line.trim().is_empty() {
             continue;
         }
-        match serde_json::from_str::<ReplayRecord>(line) {
-            Ok(r) => out.push(r),
-            Err(e) => tracing::warn!("replay: skipping malformed line {}: {e}", line_num + 1),
+        match serde_json::from_str::<ReplayRecord>(&line) {
+            Ok(r) => on_record(r),
+            Err(e) => tracing::warn!("replay: skipping malformed line {line_num}: {e}"),
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 #[cfg(test)]

@@ -2,11 +2,13 @@
 
 **A harness optimization layer for local coding agents that run on Ollama.**
 
+> [简体中文](README.zh.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Português](README.pt.md)
+
 > **Status: pre-alpha (v0.1.0).** The CLI compiles, ships hardware detection,
 > bundled skill recipes, and a security/secret scanner. Parallel orchestration,
 > the build pipeline, and the skills marketplace are scaffolded but not yet
 > wired end-to-end. See [Roadmap](#roadmap) for what works today vs. what
-> doesn't. PRs welcome — [good-first-issue label](https://github.com/ollama-forge/ollama-forge/labels/good%20first%20issue).
+> doesn't. PRs welcome — [good-first-issue label](https://github.com/pranayrishi/ollamax/labels/good%20first%20issue).
 
 ---
 

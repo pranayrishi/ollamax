@@ -1,0 +1,77 @@
+{
+  "name": "lora-finetune",
+  "description": "Walks the user through fine-tuning a small Ollama-compatible model on their own codebase using Unsloth (free, runs locally). Produces a custom GGUF and an Ollama Modelfile. No data leaves the machine.",
+  "version": "1.0.0",
+  "author": "Forge Team",
+  "tags": ["finetune", "lora", "unsloth", "training", "personalization", "local"],
+  "prompts": {
+    "system": "You are a fine-tuning workflow expert. You help the user run a LoRA fine-tune on their codebase using Unsloth (a free, open-source library that wraps Hugging Face transformers + PEFT). Your output should be precise, actionable, and aware that the user is on a local machine with limited VRAM. Never recommend a hosted training service — Vertex, SageMaker, OpenAI fine-tuning, or anything with a credit card. The point of this workflow is that it runs entirely on the user's hardware.",
+    "planning": "Inspect the user's repo (language, size, license). Pick a base model with the right size for the user's VRAM (Qwen2.5-Coder-1.5B for 8 GB cards, 7B for 12-16 GB, 14B for 24 GB+). Estimate dataset prep time and training time honestly.",
+    "execution": "Generate (1) a dataset-prep script that walks the repo and writes a JSONL of {prompt, completion} pairs from function-level docstrings or git commits, (2) an Unsloth training script (4-bit QLoRA, 1-3 epochs, lr=2e-4, batch_size=1 with grad accumulation 4), (3) a conversion script to GGUF via llama.cpp's convert-hf-to-gguf.py, and (4) the Ollama Modelfile that imports the result. Output everything as labeled fenced code blocks so `forge build --output dir/` can write the files directly.",
+    "review": "Check the generated scripts for: (a) hardcoded paths the user will need to change, (b) missing requirements.txt entries, (c) overly aggressive learning rates that will degrade base-model knowledge."
+  },
+  "settings": {
+    "model": "qwen2.5-coder:14b",
+    "temperature": 0.3,
+    "max_tokens": 8192,
+    "tools": ["unsloth", "llama.cpp", "ollama"]
+  },
+  "recipes": [
+    {
+      "name": "Codebase LoRA",
+      "description": "Fine-tune a Qwen2.5-Coder model on the user's repo, ship it as a custom Ollama model.",
+      "trigger_keywords": [
+        "finetune",
+        "fine-tune",
+        "lora",
+        "train on my code",
+        "personalize",
+        "custom model",
+        "unsloth"
+      ],
+      "steps": [
+        {
+          "name": "Inspect repo",
+          "prompt_template": "List the languages, file count, total LOC, and license of the user's repo. Refuse to proceed if the license is restrictive (proprietary, no-derivatives) — fine-tuning a model on the code creates a derivative work.",
+          "expected_output": "Repo summary + go/no-go decision"
+        },
+        {
+          "name": "Pick base model and budget",
+          "prompt_template": "Given the user's free VRAM in MB, pick the largest Qwen2.5-Coder variant that fits with 4-bit QLoRA + 4096-token context. Estimate training time honestly (rule of thumb: 1.5B = 30 min/epoch on a 3060, 7B = 2-3 hours, 14B = 8-12 hours). If the user is on a Mac, warn that Unsloth doesn't support Apple Silicon training natively — they'll need MLX-LM instead.",
+          "expected_output": "Base model name + epoch budget + framework choice (Unsloth vs MLX-LM)"
+        },
+        {
+          "name": "Generate dataset-prep script",
+          "prompt_template": "Write a Python script that walks the repo, extracts function/method definitions and their docstrings or leading comments, and writes a JSONL file where each line is {\"prompt\": \"<function signature + docstring>\", \"completion\": \"<function body>\"}. Skip files in target/, node_modules/, .git/, dist/, build/. Output as ```python prepare_dataset.py.",
+          "expected_output": "prepare_dataset.py file"
+        },
+        {
+          "name": "Generate training script",
+          "prompt_template": "Write an Unsloth training script that loads the base model in 4-bit, applies LoRA (r=16, alpha=32, target modules q_proj/k_proj/v_proj/o_proj), trains for 2 epochs at lr=2e-4 with cosine schedule + 100 warmup steps, batch_size=1 with grad accumulation 4 (effective 4), and saves the merged model + adapter to ./trained/. Print VRAM usage every 50 steps so the user can tell if they're about to OOM. Output as ```python train.py.",
+          "expected_output": "train.py file"
+        },
+        {
+          "name": "Generate GGUF conversion script",
+          "prompt_template": "Write a shell script that uses llama.cpp's convert-hf-to-gguf.py to convert ./trained/ to GGUF format with Q4_K_M quantization, then imports it into Ollama via the Modelfile. Output as ```bash convert_and_import.sh.",
+          "expected_output": "convert_and_import.sh file"
+        },
+        {
+          "name": "Generate Modelfile",
+          "prompt_template": "Write the Ollama Modelfile that wraps the GGUF, sets PARAMETER num_ctx 8192, PARAMETER temperature 0.3, and a SYSTEM prompt that mentions the model is a personalized version of <base model> trained on <repo name>. Output as ```dockerfile Modelfile.",
+          "expected_output": "Modelfile"
+        },
+        {
+          "name": "Final usage instructions",
+          "prompt_template": "Print the exact commands the user should run, in order: pip install requirements, run prepare_dataset.py, run train.py, run convert_and_import.sh, then `ollama run <name>` to test. Include the expected wall-clock time for each step on a 3060/3090/M2 Pro.",
+          "expected_output": "Numbered list of commands with time estimates"
+        }
+      ]
+    }
+  ],
+  "security_checks": [
+    "No data leaves the local machine",
+    "License-aware (refuses proprietary/no-derivatives)",
+    "Honest VRAM estimates (no overcommit)",
+    "No hosted training services suggested"
+  ]
+}

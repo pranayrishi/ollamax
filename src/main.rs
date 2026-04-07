@@ -442,6 +442,21 @@ async fn async_main() -> Result<()> {
                 println!("   To promote: forge rules init (if first run), then drop a *.md");
                 println!("     into ~/.config/ollama-forge/rules/ with the prompt text.");
             }
+
+            if report.repeated_tool_chains.is_empty() {
+                println!("\n📋 Repeated agent tool chains: none yet (need 3+ matches)");
+            } else {
+                println!(
+                    "\n📋 Repeated agent tool chains ({}). Promote any of these to a skill recipe:",
+                    report.repeated_tool_chains.len()
+                );
+                for p in &report.repeated_tool_chains {
+                    println!("   ×{}  {}", p.count, p.canonical);
+                }
+                println!();
+                println!("   To promote: write a skill JSON with a recipe whose `steps` mirror");
+                println!("     this chain, then `forge skills add path/to/skill.json`.");
+            }
         }
 
         Commands::Rules { action } => {
@@ -495,7 +510,221 @@ async fn async_main() -> Result<()> {
                         print!("{}", set.render());
                     }
                 }
+                RulesAction::Edit { name } => {
+                    // Pick the editor: $VISUAL > $EDITOR > sensible defaults.
+                    // We don't fall back to a hardcoded editor without
+                    // checking — installing forge shouldn't drag in nano.
+                    let editor = std::env::var("VISUAL")
+                        .or_else(|_| std::env::var("EDITOR"))
+                        .ok();
+                    let editor = match editor {
+                        Some(e) if !e.trim().is_empty() => e,
+                        _ => {
+                            anyhow::bail!(
+                                "neither $VISUAL nor $EDITOR is set. \
+                                 Run `EDITOR=vim forge rules edit` or set it in your shell."
+                            );
+                        }
+                    };
+                    if !dir.exists() {
+                        std::fs::create_dir_all(&dir)?;
+                    }
+                    let target = match name {
+                        Some(n) => {
+                            // Strip a stray `.md` suffix if the user typed
+                            // it; we'll add it back. This is the ergonomic
+                            // detail people forget.
+                            let stem = n.trim_end_matches(".md");
+                            let path = dir.join(format!("{stem}.md"));
+                            if !path.exists() {
+                                // Create an empty stub so the editor opens
+                                // a real file, not "empty buffer."
+                                std::fs::write(
+                                    &path,
+                                    format!("---\nname: {stem}\ndescription: \n---\n"),
+                                )?;
+                                eprintln!("created {}", path.display());
+                            }
+                            path
+                        }
+                        None => dir.clone(),
+                    };
+
+                    // We use `sh -c` so the user's editor command can be
+                    // anything: `vim`, `code -w`, `subl -w`, `emacs`, etc.
+                    // Wait for the editor to exit (`status()` blocks).
+                    let cmdline = format!("{} \"{}\"", editor, target.display());
+                    let status = std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(&cmdline)
+                        .status();
+                    match status {
+                        Ok(s) if s.success() => {
+                            eprintln!("✅ editor closed cleanly. Re-run any forge command and the rules will reload.");
+                        }
+                        Ok(s) => {
+                            anyhow::bail!("editor exited with status {s}");
+                        }
+                        Err(e) => {
+                            anyhow::bail!("could not launch `{editor}`: {e}");
+                        }
+                    }
+                }
             }
+        }
+
+        Commands::Finetune { repo, model } => {
+            if !repo.exists() {
+                anyhow::bail!("finetune target does not exist: {}", repo.display());
+            }
+            // Detect repo facts for the planner: language(s), file count.
+            // Cheap heuristic — count source files by extension.
+            let mut langs: std::collections::BTreeMap<&str, usize> =
+                std::collections::BTreeMap::new();
+            let mut file_count = 0usize;
+            for entry in walkdir::WalkDir::new(&repo)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    !(e.file_type().is_dir()
+                        && matches!(
+                            n.as_str(),
+                            "target" | "node_modules" | ".git" | "dist" | "build" | "venv"
+                        ))
+                })
+                .filter_map(|e| e.ok())
+            {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let ext = entry
+                    .path()
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
+                let lang = match ext {
+                    "rs" => Some("Rust"),
+                    "py" => Some("Python"),
+                    "ts" | "tsx" => Some("TypeScript"),
+                    "js" | "jsx" => Some("JavaScript"),
+                    "go" => Some("Go"),
+                    "java" => Some("Java"),
+                    "rb" => Some("Ruby"),
+                    "c" | "h" => Some("C"),
+                    "cpp" | "cc" | "hpp" => Some("C++"),
+                    _ => None,
+                };
+                if let Some(l) = lang {
+                    *langs.entry(l).or_insert(0) += 1;
+                    file_count += 1;
+                }
+            }
+            if file_count == 0 {
+                anyhow::bail!(
+                    "no source files found under {}. \
+                     forge finetune needs at least one .rs/.py/.ts/.js/.go/.java/.rb/.c/.cpp file to train on.",
+                    repo.display()
+                );
+            }
+            let primary_lang = langs
+                .iter()
+                .max_by_key(|(_, c)| **c)
+                .map(|(l, _)| *l)
+                .unwrap_or("(unknown)");
+
+            // Hardware budget for the planner — small models on small VRAM,
+            // big models on big VRAM. The skill itself will recommend a
+            // base; we just want to feed it ground truth.
+            let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
+            let hw = sentinel.detect_hardware().await;
+            eprintln!(
+                "🎓 forge finetune\n   repo: {}\n   primary lang: {primary_lang}\n   {} source file(s)\n   free VRAM: {} MB ({:?})\n",
+                repo.display(),
+                file_count,
+                hw.free_vram_mb,
+                hw.gpu_kind
+            );
+
+            // Load the lora-finetune skill and run it directly. We could
+            // also have the user invoke `forge run-skill lora-finetune` but
+            // that requires them to know the skill name and trigger words.
+            // The whole point of `forge finetune` is to bootstrap the
+            // workflow without that ceremony.
+            let skills_dir = dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("ollama-forge")
+                .join("skills");
+            let engine = SkillsEngine::new(skills_dir);
+            engine.load_skills().await?;
+            let skill = engine
+                .find_skill("lora-finetune")
+                .await
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "lora-finetune skill not found. \
+                         The bundled recipe should have been written to your skills dir on first run."
+                    )
+                })?;
+
+            let ollama = OllamaProvider::new(&config.ollama_url);
+            let chosen_model = match model {
+                Some(m) => m,
+                None => pick_installed_model(&config, &ollama).await?,
+            };
+            let mut system_prompt = skill.prompts.system.clone();
+            if let Some(planning) = &skill.prompts.planning {
+                system_prompt.push_str("\n\nPlanning guidance: ");
+                system_prompt.push_str(planning);
+            }
+            if let Some(execution) = &skill.prompts.execution {
+                system_prompt.push_str("\n\nExecution guidance: ");
+                system_prompt.push_str(execution);
+            }
+            system_prompt.push_str(&rules_suffix);
+
+            let task = format!(
+                "Fine-tune a local model on the repo at `{}`. \
+                 Primary language: {primary_lang}. {} source files. \
+                 Free VRAM: {} MB on a {:?}. \
+                 Output the dataset-prep script, the Unsloth training script, \
+                 the GGUF conversion script, and the Ollama Modelfile as labeled \
+                 fenced code blocks (```python prepare_dataset.py, etc.) so the \
+                 user can pipe this output to `forge build --output ./finetune/`.",
+                repo.display(),
+                file_count,
+                hw.free_vram_mb,
+                hw.gpu_kind
+            );
+
+            let opts = GenerateOptions {
+                model: chosen_model.clone(),
+                prompt: task,
+                system: Some(system_prompt),
+                temperature: Some(0.3),
+                num_ctx: Some(hw.optimal_context),
+                stream: true,
+                keep_alive: Some("1h".to_string()),
+                ..Default::default()
+            };
+
+            eprintln!("running on `{chosen_model}`...\n");
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            let bytes = ollama
+                .generate_streaming(opts, |chunk| {
+                    let _ = stdout.write_all(chunk.as_bytes());
+                    let _ = stdout.flush();
+                })
+                .await?;
+            let _ = writeln!(stdout);
+            if bytes == 0 {
+                eprintln!("forge: model returned no tokens");
+            }
+            eprintln!();
+            eprintln!("Pipe this output through `forge build --output ./finetune/` to extract");
+            eprintln!("the scripts to disk:");
+            eprintln!("  forge finetune {} > /tmp/lora.md && forge build \"$(cat /tmp/lora.md)\" -o ./finetune/", repo.display());
         }
 
         Commands::Tools => {
