@@ -157,6 +157,16 @@ pub enum Commands {
     Tools,
 
     #[command(
+        about = "Manage user 'always-rules' that get prepended to every system prompt. \
+                 Drop Markdown files into ~/.config/ollama-forge/rules/ — they're picked \
+                 up automatically by chat, research, run-skill, analyze, test, and build."
+    )]
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
+    },
+
+    #[command(
         about = "Replay a deterministic log against the locally-installed model. \
                  Reports any response drift since the log was captured."
     )]
@@ -166,6 +176,23 @@ pub enum Commands {
 
         #[arg(long, help = "Print full responses (default: just hash drift)")]
         verbose: bool,
+    },
+
+    #[command(
+        about = "Surface patterns from your replay log as candidate skills/rules. \
+                 Read-only — does not auto-promote anything."
+    )]
+    Instincts {
+        #[arg(help = "Path to a JSON Lines replay log (default: $FORGE_REPLAY_LOG)")]
+        log: Option<PathBuf>,
+
+        #[arg(
+            short,
+            long,
+            default_value = "3",
+            help = "Minimum number of times a pattern must repeat before it surfaces"
+        )]
+        threshold: usize,
     },
 
     #[command(about = "Warm-load a model into Ollama (avoids cold-start on the next call)")]
@@ -201,6 +228,18 @@ pub enum AnalysisType {
     Performance,
     Style,
     Full,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum RulesAction {
+    /// List installed rules.
+    List,
+    /// Print the absolute path to the rules directory.
+    Path,
+    /// Create the rules directory and a starter rule file.
+    Init,
+    /// Print the rendered concatenation that gets injected into prompts.
+    Show,
 }
 
 #[derive(Subcommand, Debug, Clone)]

@@ -24,10 +24,23 @@ use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 pub struct FetchUrlTool {
     client: Client,
+    /// Per-host robots.txt cache. We never store the full file — only a
+    /// small set of `Disallow:` prefixes for our user-agent. Std mutex
+    /// because the access pattern is "lock, look at a small map, drop" —
+    /// no `.await` while holding the lock.
+    robots_cache: StdMutex<HashMap<String, RobotsRules>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct RobotsRules {
+    /// Path prefixes the host's robots.txt forbids us from. Empty list = allowed everywhere.
+    disallow: Vec<String>,
 }
 
 impl Default for FetchUrlTool {
@@ -45,8 +58,138 @@ impl FetchUrlTool {
                 .redirect(reqwest::redirect::Policy::limited(5))
                 .build()
                 .expect("reqwest client"),
+            robots_cache: StdMutex::new(HashMap::new()),
         }
     }
+
+    /// Best-effort robots.txt check. Honors the `Disallow:` directives that
+    /// apply to our user-agent (or the wildcard `User-agent: *` group). On
+    /// any error or 404 we conservatively allow — robots.txt is advisory,
+    /// not enforcement, and a missing file means "no restrictions."
+    ///
+    /// Disabled when `FORGE_IGNORE_ROBOTS=1` is set, for cases where the
+    /// user explicitly wants to bypass (e.g., scraping their own staging
+    /// server that returns 503 on /robots.txt).
+    async fn allowed_by_robots(&self, url_str: &str) -> bool {
+        if std::env::var_os("FORGE_IGNORE_ROBOTS").is_some() {
+            return true;
+        }
+        let Ok(parsed) = reqwest::Url::parse(url_str) else {
+            return true;
+        };
+        let host = parsed.host_str().unwrap_or("").to_string();
+        let path = parsed.path().to_string();
+        if host.is_empty() {
+            return true;
+        }
+
+        // Cache check.
+        {
+            let cache = self.robots_cache.lock().ok();
+            if let Some(rules) = cache.as_ref().and_then(|c| c.get(&host)) {
+                return !rules.disallow.iter().any(|p| path.starts_with(p));
+            }
+        }
+
+        // Fetch robots.txt for this host. Best-effort — failures default to allow.
+        let robots_url = format!(
+            "{}://{}{}/robots.txt",
+            parsed.scheme(),
+            host,
+            parsed.port().map(|p| format!(":{p}")).unwrap_or_default()
+        );
+        let rules = match self.client.get(&robots_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let body = resp.text().await.unwrap_or_default();
+                parse_robots(&body, "ollama-forge")
+            }
+            _ => RobotsRules::default(),
+        };
+
+        // Cache and check.
+        let allowed = !rules.disallow.iter().any(|p| path.starts_with(p));
+        if let Ok(mut cache) = self.robots_cache.lock() {
+            cache.insert(host, rules);
+        }
+        allowed
+    }
+}
+
+/// Minimal robots.txt parser. Reads `User-agent:` groups and collects
+/// `Disallow:` prefixes from the most-specific matching group.
+///
+/// **Group resolution**: per RFC 9309, when both a `User-agent: *` group
+/// and a `User-agent: ollama-forge` group exist, the agent-specific group
+/// wins entirely — its rules replace the wildcard's, not augment them.
+/// The previous version of this parser flattened both into one list,
+/// which over-blocked.
+///
+/// **Group boundary detection**: a group is a run of `User-agent:` lines
+/// followed by rule lines, terminated by the next `User-agent:` line that
+/// follows a rule. This is what the RFC actually says, even though most
+/// real robots.txt files just put one UA per group.
+///
+/// Not a full RFC 9309 parser — we ignore Allow, Crawl-delay, Sitemap,
+/// and the more obscure prefix-vs-glob distinctions. Failure mode is
+/// "occasional under-block," acceptable given the polite-UA surface.
+fn parse_robots(body: &str, agent: &str) -> RobotsRules {
+    let agent_lower = agent.to_lowercase();
+    let mut wildcard_disallow: Vec<String> = Vec::new();
+    let mut targeted_disallow: Vec<String> = Vec::new();
+    let mut in_wildcard = false;
+    let mut in_targeted = false;
+    let mut just_saw_useragent = false;
+
+    for raw in body.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let key_lower = key.trim().to_lowercase();
+        let value = value.trim().to_string();
+
+        if key_lower == "user-agent" {
+            // Start of a new group iff the previous line was a rule.
+            if !just_saw_useragent {
+                in_wildcard = false;
+                in_targeted = false;
+            }
+            let v = value.to_lowercase();
+            if v == "*" {
+                in_wildcard = true;
+            }
+            if v.contains(&agent_lower) {
+                in_targeted = true;
+            }
+            just_saw_useragent = true;
+            continue;
+        }
+
+        just_saw_useragent = false;
+
+        if key_lower == "disallow" {
+            if value.is_empty() {
+                continue; // empty Disallow: = "allow everything in this group"
+            }
+            if in_targeted {
+                targeted_disallow.push(value.clone());
+            }
+            if in_wildcard {
+                wildcard_disallow.push(value);
+            }
+        }
+    }
+
+    // Targeted group wins outright if it exists.
+    let chosen = if !targeted_disallow.is_empty() {
+        targeted_disallow
+    } else {
+        wildcard_disallow
+    };
+    RobotsRules { disallow: chosen }
 }
 
 #[async_trait]
@@ -84,6 +227,20 @@ impl Tool for FetchUrlTool {
                 tool: self.name().to_string(),
                 ok: false,
                 content: format!("fetch_url: refusing non-http(s) URL `{url}`"),
+            });
+        }
+
+        // Honor robots.txt unless the user explicitly opted out via
+        // FORGE_IGNORE_ROBOTS=1. This is a politeness measure, not a
+        // security control.
+        if !self.allowed_by_robots(url).await {
+            return Ok(ToolResult {
+                tool: self.name().to_string(),
+                ok: false,
+                content: format!(
+                    "fetch_url: blocked by robots.txt for {url}\n\
+                     (set FORGE_IGNORE_ROBOTS=1 to bypass — politeness, not security)"
+                ),
             });
         }
 
@@ -305,6 +462,67 @@ mod tests {
         // test. Here we just confirm the schema marker exists.
         let t = FetchUrlTool::new();
         assert_eq!(t.args_schema()["required"][0], "url");
+    }
+
+    #[test]
+    fn robots_parser_picks_up_wildcard_disallow() {
+        let body = "User-agent: *\nDisallow: /private\nDisallow: /admin\n";
+        let r = parse_robots(body, "ollama-forge");
+        assert_eq!(r.disallow, vec!["/private", "/admin"]);
+    }
+
+    #[test]
+    fn robots_parser_picks_up_targeted_agent() {
+        let body =
+            "User-agent: ollama-forge\nDisallow: /api\n\nUser-agent: *\nDisallow: /everything\n";
+        let r = parse_robots(body, "ollama-forge");
+        // Targeted rules should win over the wildcard.
+        assert!(r.disallow.contains(&"/api".to_string()));
+    }
+
+    #[test]
+    fn robots_parser_targeted_group_replaces_wildcard_not_augments() {
+        // Regression for the session-6 over-blocking bug. The previous parser
+        // flattened wildcard + targeted into one list, so /everything would
+        // also have been blocked even though only /api is targeted.
+        let body =
+            "User-agent: *\nDisallow: /everything\n\nUser-agent: ollama-forge\nDisallow: /api\n";
+        let r = parse_robots(body, "ollama-forge");
+        assert!(r.disallow.contains(&"/api".to_string()));
+        assert!(
+            !r.disallow.contains(&"/everything".to_string()),
+            "wildcard rules must NOT apply when a targeted group exists; got: {:?}",
+            r.disallow
+        );
+    }
+
+    #[test]
+    fn robots_parser_falls_back_to_wildcard_when_no_targeted_group() {
+        let body = "User-agent: *\nDisallow: /admin\n";
+        let r = parse_robots(body, "ollama-forge");
+        assert_eq!(r.disallow, vec!["/admin"]);
+    }
+
+    #[test]
+    fn robots_parser_handles_grouped_useragents() {
+        // Two UA lines stacked = both share the rules.
+        let body = "User-agent: ollama-forge\nUser-agent: googlebot\nDisallow: /private\n";
+        let r = parse_robots(body, "ollama-forge");
+        assert_eq!(r.disallow, vec!["/private"]);
+    }
+
+    #[test]
+    fn robots_parser_ignores_comments_and_blanks() {
+        let body = "# this is a comment\n\n   \nUser-agent: *\nDisallow: /x\n# another\n";
+        let r = parse_robots(body, "ollama-forge");
+        assert_eq!(r.disallow, vec!["/x"]);
+    }
+
+    #[test]
+    fn robots_parser_empty_disallow_means_allow() {
+        let body = "User-agent: *\nDisallow:\n";
+        let r = parse_robots(body, "ollama-forge");
+        assert!(r.disallow.is_empty());
     }
 
     #[test]

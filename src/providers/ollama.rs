@@ -514,13 +514,25 @@ impl LlmProvider for OllamaProvider {
             keep_alive: Some(keep_alive.to_string()),
             format: None,
         };
-        let resp = self
-            .client
-            .post(format!("{}/api/generate", self.base_url))
-            .json(&req)
-            .send()
-            .await
-            .context("Failed to send preload request to Ollama")?;
+        // Per-call timeout: a 70B cold-load can legitimately take 60-90s,
+        // so we go with 120s. The default client-wide timeout is 300s
+        // which is too generous for the "model isn't installed and ollama
+        // hangs trying to pull" failure mode.
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            self.client
+                .post(format!("{}/api/generate", self.base_url))
+                .json(&req)
+                .send(),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "preload of `{model}` timed out after 120s. \
+                 Is the model already pulled? Try `ollama pull {model}` first."
+            )
+        })?
+        .context("Failed to send preload request to Ollama")?;
         if !resp.status().is_success() {
             anyhow::bail!("Ollama preload of `{}` failed: {}", model, resp.status());
         }

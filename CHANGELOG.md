@@ -6,6 +6,92 @@ All notable changes to Ollama-Forge are documented here. Format follows
 
 ## [Unreleased]
 
+### Added (session 6)
+
+#### Persistent always-rules
+
+- **`src/rules/`**: a `RuleSet` loaded from
+  `~/.config/ollama-forge/rules/*.md` (or `$XDG_CONFIG_HOME` equivalent).
+  Two file flavors: plain Markdown (whole file = one rule) and
+  YAML-frontmatter (`name`/`description`/`tags` + Markdown body, same
+  shape as `SKILL.md`). Files are sorted alphabetically so users control
+  ordering with `00-`, `10-`, `20-` prefixes.
+- Rules are now **automatically prepended to every system prompt** across:
+  `forge chat`, `forge research` (via `AgentConfig::system_suffix`),
+  `forge run-skill`, `forge analyze` (review pass), `forge test`, and
+  every worker in the `forge build` orchestrator (via
+  `OrchestratorConfig::rules_suffix`). One source of truth, no per-command
+  flag.
+- **`forge rules list/init/show/path`** subcommands. `init` writes a
+  starter rule file. `show` prints the rendered concatenation that gets
+  injected. `path` is grep-friendly for shell scripts.
+- **Validated end-to-end against real Ollama**: created a starter rule
+  saying "use 4-space indentation in Rust", asked llama3.2 the indentation
+  question, and the model answered correctly using the rule.
+
+#### Continuous-learning loop
+
+- **`src/instincts/`**: read-only analyzer over the replay log. Surfaces
+  repeated tasks (same prompt 3+ times) and repeated system prompts as
+  candidate skills/rules. **Intentionally does not auto-promote** — the
+  replay log contains the user's full prompt history including private
+  code, and auto-extracting that into a shared skill is a privacy
+  footgun. Human-in-the-loop is the safer default.
+- **`forge instincts [<log>] [--threshold N]`** command. Defaults to the
+  3-occurrence floor; `--threshold` lowers it for users with small logs.
+  Prints next-step instructions: "to promote → write a skill JSON / drop
+  a rule .md".
+- **Validated end-to-end**: ran `forge chat` three times with the same
+  prompt under `FORGE_REPLAY_LOG`, then `forge instincts` correctly
+  surfaced the pattern with `count=3`.
+
+#### Politeness layer
+
+- **robots.txt support in `fetch_url`**. Per-host cache,
+  RFC-9309-style group resolution (targeted user-agent group wins
+  outright over the wildcard, doesn't merge with it), opt-out via
+  `FORGE_IGNORE_ROBOTS=1` for cases where the user is hitting their own
+  staging server.
+- **`FORGE_TRACE_WIDTH`**: configurable preview width for
+  `forge research --trace`. Bumped default from 100 to 300 chars so URLs
+  and citations no longer get cut.
+
+### Fixed (session 6)
+
+- **CI was failing on Linux** with `parse_vram_string is never used` because
+  the function is only called from `detect_macos_intel_vram` (which is
+  itself `cfg(target_os = "macos")`) but wasn't gated the same way. On
+  Linux clippy with `-D warnings`, that's a hard error. Gated to macOS.
+- **Node.js 20 deprecation warnings** from `actions/checkout@v4` and
+  `actions/cache@v4`: set `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` on
+  the workflow so the runner forces Node 24.
+- **The `forge build` smoke test exposed two real bugs:**
+  1. **Orchestrator handed `complexity.suggested_model` straight to the
+     executor without checking it's installed.** When the analyzer's pick
+     wasn't pulled, Ollama hung trying to fetch it (5-minute timeout, no
+     useful error). Now the orchestrator calls `route_to_model` (which is
+     guaranteed to return an available model) before dispatching.
+  2. **The labeled-code-block extractor only looked at the fence line for
+     the path.** Small models (`qwen3-vl:2b`) put the path on the first
+     line *inside* the block instead of on the fence: `\`\`\`rust\nsrc/lib.rs\n…`.
+     Added a `looks_like_path` heuristic + peek-fallback so both shapes
+     work. Pinned by 4 new tests in `tests/build_extractor.rs`.
+- **`OllamaProvider::preload` now has a per-call 120s timeout**, not the
+  client-wide 300s default. A 70B cold-load can legitimately take 60-90s,
+  but "the model isn't installed and Ollama hangs trying to pull it" used
+  to lock the whole process for five minutes with no useful error.
+- **`BuildResult` always returned `tokens_generated: 0` and `duration_ms: 0`.**
+  These are part of the public API. Now sums across worker results, and
+  `forge build` prints them on completion. Failed worker errors are
+  surfaced via `BuildResult::warnings`.
+- **robots.txt parser was over-blocking.** When both a `User-agent: *`
+  and a `User-agent: ollama-forge` group existed, the previous flat
+  parser put both groups' rules into the same disallow list, so wildcard
+  rules like `Disallow: /everything` would block our agent even when the
+  targeted group only had `Disallow: /api`. Rewrote with proper
+  per-group tracking; targeted group now wins outright per RFC 9309.
+  Pinned by 3 new tests.
+
 ### Added (session 5)
 
 #### Limitation 1 — Tool-using research agent (free-only)

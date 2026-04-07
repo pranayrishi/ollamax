@@ -40,6 +40,7 @@ pub struct Agent {
     num_ctx: usize,
     keep_alive: String,
     max_iterations: usize,
+    system_suffix: String,
     /// Cached `/api/show` digest for `model`. Populated once on first
     /// `run()` so we don't pay the round-trip on every iteration.
     cached_digest: String,
@@ -51,6 +52,10 @@ pub struct AgentConfig {
     pub num_ctx: usize,
     pub keep_alive: String,
     pub max_iterations: usize,
+    /// Suffix appended to the agent's system prompt. Used by the CLI to
+    /// inject `~/.config/ollama-forge/rules/*.md` so user always-rules
+    /// apply to the research agent the same way they apply to chat.
+    pub system_suffix: String,
 }
 
 impl Default for AgentConfig {
@@ -60,6 +65,7 @@ impl Default for AgentConfig {
             num_ctx: 16_384,
             keep_alive: "1h".to_string(),
             max_iterations: DEFAULT_MAX_ITERATIONS,
+            system_suffix: String::new(),
         }
     }
 }
@@ -94,6 +100,7 @@ impl Agent {
             num_ctx: config.num_ctx,
             keep_alive: config.keep_alive,
             max_iterations: config.max_iterations.max(1),
+            system_suffix: config.system_suffix,
             cached_digest: String::new(),
         }
     }
@@ -115,7 +122,10 @@ impl Agent {
                 .await
                 .unwrap_or_default();
         }
-        let system_prompt = build_system_prompt(&self.tools);
+        let mut system_prompt = build_system_prompt(&self.tools);
+        if !self.system_suffix.is_empty() {
+            system_prompt.push_str(&self.system_suffix);
+        }
         // We use `format: "json"` (the simpler form), not a strict schema.
         // Reason: a strict schema with `args: {type: object}` lets the
         // model emit `args: {}` because the empty object satisfies the
@@ -336,7 +346,10 @@ fn record_step<F>(
 ) where
     F: FnMut(&AgentStep),
 {
-    let preview: String = result.content.chars().take(200).collect();
+    // Cap at 800 chars — generous enough for URLs + a sentence of context.
+    // The CLI re-truncates to FORGE_TRACE_WIDTH (default 300) before
+    // rendering; this only bounds memory in the trace struct itself.
+    let preview: String = result.content.chars().take(800).collect();
     let step = AgentStep {
         iteration,
         tool: tool_name.to_string(),

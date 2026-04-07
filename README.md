@@ -72,10 +72,12 @@ way to verify your install works without pulling a model.
 
 | Command                      | Status | What it does                                                                                  |
 | :--------------------------- | :----: | :-------------------------------------------------------------------------------------------- |
-| `forge research "<q>"`       |   ✅   | **Tool-using research agent.** Local Ollama + free public tools (DuckDuckGo, Wikipedia, arXiv, plain HTTP). Configurable `--max-iterations`. |
+| `forge research "<q>"`       |   ✅   | **Tool-using research agent.** Local Ollama + free public tools (DuckDuckGo, Wikipedia, arXiv, plain HTTP). Configurable `--max-iterations`. Honors `FORGE_TRACE_WIDTH`. |
 | `forge tools`                |   ✅   | Lists the four bundled tools and the JSON schema the agent uses to call them                 |
 | `forge replay <log>`         |   ✅   | Re-issues every Ollama call in a JSONL replay log against locally-installed models, reports hash drift |
-| `forge build "..." -o dir/`  |   🟢   | Heterogeneous parallel orchestration with per-worker progress events; `--output` extracts labeled code blocks to disk |
+| `forge instincts [<log>]`    |   ✅   | **Continuous learning.** Surfaces repeated tasks/system prompts from your replay log as candidate skills/rules. Read-only. `--threshold N` to lower the floor. |
+| `forge rules list/init/show/path` | ✅ | **Persistent always-rules.** Drop Markdown files into `~/.config/ollama-forge/rules/` and they get prepended to every system prompt across `chat`, `research`, `run-skill`, `analyze`, `test`, and `build`. |
+| `forge build "..." -o dir/`  |   ✅   | Heterogeneous parallel orchestration with per-worker progress events; `--output` extracts labeled code blocks (incl. small-model "path on first line inside block" shape) and writes them to disk. Reports total tokens + duration. |
 | `forge status`               |   ✅   | Hardware (NVIDIA / AMD / Apple Silicon / Intel / CPU), recommended model, Ollama health, loaded models |
 | `forge --version`            |   ✅   | Includes git short SHA so a build can be pinned for replay/debug                              |
 | `forge optimize`             |   ✅   | Prints a tuned `Modelfile` for your hardware                                                  |

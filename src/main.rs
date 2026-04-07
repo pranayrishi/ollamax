@@ -1,11 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
 use ollama_forge::agent::{Agent, AgentConfig};
-use ollama_forge::cli::{Cli, Commands, SkillsAction};
+use ollama_forge::cli::{Cli, Commands, RulesAction, SkillsAction};
 use ollama_forge::executor::ProgressEvent;
 use ollama_forge::orchestrator::{BuildRequest, Orchestrator, OrchestratorConfig};
 use ollama_forge::providers::{GenerateOptions, LlmProvider, OllamaProvider};
 use ollama_forge::replay::{quick_hash, read_log};
+use ollama_forge::rules::RuleSet;
 use ollama_forge::security::{SecurityGuard, Severity};
 use ollama_forge::tools::ToolRegistry;
 use ollama_forge::{init_tracing, monitoring::VramSentinel, skills::SkillsEngine, Config};
@@ -48,6 +49,12 @@ async fn async_main() -> Result<()> {
         None => Config::load().await?,
     };
 
+    // Load user "always-rules" from the rules directory and prepare a
+    // suffix to append to every system prompt. Empty string when no rules
+    // are configured, so call sites can unconditionally concatenate.
+    let rules = RuleSet::load_default().unwrap_or_default();
+    let rules_suffix = rules.render();
+
     match cli.command {
         Commands::Init { force } => init_project(force).await?,
 
@@ -74,6 +81,7 @@ async fn async_main() -> Result<()> {
                 max_parallel_workers: config.max_parallel_workers,
                 security_enabled: config.security_enabled && !no_security,
                 tdd_enforced: config.tdd_enforced,
+                rules_suffix: rules_suffix.clone(),
             })
             .await?;
 
@@ -126,7 +134,16 @@ async fn async_main() -> Result<()> {
             // Drop side effects + wait for the renderer to drain.
             let _ = progress_task.await;
 
-            eprintln!("✅ build completed on `{}`", result.model_used);
+            eprintln!(
+                "✅ build completed on `{}` ({} tok, {} ms total across workers)",
+                result.model_used, result.tokens_generated, result.duration_ms
+            );
+            if !result.warnings.is_empty() {
+                eprintln!("   ⚠️  {} worker(s) failed:", result.warnings.len());
+                for w in &result.warnings {
+                    eprintln!("      - {w}");
+                }
+            }
 
             if let Some(out_dir) = output {
                 let written = extract_and_write_code_blocks(&out_dir, &result.output)?;
@@ -160,9 +177,15 @@ async fn async_main() -> Result<()> {
             // otherwise the chat is unrepeatable and the log is meaningless.
             // Default to seed=0 + temp=0 in that mode.
             let replay_mode = std::env::var_os("FORGE_REPLAY_LOG").is_some();
+            let system = if rules_suffix.is_empty() {
+                None
+            } else {
+                Some(rules_suffix.clone())
+            };
             let opts = GenerateOptions {
                 model: model.unwrap_or_else(|| config.default_model.clone()),
                 prompt: prompt.unwrap_or_default(),
+                system,
                 stream: true,
                 temperature: if replay_mode { Some(0.0) } else { Some(0.7) },
                 seed: if replay_mode { Some(0) } else { None },
@@ -367,6 +390,114 @@ async fn async_main() -> Result<()> {
             }
         }
 
+        Commands::Instincts { log, threshold } => {
+            let log_path = match log {
+                Some(p) => p,
+                None => match std::env::var("FORGE_REPLAY_LOG") {
+                    Ok(p) => PathBuf::from(p),
+                    Err(_) => {
+                        anyhow::bail!(
+                            "no replay log specified. Pass a path or set FORGE_REPLAY_LOG."
+                        );
+                    }
+                },
+            };
+            let report = ollama_forge::instincts::from_log(&log_path, threshold).await?;
+            println!("\n🧠 Instincts report from {}", log_path.display());
+            println!("   {} total record(s) analyzed", report.total_records);
+            if report.total_records == 0 {
+                println!("\n   (the log is empty — run forge chat / forge research with FORGE_REPLAY_LOG set)");
+                return Ok(());
+            }
+
+            if report.repeated_tasks.is_empty() {
+                println!("\n📋 Repeated tasks: none yet (need 3+ matches)");
+            } else {
+                println!(
+                    "\n📋 Repeated tasks ({}). Promote any of these to a skill:",
+                    report.repeated_tasks.len()
+                );
+                for p in &report.repeated_tasks {
+                    let preview: String = p.canonical.chars().take(70).collect();
+                    println!("   ×{}  {preview}", p.count);
+                    println!("        models: {:?}", p.models);
+                }
+                println!();
+                println!("   To promote: write a skill JSON for the workflow, then");
+                println!("     forge skills add path/to/skill.json");
+            }
+
+            if report.repeated_systems.is_empty() {
+                println!("\n📋 Repeated system prompts: none yet (need 3+ matches)");
+            } else {
+                println!(
+                    "\n📋 Repeated system prompts ({}). Promote any of these to an always-rule:",
+                    report.repeated_systems.len()
+                );
+                for p in &report.repeated_systems {
+                    let preview: String = p.canonical.chars().take(120).collect();
+                    println!("   ×{}  {preview}", p.count);
+                }
+                println!();
+                println!("   To promote: forge rules init (if first run), then drop a *.md");
+                println!("     into ~/.config/ollama-forge/rules/ with the prompt text.");
+            }
+        }
+
+        Commands::Rules { action } => {
+            let dir = RuleSet::default_dir();
+            match action {
+                RulesAction::Path => {
+                    println!("{}", dir.display());
+                }
+                RulesAction::Init => {
+                    if !dir.exists() {
+                        std::fs::create_dir_all(&dir)?;
+                    }
+                    let starter = dir.join("00-style.md");
+                    if starter.exists() {
+                        eprintln!("{} already exists; not overwriting.", starter.display());
+                    } else {
+                        std::fs::write(
+                            &starter,
+                            "---\nname: 00-style\ndescription: Starter rule. Edit me.\n---\n\
+                             Always prefer concise, well-commented code.\n\
+                             When you generate Rust, use 4-space indent and avoid `unwrap()` outside of tests.\n",
+                        )?;
+                        eprintln!("✅ wrote {}", starter.display());
+                    }
+                    println!(
+                        "Edit files under {} to control your always-rules.",
+                        dir.display()
+                    );
+                }
+                RulesAction::List => {
+                    let set = RuleSet::load_from(dir.clone()).unwrap_or_default();
+                    if set.is_empty() {
+                        println!(
+                            "No rules in {}.\nRun `forge rules init` to create the directory and a starter rule.",
+                            dir.display()
+                        );
+                    } else {
+                        println!("\n📋 {} rule(s) in {}:", set.len(), dir.display());
+                        for r in &set.rules {
+                            let desc = r.description.as_deref().unwrap_or("(no description)");
+                            println!("   {}  — {}", r.name, desc);
+                            println!("      {}", r.source.display());
+                        }
+                    }
+                }
+                RulesAction::Show => {
+                    let set = RuleSet::load_from(dir.clone()).unwrap_or_default();
+                    if set.is_empty() {
+                        eprintln!("No rules configured. Run `forge rules init` first.");
+                    } else {
+                        print!("{}", set.render());
+                    }
+                }
+            }
+        }
+
         Commands::Tools => {
             let registry = ToolRegistry::with_defaults();
             println!(
@@ -422,21 +553,31 @@ async fn async_main() -> Result<()> {
                     num_ctx: hw.optimal_context,
                     keep_alive: "1h".to_string(),
                     max_iterations,
+                    system_suffix: rules_suffix.clone(),
                 },
             );
 
+            // Trace preview width: 300 chars by default. URLs and citations
+            // routinely overflow 100, which made the live trace useless on
+            // real research questions. Override via FORGE_TRACE_WIDTH=N.
+            let preview_width: usize = std::env::var("FORGE_TRACE_WIDTH")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(300);
             let agent_trace = agent
                 .run(&question, |step| {
+                    let preview: String = step
+                        .result_preview
+                        .replace('\n', " ")
+                        .chars()
+                        .take(preview_width)
+                        .collect();
                     eprintln!(
                         "   [round {}] {} ({}) → {}",
                         step.iteration,
                         step.tool,
                         if step.ok { "ok" } else { "FAIL" },
-                        step.result_preview
-                            .replace('\n', " ")
-                            .chars()
-                            .take(100)
-                            .collect::<String>()
+                        preview
                     );
                 })
                 .await?;
@@ -506,7 +647,9 @@ async fn async_main() -> Result<()> {
             };
             let temperature = skill.settings.temperature.unwrap_or(0.5);
 
-            // Build the prompt: skill system prompt + planning hint + the task.
+            // Build the prompt: skill system prompt + planning hint + the task,
+            // then append any user always-rules so personal style/conventions
+            // are honored even inside skill invocations.
             let mut system_prompt = skill.prompts.system.clone();
             if let Some(planning) = &skill.prompts.planning {
                 system_prompt.push_str("\n\nPlanning guidance: ");
@@ -516,6 +659,7 @@ async fn async_main() -> Result<()> {
                 system_prompt.push_str("\n\nExecution guidance: ");
                 system_prompt.push_str(execution);
             }
+            system_prompt.push_str(&rules_suffix);
 
             eprintln!(
                 "🛠️  running skill `{}` on `{model}` (num_ctx={num_ctx}, temp={temperature})",
@@ -756,11 +900,11 @@ async fn async_main() -> Result<()> {
             path,
             analysis_type,
         } => {
-            run_analyze(&config, path, analysis_type).await?;
+            run_analyze(&config, path, analysis_type, &rules_suffix).await?;
         }
 
         Commands::Test { path, framework } => {
-            run_test_gen(&config, path, framework).await?;
+            run_test_gen(&config, path, framework, &rules_suffix).await?;
         }
 
         Commands::Parallel { .. } => {
@@ -883,39 +1027,46 @@ fn extract_and_write_code_blocks(out_dir: &Path, response: &str) -> anyhow::Resu
     let mut written = Vec::new();
     let mut lines = response.lines().peekable();
     while let Some(line) = lines.next() {
-        // Look for an opening fence: ``` followed by an info string.
         let trimmed = line.trim_start();
         if !trimmed.starts_with("```") {
             continue;
         }
         let info = trimmed.trim_start_matches('`').trim();
-        if info.is_empty() {
-            // No info string at all → unlabeled block, skip until close.
-            consume_until_fence_close(&mut lines);
-            continue;
-        }
 
-        // Split: first whitespace-separated token is the language; the rest
-        // (if any) is interpreted as a path label.
+        // Path extraction: try the fence line first; if no path there,
+        // peek at the first line *inside* the block. Small models
+        // (qwen3-vl:2b, observed in session 6 smoke test) put the path
+        // on its own line right after the opening fence instead of on
+        // the fence itself.
         let mut parts = info.splitn(2, char::is_whitespace);
         let _lang = parts.next().unwrap_or("");
-        let raw_path = parts.next().unwrap_or("").trim();
+        let mut raw_path = parts.next().unwrap_or("").trim().to_string();
+
+        if raw_path.is_empty() {
+            if let Some(peeked) = lines.peek() {
+                let candidate = peeked.trim();
+                if looks_like_path(candidate) {
+                    raw_path = candidate.to_string();
+                    let _ = lines.next();
+                }
+            }
+        }
+
         if raw_path.is_empty() {
             consume_until_fence_close(&mut lines);
             continue;
         }
 
-        // Tolerate leading `//`, `#`, or `file=` so models can use whichever
-        // convention they prefer.
+        // Tolerate leading `//`, `#`, or `file=` prefixes so models can use
+        // whichever convention they prefer.
         let cleaned = raw_path
             .trim_start_matches("//")
             .trim_start_matches('#')
             .trim_start_matches("file=")
-            .trim();
+            .trim()
+            .to_string();
 
-        // Reject path traversal and absolute paths. We're writing into the
-        // user's chosen `out_dir` and nowhere else.
-        let p = PathBuf::from(cleaned);
+        let p = PathBuf::from(&cleaned);
         if p.is_absolute()
             || p.components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -925,7 +1076,6 @@ fn extract_and_write_code_blocks(out_dir: &Path, response: &str) -> anyhow::Resu
             continue;
         }
 
-        // Collect the body until the closing fence.
         let mut body = String::new();
         for inner in lines.by_ref() {
             if inner.trim_start().starts_with("```") {
@@ -944,6 +1094,30 @@ fn extract_and_write_code_blocks(out_dir: &Path, response: &str) -> anyhow::Resu
         written.push(target);
     }
     Ok(written)
+}
+
+/// Heuristic: does this line look like a relative file path the model is
+/// using to label the block? Used as a fallback when the path isn't on
+/// the fence line.
+fn looks_like_path(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() || s.contains(char::is_whitespace) {
+        return false;
+    }
+    if s.chars()
+        .any(|c| !c.is_alphanumeric() && !"._-/+".contains(c))
+    {
+        return false;
+    }
+    let stem = s.rsplit('/').next().unwrap_or(s);
+    if stem.contains('.') {
+        return true;
+    }
+    // Common extensionless filenames the user might want written.
+    matches!(
+        stem,
+        "Dockerfile" | "Makefile" | "Rakefile" | "Gemfile" | "Procfile" | "LICENSE"
+    )
 }
 
 fn consume_until_fence_close<'a, I: Iterator<Item = &'a str>>(lines: &mut std::iter::Peekable<I>) {
@@ -1043,6 +1217,7 @@ async fn run_analyze(
     config: &Config,
     path: PathBuf,
     analysis_type: Option<ollama_forge::cli::AnalysisType>,
+    rules_suffix: &str,
 ) -> Result<()> {
     use ollama_forge::cli::AnalysisType;
 
@@ -1147,6 +1322,10 @@ async fn run_analyze(
         );
         println!();
 
+        let mut review_system = "You are a senior code reviewer. Output a numbered list of \
+             concrete issues. If no issues exist, say so explicitly."
+            .to_string();
+        review_system.push_str(rules_suffix);
         let opts = GenerateOptions {
             model,
             prompt: format!(
@@ -1155,11 +1334,7 @@ async fn run_analyze(
                  Be concrete; do not invent issues that aren't there.\n\n\
                  {combined}"
             ),
-            system: Some(
-                "You are a senior code reviewer. Output a numbered list of \
-                 concrete issues. If no issues exist, say so explicitly."
-                    .to_string(),
-            ),
+            system: Some(review_system),
             temperature: Some(0.2),
             num_ctx: Some(hw.optimal_context),
             stream: true,
@@ -1184,7 +1359,12 @@ async fn run_analyze(
 /// `forge test <path> [--framework=...]` — generates a test file for the
 /// target source file using the model. Streams output to stdout so the user
 /// can pipe it directly into a file.
-async fn run_test_gen(config: &Config, path: PathBuf, framework: Option<String>) -> Result<()> {
+async fn run_test_gen(
+    config: &Config,
+    path: PathBuf,
+    framework: Option<String>,
+    rules_suffix: &str,
+) -> Result<()> {
     if !path.exists() || !path.is_file() {
         anyhow::bail!(
             "test path must be an existing file (got: {})",
@@ -1225,6 +1405,10 @@ async fn run_test_gen(config: &Config, path: PathBuf, framework: Option<String>)
     );
     eprintln!();
 
+    let mut test_system = "You are a senior test engineer. Write production-quality tests \
+         that compile and run on the first try."
+        .to_string();
+    test_system.push_str(rules_suffix);
     let opts = GenerateOptions {
         model,
         prompt: format!(
@@ -1235,11 +1419,7 @@ async fn run_test_gen(config: &Config, path: PathBuf, framework: Option<String>)
              === source: {} ===\n{source}\n",
             path.display()
         ),
-        system: Some(
-            "You are a senior test engineer. Write production-quality tests \
-             that compile and run on the first try."
-                .to_string(),
-        ),
+        system: Some(test_system),
         temperature: Some(0.3),
         num_ctx: Some(hw.optimal_context),
         stream: true,

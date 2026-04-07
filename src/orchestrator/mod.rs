@@ -38,6 +38,11 @@ pub struct OrchestratorConfig {
     pub max_parallel_workers: usize,
     pub security_enabled: bool,
     pub tdd_enforced: bool,
+    /// User always-rules to inject into the system prompt of every worker.
+    /// Loaded from `~/.config/ollama-forge/rules/*.md` by the CLI and
+    /// passed through here. Empty string means "no rules configured."
+    #[serde(default)]
+    pub rules_suffix: String,
 }
 
 impl Default for OrchestratorConfig {
@@ -51,6 +56,7 @@ impl Default for OrchestratorConfig {
             max_parallel_workers: 4,
             security_enabled: true,
             tdd_enforced: false,
+            rules_suffix: String::new(),
         }
     }
 }
@@ -133,13 +139,27 @@ impl Orchestrator {
         info!("Health check: {:?}", health.hardware_profile);
 
         let available_models = self.ollama.list_models().await?;
-        let complexity = self
+        if available_models.is_empty() {
+            anyhow::bail!(
+                "no models installed in ollama. Pull one first:\n  ollama pull {}",
+                self.config.default_model
+            );
+        }
+        let mut complexity = self
             .router
             .analyze_complexity(&request.task, &available_models)
             .await?;
+        // The analyzer may pick a model that isn't actually installed
+        // (it falls through to a hardcoded default if no available model
+        // matches the tier patterns). `route_to_model` walks *available*
+        // models in size order and is guaranteed to return one of them.
+        // Without this, the executor below tries to preload an
+        // uninstalled model and Ollama hangs trying to pull it (5 minute
+        // timeout, no useful error).
+        complexity.suggested_model = self.router.route_to_model(&complexity, &available_models);
         info!(
-            "Complexity score: {} ({:?})",
-            complexity.score, complexity.task_type
+            "Complexity score: {} ({:?}) → routed to `{}`",
+            complexity.score, complexity.task_type, complexity.suggested_model
         );
 
         let context_prompt = self.build_system_context(&request).await?;
@@ -184,6 +204,18 @@ impl Orchestrator {
                 )
                 .await?;
 
+            // Sum worker stats *before* merging — `merge_results` consumes
+            // the Vec. Previously these were hardcoded to 0 in the
+            // returned BuildResult, so callers had no way to see how
+            // expensive a build actually was.
+            let total_tokens: usize = results.iter().map(|r| r.tokens_generated).sum();
+            let total_duration: u64 = results.iter().map(|r| r.duration_ms).sum();
+            let failed_workers: Vec<String> = results
+                .iter()
+                .filter(|r| !r.success)
+                .filter_map(|r| r.error.clone())
+                .collect();
+
             let merged = self
                 .executor
                 .merge_results(results, &complexity.suggested_model, num_ctx)
@@ -200,9 +232,9 @@ impl Orchestrator {
                 success: true,
                 output: merged,
                 model_used: complexity.suggested_model,
-                tokens_generated: 0,
-                duration_ms: 0,
-                warnings: vec![],
+                tokens_generated: total_tokens,
+                duration_ms: total_duration,
+                warnings: failed_workers,
             });
         }
 
@@ -246,6 +278,12 @@ impl Orchestrator {
 
         if let Some(skill) = self.skills.match_skill_to_task(&request.task).await {
             context.push_str(&format!("\nSkill context: {}\n", skill.prompts.system));
+        }
+
+        // Append user always-rules from ~/.config/ollama-forge/rules/.
+        // The CLI loads them and passes them through OrchestratorConfig.
+        if !self.config.rules_suffix.is_empty() {
+            context.push_str(&self.config.rules_suffix);
         }
 
         Ok(context)
