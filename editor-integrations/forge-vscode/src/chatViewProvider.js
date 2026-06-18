@@ -179,15 +179,22 @@ class ChatViewProvider {
   async _sendAccount() {
     if (!this.auth) return;
     let user = null;
+    const cfg = vscode.workspace.getConfiguration("forge");
+    const accountConfigured = !!(cfg.get("accountServer", "") || "").trim();
     try {
-      const cfg = vscode.workspace.getConfiguration("forge");
-      if ((cfg.get("accountServer", "") || "").trim()) {
+      if (accountConfigured) {
         user = await this.auth.getUser();
       }
     } catch (e) {
       this.log(`account check failed: ${e}`);
     }
     this.post({ type: "account", user });
+    // #10: getUser() now clears the session only on a DEFINITIVE server sign-out
+    // (offline/5xx keep it). If that happened, re-raise the gate immediately
+    // rather than waiting for the next action or reboot.
+    if (accountConfigured && !user) {
+      this.post({ type: "gate", signedIn: false });
+    }
   }
 
   /** @param {boolean} device use the device-code fallback flow */

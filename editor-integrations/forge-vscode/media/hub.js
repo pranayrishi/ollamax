@@ -39,7 +39,8 @@
         `<div class="card-head"><span class="card-name">${esc(c.name)}</span>` +
         `<button class="add" title="Activate this package">+</button></div>` +
         `<p class="card-desc">${esc(c.description)}</p>` +
-        `<div class="card-foot">${c.repoCount ? c.repoCount + " curated repos" : "catalog refreshing…"}</div>`;
+        // The engine sends `exampleRepos` (array), not `repoCount` (review #13/#22).
+        `<div class="card-foot">${(c.exampleRepos || []).length ? (c.exampleRepos.length + " example repos") : "browse →"}</div>`;
       card.querySelector(".add").addEventListener("click", (e) => {
         e.stopPropagation();
         vscode.postMessage({ type: "activate", slug: c.slug });
@@ -75,7 +76,7 @@
           ${refs
             .map(
               (r) =>
-                `<li><span class="rn">${esc(r.full_name)}</span><span class="lic">${esc(r.license || "no license")}</span></li>`
+                `<li><span class="rn">${esc(r.full_name)}</span>${r.license ? `<span class="lic">${esc(r.license)}</span>` : ""}</li>`
             )
             .join("")}
         </ul>
@@ -119,11 +120,6 @@
         break;
       case "activated":
         statusEl.textContent = `✓ Activated ${m.name}: ${m.counts.rules} rules + ${m.counts.skills} skills injected`;
-        break;
-      case "needsServer":
-        statusEl.innerHTML =
-          "Set <code>forge.accountServer</code> in Settings to load the Hub catalog.";
-        grid.innerHTML = "";
         break;
       case "needsSignIn":
         statusEl.textContent = "Sign in with GitHub (chat panel) to support maintainers.";

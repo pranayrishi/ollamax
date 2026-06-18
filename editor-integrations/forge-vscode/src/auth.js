@@ -116,41 +116,107 @@ class ForgeAuth {
     return (tokens && tokens.user) || this.user || null;
   }
 
-  /** Current user if signed in (refreshes the access token if needed). */
+  // A transport failure (offline / connection refused / DNS) or a server-side
+  // error (5xx) must NEVER delete the stored session — only a DEFINITIVE auth
+  // rejection from the server does. Otherwise a momentary outage permanently
+  // signs the user out (review finding #1). `clearedRejection` returns true only
+  // when the server affirmatively says the session is dead.
+  static _isAuthRejection(res) {
+    return (
+      res.status === 401 ||
+      res.status === 403 ||
+      (res.body && (res.body.error === "invalid_grant" || res.body.error === "invalid_token"))
+    );
+  }
+
+  /** Current user if signed in. OFFLINE-GRACEFUL: keeps the cached session on
+   *  any network/transport/5xx failure; clears only on a definitive rejection. */
   async getUser() {
     const tokens = await this._load();
     if (!tokens) {
       this.user = null;
       return null;
     }
-    // Validate the access token; refresh once on failure.
-    let me = await this._me(tokens.access_token).catch(() => null);
-    if (!me) {
-      const refreshed = await this._refresh(tokens.refresh_token).catch(() => null);
-      if (!refreshed) {
+    let meRes;
+    try {
+      meRes = await this._request("GET", "/api/me", null, tokens.access_token);
+    } catch {
+      // transport error → unreachable, not unauthorized. Keep the session.
+      this.user = tokens.user || this.user;
+      return this.user;
+    }
+    if (meRes.status === 200) {
+      this.user = (meRes.body && meRes.body.user) || tokens.user || null;
+      return this.user;
+    }
+    // Access token not accepted. Refresh — but only a definitive rejection clears.
+    if (!tokens.refresh_token) {
+      if (ForgeAuth._isAuthRejection(meRes)) {
         await this._clear();
         return null;
       }
-      await this._store(refreshed);
-      me = refreshed.user;
+      this.user = tokens.user || this.user;
+      return this.user;
     }
-    this.user = me;
-    return me;
-  }
-
-  /** A valid access token (refreshing if needed), or null if signed out. */
-  async getAccessToken() {
-    const tokens = await this._load();
-    if (!tokens) return null;
-    const me = await this._me(tokens.access_token).catch(() => null);
-    if (me) return tokens.access_token;
-    const refreshed = await this._refresh(tokens.refresh_token).catch(() => null);
-    if (!refreshed) {
+    let rRes;
+    try {
+      rRes = await this._request("POST", "/api/desktop/refresh", {
+        refresh_token: tokens.refresh_token,
+      });
+    } catch {
+      this.user = tokens.user || this.user;
+      return this.user;
+    }
+    if (rRes.status === 200) {
+      await this._store(rRes.body);
+      this.user = (rRes.body && rRes.body.user) || null;
+      return this.user;
+    }
+    if (ForgeAuth._isAuthRejection(rRes)) {
       await this._clear();
       return null;
     }
-    await this._store(refreshed);
-    return refreshed.access_token;
+    // 5xx / unknown — keep the session and retry later.
+    this.user = tokens.user || this.user;
+    return this.user;
+  }
+
+  /** A valid access token, or null if definitively signed out. Same offline
+   *  rule: a transport/5xx failure keeps the token rather than wiping it. */
+  async getAccessToken() {
+    const tokens = await this._load();
+    if (!tokens) return null;
+    let meRes;
+    try {
+      meRes = await this._request("GET", "/api/me", null, tokens.access_token);
+    } catch {
+      return tokens.access_token; // offline — assume still valid; the real call surfaces errors
+    }
+    if (meRes.status === 200) return tokens.access_token;
+    if (!tokens.refresh_token) {
+      if (ForgeAuth._isAuthRejection(meRes)) {
+        await this._clear();
+        return null;
+      }
+      return tokens.access_token;
+    }
+    let rRes;
+    try {
+      rRes = await this._request("POST", "/api/desktop/refresh", {
+        refresh_token: tokens.refresh_token,
+      });
+    } catch {
+      return tokens.access_token;
+    }
+    if (rRes.status === 200) {
+      await this._store(rRes.body);
+      return rRes.body.access_token;
+    }
+    if (ForgeAuth._isAuthRejection(rRes)) {
+      await this._clear();
+      return null;
+    }
+    return tokens.access_token;
   }
 
   /** The configured account server base URL, or null if unset. */

@@ -361,9 +361,10 @@
       model: item.model,
       text: item.text,
       // Strip UI-only fields (thumb/isImage) so we don't send the image twice;
-      // the server reads `image` (base64) for vision + `content` for text.
+      // the server reads `image` (base64) for vision + `content` for text. For
+      // images, send the clean filename (not the name#size dedup key).
       context: (item.context || []).map((c) => ({
-        path: c.path,
+        path: c.isImage ? c.label || c.path : c.path,
         label: c.label,
         content: c.content,
         image: c.image,
@@ -639,10 +640,16 @@
     for (const file of files) {
       try {
         if (isImageFile(file)) {
+          if (file.size > 6 * 1024 * 1024) {
+            setStatus(`"${file.name}" is too large to attach (${Math.round(file.size / 1048576)} MB; max 6 MB).`);
+            continue;
+          }
           const dataUrl = await readFile(file, false);
           const base64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
+          // Dedup by name+size so two different images sharing a filename don't
+          // collide (review #16); re-dropping the exact same file still dedups.
           addContext([
-            { path: file.name, label: file.name, image: base64, thumb: dataUrl, isImage: true },
+            { path: `${file.name}#${file.size}`, label: file.name, image: base64, thumb: dataUrl, isImage: true },
           ]);
           addedImage = true;
         } else if (file.size > 512 * 1024) {
@@ -661,9 +668,20 @@
   // Route images to a vision-capable model: nudge to switch when the current
   // pick clearly isn't multimodal (Auto + the server's own check handle the rest).
   function maybeWarnVision() {
+    // Images are only honored on the Chat path — Agent/Build can't analyze them,
+    // so warn instead of silently dropping the image (review #7/#8).
+    if (mode === "agent" || mode === "build") {
+      setStatus(
+        `🖼 Images only work in Chat mode — ${mode} mode can't analyze an image. Switch to Chat to use it.`
+      );
+      return;
+    }
     const m = (model || "").toLowerCase();
     const looksVision = /llava|vision|bakllava|moondream|qwen2\.?5?-?vl|minicpm-v|gemma3/.test(m);
-    if (model && model !== "auto" && !looksVision) {
+    if (!model) {
+      // #17: no model resolved yet — still tell the user vision needs a vision model.
+      setStatus("🖼 Image attached — pick a vision model (llava, llama3.2-vision) to analyze it.");
+    } else if (model !== "auto" && !looksVision) {
       setStatus(
         "🖼 Image attached — your model may not support vision. Pick a vision model (llava, llama3.2-vision) or use Auto."
       );
@@ -672,18 +690,29 @@
 
   (function setupDropZone() {
     let depth = 0;
-    document.body.addEventListener("dragover", (e) => e.preventDefault());
+    // Only intercept drags that carry FILES — otherwise we'd swallow drops meant
+    // for the editor/inputs and break native text drag-and-drop (review #19).
+    const hasFiles = (e) => {
+      const t = e.dataTransfer && e.dataTransfer.types;
+      return !!t && Array.prototype.indexOf.call(t, "Files") !== -1;
+    };
+    document.body.addEventListener("dragover", (e) => {
+      if (hasFiles(e)) e.preventDefault();
+    });
     document.body.addEventListener("dragenter", (e) => {
+      if (!hasFiles(e)) return;
       e.preventDefault();
       depth++;
       document.body.classList.add("dropping");
     });
     document.body.addEventListener("dragleave", (e) => {
+      if (!hasFiles(e)) return;
       e.preventDefault();
       depth = Math.max(0, depth - 1);
       if (!depth) document.body.classList.remove("dropping");
     });
     document.body.addEventListener("drop", (e) => {
+      if (!hasFiles(e)) return;
       e.preventDefault();
       depth = 0;
       document.body.classList.remove("dropping");

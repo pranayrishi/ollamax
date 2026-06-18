@@ -638,7 +638,8 @@ async fn handle_hub_search(w: OwnedWriteHalf, q: Option<String>) {
 }
 
 async fn handle_hub_package(w: OwnedWriteHalf, slug: &str) {
-    // URL-decode the slug (it's simple kebab-case but decode defensively).
+    // Slugs are simple kebab-case ASCII (no escaping needed); just drop any
+    // trailing query string before the exact-match lookup.
     let slug = slug.split('?').next().unwrap_or(slug);
     match crate::hub::package(slug) {
         Some(p) => {
@@ -801,11 +802,34 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     let max_input_tokens = (num_ctx * 7) / 10; // reserve ~30% for the response
     let (kept_msgs, trimmed) = budget_messages(&req.messages, &req.context, max_input_tokens);
 
+    // #7 Vision: collect any attached images (base64) UP FRONT — before the
+    // web-tools branch. The tools/agent path flattens context to text and cannot
+    // carry image bytes, so an image turn must use the plain vision path below;
+    // collecting after the tools branch silently dropped images (review #2).
+    let images: Vec<String> = req.context.iter().filter_map(|c| c.image.clone()).collect();
+    let mut vision_warning = None;
+    if !images.is_empty() {
+        let probe = OllamaProvider::new(&state.config.ollama_url);
+        if !probe.supports_vision(&model).await {
+            vision_warning = Some(json!({
+                "severity": "warning",
+                "rule": "vision_model_required",
+                "file": "",
+                "message": format!("`{model}` can't read images. Pick a vision model (e.g. one tagged `vision` in the model list) to analyze the attached image."),
+            }));
+        }
+    }
+    if let Some(vw) = vision_warning {
+        warnings.push(vw);
+    }
+
     // Feature 2: web tools in NORMAL chat (opt-in). Reuse the exact same agent
     // loop as /api/research over the flattened conversation — the model decides
     // when to search/fetch, steps stream to the UI, and the meta event discloses
-    // the egress. Off by default = pure-local chat (the plain path below).
-    if req.tools == Some(true) {
+    // the egress. SKIPPED when an image is attached (the agent path can't see
+    // images): the image turn falls through to the plain vision path so the
+    // picture is actually analyzed. Off by default = pure-local chat.
+    if req.tools == Some(true) && images.is_empty() {
         let question = build_chat_prompt(&kept_msgs, req.prompt.as_deref(), &req.context);
         let rules = RuleSet::load_default().unwrap_or_default().render();
         // Carry the secret-scan `warnings` (this path can send context to the
@@ -827,25 +851,14 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
         )
         .await;
         return;
-    }
-
-    // #7 Vision: collect any attached images (base64) and, if present, ensure
-    // the model can actually see — otherwise warn the user to switch.
-    let images: Vec<String> = req.context.iter().filter_map(|c| c.image.clone()).collect();
-    let mut vision_warning = None;
-    if !images.is_empty() {
-        let probe = OllamaProvider::new(&state.config.ollama_url);
-        if !probe.supports_vision(&model).await {
-            vision_warning = Some(json!({
-                "severity": "warning",
-                "rule": "vision_model_required",
-                "file": "",
-                "message": format!("`{model}` can't read images. Pick a vision model (e.g. one tagged `vision` in the model list) to analyze the attached image."),
-            }));
-        }
-    }
-    if let Some(vw) = vision_warning {
-        warnings.push(vw);
+    } else if req.tools == Some(true) {
+        // tools requested but an image is attached — disclose that we skipped them.
+        warnings.push(json!({
+            "severity": "info",
+            "rule": "web_tools_skipped_for_image",
+            "file": "",
+            "message": "Web tools were skipped this turn because an image is attached — analyzing the image locally instead.",
+        }));
     }
 
     // #4 Streaming "thinking": enable reasoning output ONLY for thinking-capable
@@ -1298,6 +1311,13 @@ fn build_chat_prompt(
     if !context.is_empty() {
         s.push_str("## Attached context\n\n");
         for c in context {
+            // Image-only items carry no text — emit a marker rather than an empty
+            // code fence (review #21). The bytes travel via opts.images, not text.
+            if c.content.is_empty() && c.image.is_some() {
+                let name = if c.path.is_empty() { "image" } else { c.path.as_str() };
+                s.push_str(&format!("[image attached: {name}]\n\n"));
+                continue;
+            }
             if c.path.is_empty() {
                 s.push_str("```\n");
             } else {

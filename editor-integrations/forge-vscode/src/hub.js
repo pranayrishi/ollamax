@@ -208,11 +208,9 @@ class HubViewProvider {
     }
   }
 
-  // ---- http helpers ----
+  // ---- http helpers (only the opt-in starring flow still calls the account
+  // server directly; categories/search/package come from the local engine) ----
 
-  _get(urlStr) {
-    return this._request("GET", urlStr, null, null);
-  }
   _post(urlStr, body, bearer) {
     return this._request("POST", urlStr, body, bearer);
   }
