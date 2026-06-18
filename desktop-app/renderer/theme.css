@@ -1,0 +1,54 @@
+/* VS Code theme-variable shim for the standalone app. The reused panel CSS
+ * (main.css) was written for a VS Code webview and references --vscode-* custom
+ * properties. Outside VS Code those are undefined, so we map them to Ollama-
+ * Forge's dark "ink/ember" palette here. Covers exactly the variables main.css
+ * uses. */
+:root {
+  color-scheme: dark;
+
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --vscode-font-size: 13px;
+  --vscode-editor-font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --vscode-foreground: #e6e8ee;
+  --vscode-descriptionForeground: #9aa1ad;
+  --vscode-errorForeground: #ff6b6b;
+  --vscode-focusBorder: #f59e0b;
+  --vscode-panel-border: #232733;
+
+  --vscode-editor-background: #0b0d12;
+  --vscode-sideBar-background: #0e1117;
+  --vscode-textCodeBlock-background: #11151d;
+  --vscode-textLink-foreground: #f59e0b;
+
+  --vscode-button-background: #f59e0b;
+  --vscode-button-foreground: #0b0d12;
+  --vscode-button-hoverBackground: #fbbf24;
+
+  --vscode-input-background: #11151d;
+  --vscode-input-foreground: #e6e8ee;
+  --vscode-input-border: #232733;
+  --vscode-inputValidation-errorBackground: #3a1417;
+
+  --vscode-dropdown-background: #11151d;
+  --vscode-dropdown-foreground: #e6e8ee;
+  --vscode-dropdown-border: #232733;
+
+  --vscode-badge-background: #232733;
+  --vscode-badge-foreground: #e6e8ee;
+
+  --vscode-toolbar-hoverBackground: #1b2130;
+  --vscode-editorWarning-foreground: #fbbf24;
+
+  --vscode-charts-green: #3fb950;
+  --vscode-charts-purple: #a371f7;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}

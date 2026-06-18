@@ -1,0 +1,99 @@
+name: release-app
+
+# Builds the STANDALONE desktop app (Electron shell around the forge engine,
+# modeled on the Sattva AI app) and publishes UNSIGNED installers to the public
+# releases repo. Trigger: push an `app-v*` tag, or run manually.
+#
+# Unsigned (ad-hoc, Sattva-style) this round — see desktop-app/scripts/afterPack.js
+# and the report. Signing + notarization is the future paid step.
+#
+# Requires the same RELEASES_REPO_TOKEN secret as release.yml (cross-repo publish).
+
+on:
+  push:
+    tags: ["app-v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  RELEASES_REPO: pranayrishi/ollamax-releases
+
+jobs:
+  build:
+    name: app (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macos-arm64
+          - os: windows-latest
+            label: windows-x64
+          - os: ubuntu-latest
+            label: linux-x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the forge engine (bundled into the app)
+        uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install + package the app (prepare.mjs stages the engine + UI)
+        working-directory: desktop-app
+        run: |
+          npm install
+          npm run dist
+
+      - name: Collect installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # electron-builder writes to desktop-app/release/
+          find desktop-app/release -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp {} dist/ \; || true
+          ls -la dist
+          ( cd dist && for f in *; do
+              if command -v sha256sum >/dev/null 2>&1; then sha256sum "$f" > "$f.sha256";
+              else shasum -a 256 "$f" > "$f.sha256"; fi
+            done )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: warn
+
+  publish:
+    name: publish app installers
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: app-*
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.RELEASES_REPO }}
+          token: ${{ secrets.RELEASES_REPO_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Ollama-Forge App ${{ github.ref_name }}
+          body: |
+            Standalone desktop app (UNSIGNED, ad-hoc-signed, Sattva-style).
+            First launch on macOS: right-click the app → Open → Open (it isn't
+            code-signed yet). Verify against the matching .sha256. Bundles the
+            forge engine + Ollama is required (https://ollama.com/download).
+          files: |
+            dist/*
+          fail_on_unmatched_files: false

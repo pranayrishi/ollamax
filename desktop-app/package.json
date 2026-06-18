@@ -1,0 +1,75 @@
+{
+  "name": "ollama-forge-app",
+  "productName": "Ollama-Forge",
+  "version": "0.1.0",
+  "description": "Local-first AI coding — a standalone desktop app. Chat, agent, and parallel build on your own hardware via local Ollama.",
+  "author": "Ollama-Forge",
+  "license": "MIT",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "prepare-assets": "node scripts/prepare.mjs",
+    "start": "npm run prepare-assets && electron .",
+    "dist": "npm run prepare-assets && electron-builder",
+    "dist:mac": "npm run prepare-assets && electron-builder --mac",
+    "dist:win": "npm run prepare-assets && electron-builder --win",
+    "dist:linux": "npm run prepare-assets && electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "@electron/fuses": "^1.8.0"
+  },
+  "build": {
+    "appId": "com.ollamaforge.app",
+    "productName": "Ollama-Forge",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "extraResources": [
+      { "from": "assets/", "to": "assets/" },
+      { "from": "bin/", "to": "bin/" }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        { "target": "dmg", "arch": ["arm64"] },
+        { "target": "zip", "arch": ["arm64"] }
+      ],
+      "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "identity": null,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "icon": "assets/icons",
+      "category": "Development"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "afterPack": "./scripts/afterPack.js"
+  }
+}

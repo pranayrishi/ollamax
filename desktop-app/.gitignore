@@ -1,0 +1,8 @@
+node_modules/
+release/
+bin/
+# UI files copied from the extension's media/ by scripts/prepare.mjs
+renderer/main.js
+renderer/main.css
+renderer/hub.js
+renderer/hub.css

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!-- App CSP: the renderer talks ONLY to the local engine (connect-src the
+       loopback). Scripts are local files. No remote script/inference egress. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src http://127.0.0.1:* http://localhost:*;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Theme shim FIRST: the reused panel CSS references VS Code theme variables
+       (--vscode-*) that don't exist outside VS Code; we map them to the product's
+       dark palette so the UI renders correctly in the standalone app. -->
+  <link href="theme.css" rel="stylesheet" />
+  <link href="main.css" rel="stylesheet" />
+  <title>Ollama-Forge</title>
+</head>
+<body>
+  <header id="topbar">
+    <div class="modes" role="tablist">
+      <button class="mode active" data-mode="chat" title="Single-turn / multi-turn chat">Chat</button>
+      <button class="mode" data-mode="agent" title="Tool-using research agent">Agent</button>
+      <button class="mode" data-mode="build" title="Parallel multi-model build">Build</button>
+    </div>
+    <div class="picker">
+      <select id="model" title="Installed Ollama model (auto-selected for your hardware)"></select>
+      <button id="refresh" class="iconbtn" title="Refresh installed Ollama models (after ollama pull)">⟳</button>
+    </div>
+  </header>
+
+  <div id="statusline" class="statusline">starting local engine…</div>
+  <div id="modelhint" class="modelhint" hidden></div>
+  <div id="account" class="account" hidden></div>
+
+  <div id="messages" class="messages" aria-live="polite"></div>
+
+  <div id="queue" class="queue" hidden></div>
+
+  <div id="context" class="context" hidden></div>
+
+  <footer id="composer">
+    <div class="attachrow">
+      <button class="attach" data-attach="pick" title="Attach files to give the model context">+ files</button>
+    </div>
+    <div class="inputrow">
+      <textarea id="input" rows="3" placeholder="Ask anything — runs locally on your hardware. ⏎ to send, ⇧⏎ for newline."></textarea>
+      <div class="btns">
+        <button id="send" class="send">Send</button>
+        <button id="stop" class="stop" hidden>Stop</button>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Order matters: the shim defines acquireVsCodeApi(), the bridge defines the
+       host that talks to forge serve, then the REUSED panel UI runs unchanged. -->
+  <script src="vscode-shim.js"></script>
+  <script src="bridge.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
