@@ -10,8 +10,11 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const cp = require("child_process");
 const http = require("http");
+const https = require("https");
+const { URL } = require("url");
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
@@ -141,6 +144,135 @@ ipcMain.handle("forge:signIn", async (_e, { device } = {}) => {
     : `${ACCOUNT_SERVER}/api/desktop/start?redirect_uri=http://127.0.0.1:0`;
   await shell.openExternal(startUrl);
   return { ok: true };
+});
+
+// =====================================================================
+// Central Hub (#2) — ported from the VS Code extension's HubViewProvider so the
+// app surfaces the SAME server-side catalog. Categories/packages are read from
+// the account server (public). "Activation" only writes local rules/skills the
+// engine already reads (transparent steering). Starring is OPT-IN ONLY: we
+// create a star intent and open the browser for the user to consciously review
+// and confirm — NEVER automatic (GitHub AUP). Done in the main process (Node).
+// =====================================================================
+function configDir() {
+  const home = os.homedir();
+  if (process.platform === "darwin") return path.join(home, "Library", "Application Support");
+  if (process.platform === "win32") return process.env.APPDATA || path.join(home, "AppData", "Roaming");
+  return process.env.XDG_CONFIG_HOME || path.join(home, ".config");
+}
+const rulesDir = () => path.join(configDir(), "ollama-forge", "rules");
+const skillsDir = () => path.join(configDir(), "ollama-forge", "skills");
+const safeBase = (s) => {
+  const b = path.basename(String(s || ""));
+  return /^[\w.-]+$/.test(b) && b !== "." && b !== ".." ? b : null;
+};
+const within = (dir, file) => path.resolve(dir, file).startsWith(path.resolve(dir) + path.sep);
+
+function hubHttp(method, urlStr, body, bearer) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlStr);
+    const lib = url.protocol === "https:" ? https : http;
+    const data = body ? JSON.stringify(body) : null;
+    const headers = {};
+    if (data) {
+      headers["Content-Type"] = "application/json";
+      headers["Content-Length"] = Buffer.byteLength(data);
+    }
+    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
+    const req = lib.request(
+      { method, hostname: url.hostname, port: url.port || (url.protocol === "https:" ? 443 : 80), path: url.pathname + url.search, headers },
+      (res) => {
+        let raw = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => (raw += c));
+        res.on("end", () => {
+          if ((res.statusCode || 0) >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
+          try {
+            resolve(raw ? JSON.parse(raw) : {});
+          } catch (_) {
+            reject(new Error("bad JSON"));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+ipcMain.handle("hub:categories", async () => {
+  if (!ACCOUNT_SERVER) return { needsServer: true };
+  try {
+    const d = await hubHttp("GET", `${ACCOUNT_SERVER}/api/hub/categories`);
+    return { categories: d.categories || [] };
+  } catch (e) {
+    return { error: `Could not load Hub catalog: ${e.message}` };
+  }
+});
+
+ipcMain.handle("hub:package", async (_e, slug) => {
+  if (!ACCOUNT_SERVER) return { needsServer: true };
+  try {
+    return { pkg: await hubHttp("GET", `${ACCOUNT_SERVER}/api/hub/package/${encodeURIComponent(slug)}`) };
+  } catch (e) {
+    return { error: `Could not load package: ${e.message}` };
+  }
+});
+
+// Apply a package = write its rules + skills into the local config dirs the
+// engine reads. Transparent, inspectable, reversible (delete the files).
+ipcMain.handle("hub:activate", async (_e, slug) => {
+  if (!ACCOUNT_SERVER) return { needsServer: true };
+  let pkg;
+  try {
+    pkg = await hubHttp("GET", `${ACCOUNT_SERVER}/api/hub/package/${encodeURIComponent(slug)}`);
+  } catch (e) {
+    return { error: `Activate failed: ${e.message}` };
+  }
+  try {
+    fs.mkdirSync(rulesDir(), { recursive: true });
+    fs.mkdirSync(skillsDir(), { recursive: true });
+    const rulesFile = `hub-${safeBase(slug) || "package"}.md`;
+    if (within(rulesDir(), rulesFile)) {
+      fs.writeFileSync(path.join(rulesDir(), rulesFile), pkg.rules || "", "utf8");
+    }
+    let skillCount = 0;
+    for (const skill of pkg.skills || []) {
+      const b = safeBase(skill && skill.name);
+      if (!b) continue;
+      const file = `${b}.json`;
+      if (!within(skillsDir(), file)) continue;
+      fs.writeFileSync(path.join(skillsDir(), file), JSON.stringify(skill, null, 2), "utf8");
+      skillCount++;
+    }
+    return {
+      activated: true,
+      slug,
+      name: pkg.name,
+      counts: { rules: (pkg.counts && pkg.counts.rules) || 0, skills: skillCount, references: (pkg.references || []).length },
+    };
+  } catch (e) {
+    return { error: `Writing package failed: ${e.message}` };
+  }
+});
+
+// Opt-in "support maintainers": create a star intent, open the browser for the
+// user to review + consciously star. NEVER automatic. Needs the app token; if
+// sign-in isn't wired/available yet, ask the user to sign in.
+ipcMain.handle("hub:support", async (_e, { slug, repos, token } = {}) => {
+  if (!ACCOUNT_SERVER) return { needsServer: true };
+  if (!token) return { needsSignIn: true };
+  try {
+    const res = await hubHttp("POST", `${ACCOUNT_SERVER}/api/star/intent`, { repos, category: slug }, token);
+    if (res.url) {
+      await shell.openExternal(res.url);
+      return { ok: true };
+    }
+    return { error: "Could not create the support request." };
+  } catch (e) {
+    return { error: `Support failed: ${e.message}` };
+  }
 });
 
 app.whenReady().then(async () => {

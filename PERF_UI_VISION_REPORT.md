@@ -92,15 +92,21 @@ detect + prompt rather than silently fail.
 
 These are substantial; here's the honest status + plan, not half-built code:
 
-- **#2 Central Hub — already built server-side; needs surfacing in the app.** The
-  curated catalog (quality+safety gates, **not** raw stars), the
-  `/api/hub/categories` + package endpoints, the category taxonomy, the
-  rules/skills/context injection, and the **opt-in-only starring** (signed
-  `star_intents`, explicit per-repo consent, GitHub write-scope requested only on
-  opt-in — **automated starring was NOT and will NOT be built**, per the AUP
-  correction) all exist (website + the panel's `hub.js`). The remaining work is
-  the **app surfacing**: add a Hub sidebar to the renderer reusing `hub.js`, and
-  extend the bridge to proxy hub messages to the account server. Bounded reuse.
+- **#2 Central Hub — NOW BUILT INTO THE APP** ✅ (was server-side only). The app
+  gets a **left rail** that switches between **Chat** and a **Central Hub** panel
+  (separate views, one window). The Hub reuses the existing `hub.js` UID
+  unchanged; the host logic (port of the extension's `HubViewProvider`) now lives
+  in the Electron **main process** (`hub:categories/package/activate/support` IPC):
+  it reads the curated catalog from the account server, and **activation writes
+  the package's rules + skills into the local config dirs the engine already
+  reads** — transparent, inspectable, reversible steering. The multi-bridge shim
+  lets chat + hub coexist. **Starring stays OPT-IN ONLY** — `hub:support` creates
+  a star intent and opens the browser for conscious per-repo review; there is **no
+  automated starring** anywhere (the AUP correction is honored — it was NOT and
+  will NOT be built). The curated catalog itself (quality + safety gates, **not**
+  raw stars; license-respecting) already exists on the account server. *Remaining:
+  wiring the app token into `hub:support` (currently prompts sign-in) once the
+  desktop OAuth loopback is finished, and a running-app visual pass.*
 - **#3 IDE workspace (folder/explorer/Monaco/xterm):** the brief's own honest
   note — this is essentially rebuilding VS Code's core UI. Plan: open-folder via
   Electron `dialog`; a file-tree (embed a tree lib or a thin custom tree over

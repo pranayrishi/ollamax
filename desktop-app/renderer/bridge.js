@@ -157,5 +157,6 @@
     }
   }
 
-  window.__forgeBridge = { handle };
+  // Register with the shim's multi-bridge dispatcher (chat + hub coexist).
+  window.__forgeRegisterBridge(handle);
 })();

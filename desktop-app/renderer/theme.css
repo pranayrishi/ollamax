@@ -146,3 +146,21 @@ pre.code, code { font-family: var(--font-mono); font-size: var(--text-ui); }
 .attachrow { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
 .attach { border-radius: var(--r-2); font-size: var(--text-ui); color: var(--ink-700); border: 1px solid var(--border); background: transparent; padding: var(--space-1) var(--space-3); }
 .attach:hover { background: var(--ink-150); }
+
+/* App shell: left rail + swappable Chat / Hub views (separate panels) */
+#shell { display: flex; height: 100vh; }
+#rail {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  width: 46px; padding: var(--space-2) 0; align-items: center;
+  background: var(--ink-50); border-right: 1px solid var(--border); flex: 0 0 auto;
+}
+#rail .rail-btn {
+  width: 34px; height: 34px; border: 0; border-radius: var(--r-2);
+  background: transparent; color: var(--ink-600); font-size: 17px; cursor: pointer;
+}
+#rail .rail-btn:hover { background: var(--ink-150); color: var(--ink-900); }
+#rail .rail-btn.active { background: var(--accent-soft); color: var(--accent); }
+#views { flex: 1; min-width: 0; }
+#chat-view, #hub-view { display: flex; flex-direction: column; height: 100vh; }
+#chat-view[hidden], #hub-view[hidden] { display: none; }
+#hub-view { padding: var(--space-3); overflow-y: auto; }

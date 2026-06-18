@@ -1,20 +1,27 @@
-// Shim: the reused panel UI (media/main.js) calls `acquireVsCodeApi()` and
-// expects a host that handles its postMessage() and replies via window messages.
-// We provide that API; messages route to __forgeBridge (bridge.js), which talks
-// to the local forge serve. State persists to localStorage.
+// Shim: the reused panel UIs (media/main.js for chat, media/hub.js for the Hub)
+// each call `acquireVsCodeApi()` and expect a host. We provide that API and
+// dispatch every postMessage to ALL registered bridges (chat + hub). Each bridge
+// ignores message types it doesn't own (their `default:` cases), so the two
+// coexist in one window. Replies come back via window.postMessage, which each
+// UI's `message` listener already filters by type.
 (function () {
-  const queue = [];
+  const bridges = [];
+  window.__forgeRegisterBridge = function (fn) {
+    if (typeof fn === "function") bridges.push(fn);
+  };
+  function dispatch(msg) {
+    for (const fn of bridges) {
+      try {
+        fn(msg);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("forge bridge error", e);
+      }
+    }
+  }
   window.acquireVsCodeApi = function () {
     return {
-      postMessage: function (msg) {
-        try {
-          if (window.__forgeBridge) window.__forgeBridge.handle(msg);
-          else queue.push(msg); // bridge not ready yet — flush below
-        } catch (e) {
-          // eslint-disable-next-line no-console
-          console.error("forge bridge error", e);
-        }
-      },
+      postMessage: dispatch,
       getState: function () {
         try {
           return JSON.parse(localStorage.getItem("forge.state") || "null");
@@ -30,13 +37,4 @@
       },
     };
   };
-  // Flush anything queued before bridge.js finished defining __forgeBridge.
-  const flush = () => {
-    if (window.__forgeBridge) {
-      while (queue.length) window.__forgeBridge.handle(queue.shift());
-    } else {
-      setTimeout(flush, 15);
-    }
-  };
-  flush();
 })();

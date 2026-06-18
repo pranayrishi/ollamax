@@ -2,60 +2,84 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <!-- App CSP: the renderer talks ONLY to the local engine (connect-src the
-       loopback). Scripts are local files. No remote script/inference egress. -->
+  <!-- App CSP: the renderer talks ONLY to the local engine over fetch (the Hub
+       reaches the account server via the main process over IPC, not fetch, so no
+       remote connect-src is needed). Scripts are local files; no inline. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src http://127.0.0.1:* http://localhost:*;" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!-- Theme shim FIRST: the reused panel CSS references VS Code theme variables
-       (--vscode-*) that don't exist outside VS Code; we map them to the product's
-       dark palette so the UI renders correctly in the standalone app. -->
   <link href="theme.css" rel="stylesheet" />
   <link href="main.css" rel="stylesheet" />
+  <link href="hub.css" rel="stylesheet" />
   <title>Ollama-Forge</title>
 </head>
 <body>
-  <header id="topbar">
-    <div class="modes" role="tablist">
-      <button class="mode active" data-mode="chat" title="Single-turn / multi-turn chat">Chat</button>
-      <button class="mode" data-mode="agent" title="Tool-using research agent">Agent</button>
-      <button class="mode" data-mode="build" title="Parallel multi-model build">Build</button>
+  <div id="shell">
+    <!-- Left rail: switch between Chat and the Central Hub (separate panels). -->
+    <nav id="rail" aria-label="Sections">
+      <button class="rail-btn active" data-view="chat" title="Chat / Agent / Build">💬</button>
+      <button class="rail-btn" data-view="hub" title="Central Hub — domain packages">🧩</button>
+    </nav>
+
+    <div id="views">
+      <!-- ============ CHAT VIEW (reused media/main.js) ============ -->
+      <section id="chat-view">
+        <header id="topbar">
+          <div class="modes" role="tablist">
+            <button class="mode active" data-mode="chat" title="Single-turn / multi-turn chat">Chat</button>
+            <button class="mode" data-mode="agent" title="Tool-using research agent">Agent</button>
+            <button class="mode" data-mode="build" title="Parallel multi-model build">Build</button>
+          </div>
+        </header>
+
+        <div id="statusline" class="statusline">starting local engine…</div>
+        <div id="modelhint" class="modelhint" hidden></div>
+        <div id="account" class="account" hidden></div>
+
+        <div id="messages" class="messages" aria-live="polite"></div>
+
+        <div id="queue" class="queue" hidden></div>
+        <div id="context" class="context" hidden></div>
+
+        <footer id="composer">
+          <!-- #6: model/router picker directly above the input. Auto = default. -->
+          <div class="modelrow">
+            <select id="model" title="Model / router (Auto = pick the best installed model for this task)"></select>
+            <button id="refresh" class="iconbtn" title="Refresh installed Ollama models (after ollama pull)">⟳</button>
+          </div>
+          <div class="attachrow">
+            <button class="attach" data-attach="pick" title="Attach files for context">+ files</button>
+            <button class="attach" data-attach="image" title="Attach an image (needs a vision-capable model)">+ image</button>
+          </div>
+          <div class="inputrow">
+            <textarea id="input" rows="3" placeholder="Ask anything — runs locally on your hardware. ⏎ to send, ⇧⏎ for newline."></textarea>
+            <div class="btns">
+              <button id="send" class="send">Send</button>
+              <button id="stop" class="stop" hidden>Stop</button>
+            </div>
+          </div>
+        </footer>
+      </section>
+
+      <!-- ============ CENTRAL HUB VIEW (reused media/hub.js) ============ -->
+      <section id="hub-view" hidden>
+        <header class="hub-top">
+          <input id="search" type="search" placeholder="Search domains…" />
+        </header>
+        <div id="status" class="hub-status"></div>
+        <div id="grid" class="hub-grid"></div>
+        <div id="detail" class="hub-detail" hidden></div>
+      </section>
     </div>
-  </header>
+  </div>
 
-  <div id="statusline" class="statusline">starting local engine…</div>
-  <div id="modelhint" class="modelhint" hidden></div>
-  <div id="account" class="account" hidden></div>
-
-  <div id="messages" class="messages" aria-live="polite"></div>
-
-  <div id="queue" class="queue" hidden></div>
-
-  <div id="context" class="context" hidden></div>
-
-  <footer id="composer">
-    <!-- #6: the model/router picker now sits directly above the input (Cursor/
-         Windsurf pattern) — reunited with the act of sending. "Auto" stays default. -->
-    <div class="modelrow">
-      <select id="model" title="Model / router (Auto = pick the best installed model for this task)"></select>
-      <button id="refresh" class="iconbtn" title="Refresh installed Ollama models (after ollama pull)">⟳</button>
-    </div>
-    <div class="attachrow">
-      <button class="attach" data-attach="pick" title="Attach files for context">+ files</button>
-      <button class="attach" data-attach="image" title="Attach an image (needs a vision-capable model)">+ image</button>
-    </div>
-    <div class="inputrow">
-      <textarea id="input" rows="3" placeholder="Ask anything — runs locally on your hardware. ⏎ to send, ⇧⏎ for newline."></textarea>
-      <div class="btns">
-        <button id="send" class="send">Send</button>
-        <button id="stop" class="stop" hidden>Stop</button>
-      </div>
-    </div>
-  </footer>
-
-  <!-- Order matters: the shim defines acquireVsCodeApi(), the bridge defines the
-       host that talks to forge serve, then the REUSED panel UI runs unchanged. -->
+  <!-- Order: shim defines acquireVsCodeApi() + the multi-bridge dispatcher;
+       the two bridges register; app-shell wires the rail; then the REUSED UIs
+       run unchanged on top. -->
   <script src="vscode-shim.js"></script>
   <script src="bridge.js"></script>
+  <script src="hub-bridge.js"></script>
+  <script src="app-shell.js"></script>
   <script src="main.js"></script>
+  <script src="hub.js"></script>
 </body>
 </html>

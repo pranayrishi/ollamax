@@ -11,4 +11,12 @@ contextBridge.exposeInMainWorld("forgeNative", {
   pickFiles: () => ipcRenderer.invoke("forge:pickFiles"),
   openExternal: (url) => ipcRenderer.invoke("forge:openExternal", url),
   signIn: (opts) => ipcRenderer.invoke("forge:signIn", opts),
+  // Central Hub (#2): catalog read from the account server; activation writes
+  // local rules/skills; starring is opt-in (browser review), never automatic.
+  hub: {
+    categories: () => ipcRenderer.invoke("hub:categories"),
+    package: (slug) => ipcRenderer.invoke("hub:package", slug),
+    activate: (slug) => ipcRenderer.invoke("hub:activate", slug),
+    support: (args) => ipcRenderer.invoke("hub:support", args),
+  },
 });
