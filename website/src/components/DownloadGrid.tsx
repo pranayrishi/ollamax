@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { detectOS, type OSInfo } from "@/lib/os";
 
+// Fallback target when an installer isn't published yet (NEXT_PUBLIC_* inlined
+// at build time). Points at GitHub Releases so the card is never a dead no-op.
+const repo = process.env.NEXT_PUBLIC_GITHUB_REPO;
+const releasesUrl = repo ? `${repo.replace(/\/$/, "")}/releases` : null;
+
 export type Installer = {
   os: "macos" | "windows" | "linux";
   label: string;
@@ -64,6 +69,15 @@ export function DownloadGrid({ installers }: { installers: Installer[] }) {
                   className="mt-4 block rounded-lg bg-ember-500 px-4 py-2 text-center text-sm font-semibold text-ink-950 hover:bg-ember-400"
                 >
                   Download
+                </a>
+              ) : releasesUrl ? (
+                <a
+                  href={releasesUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-4 block rounded-lg border border-ink-600 bg-ink-800 px-4 py-2 text-center text-sm font-semibold text-zinc-200 hover:border-ember-500"
+                >
+                  Coming soon — view releases ↗
                 </a>
               ) : (
                 <span className="mt-4 block cursor-not-allowed rounded-lg bg-ink-800 px-4 py-2 text-center text-sm text-zinc-500">

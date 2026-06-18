@@ -10,12 +10,17 @@ export function middleware(req: NextRequest) {
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' https://avatars.githubusercontent.com data:",
+    // Avatar hosts: GitHub + Google (Google serves from *.googleusercontent.com).
+    "img-src 'self' https://avatars.githubusercontent.com https://*.googleusercontent.com data:",
     "connect-src 'self' https://github.com https://api.github.com",
     "font-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
-    "form-action 'self' https://github.com",
+    // form-action MUST list every OAuth provider's authorize host: browsers apply
+    // this directive to the redirect target of a form submission, so the sign-in
+    // POST→302 to the provider is blocked if its host is missing. Both providers
+    // here, or Google sign-in fails even when the env vars are correct.
+    "form-action 'self' https://github.com https://accounts.google.com",
     "object-src 'none'",
   ].join("; ");
 
