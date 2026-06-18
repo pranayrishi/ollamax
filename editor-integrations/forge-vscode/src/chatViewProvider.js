@@ -238,7 +238,12 @@ class ChatViewProvider {
       body = { id, task: msg.text, output_dir: msg.outputDir || null };
     } else {
       path0 = "/api/chat";
-      body = { id, model: msg.model, messages: msg.messages || [], context };
+      // Feature 2: opt-in web tools in normal chat. When `forge.webTools` is on,
+      // the model can search/fetch via the agent loop; the backend discloses the
+      // egress in its `meta` event and streams tool steps (rendered like agent
+      // mode). Off by default = pure-local chat.
+      const webTools = vscode.workspace.getConfiguration("forge").get("webTools", false);
+      body = { id, model: msg.model, messages: msg.messages || [], context, tools: webTools };
     }
 
     // Telemetry context (metadata only): the language is inferred from an

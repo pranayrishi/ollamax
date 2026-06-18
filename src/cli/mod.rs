@@ -110,6 +110,15 @@ pub enum Commands {
         models: bool,
     },
 
+    #[command(about = "List curated free open-weight models, tiered to your hardware \
+                       (with license + what's installed + the recommended default)")]
+    Models {
+        #[arg(long, help = "Verify each tag against the live Ollama library (networked, slower)")]
+        verify: bool,
+        #[arg(long, help = "Only show models your detected VRAM can actually run")]
+        fits_only: bool,
+    },
+
     #[command(about = "Manage skills and recipes")]
     Skills {
         #[command(subcommand)]

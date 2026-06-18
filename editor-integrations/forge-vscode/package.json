@@ -161,6 +161,11 @@
           "type": "boolean",
           "default": true,
           "description": "Send anonymous usage METADATA (counts, model/provider, token counts, language by file extension) to power your web usage dashboard. NEVER sends prompts, code, file contents, file paths, or repo names. Turn off to send nothing. Requires being signed in."
+        },
+        "forge.webTools": {
+          "type": "boolean",
+          "default": false,
+          "description": "Let the model use the free web tools (search / Wikipedia / arXiv / fetch URL) during normal chat — it decides when to look things up. PRIVACY: inference stays local, but your search queries and the text of fetched pages leave your machine (to those services). Off = pure-local chat."
         }
       }
     }

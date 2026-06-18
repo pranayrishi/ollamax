@@ -4,6 +4,7 @@ pub mod codeblocks;
 pub mod context;
 pub mod executor;
 pub mod instincts;
+pub mod models;
 pub mod monitoring;
 pub mod orchestrator;
 pub mod providers;

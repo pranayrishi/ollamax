@@ -290,6 +290,72 @@ async fn async_main() -> Result<()> {
             }
         }
 
+        Commands::Models { verify, fits_only } => {
+            use ollama_forge::models::{verify_in_library, HardwareTier, ModelRegistry};
+            let ollama = OllamaProvider::new(&config.ollama_url);
+            let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
+            let hw = sentinel.detect_hardware().await;
+            let free = hw.free_vram_mb;
+            let installed: Vec<String> = ollama
+                .list_models()
+                .await
+                .map(|ms| ms.into_iter().map(|m| m.name).collect())
+                .unwrap_or_default();
+
+            let mut reg = ModelRegistry::seed();
+            reg.mark_installed(&installed);
+            let fits: std::collections::HashSet<String> =
+                reg.fits(free).into_iter().map(|m| m.ollama_tag.clone()).collect();
+            let recommended = reg.recommend(free, &installed).map(|m| m.ollama_tag.clone());
+
+            println!(
+                "\n🖥️  Detected {:?} · {free} MB free VRAM → tier: {}",
+                hw.gpu_kind,
+                HardwareTier::for_vram(free).label()
+            );
+            if let Some(r) = &recommended {
+                println!("🎯 Recommended for your machine: {r}\n   pull it:  ollama pull {r}");
+            }
+            println!(
+                "\nFree, open-weight models — run locally via Ollama. Cloud models (GPT/Claude/\n\
+                 Gemini) are paid, bring-your-own-key, and intentionally not listed here.\n"
+            );
+
+            for tier in [HardwareTier::Modest, HardwareTier::Single, HardwareTier::HighEnd] {
+                println!("── {} ──", tier.label());
+                for m in reg.all().iter().filter(|m| m.tier == tier) {
+                    let does_fit = fits.contains(&m.ollama_tag);
+                    if fits_only && !does_fit {
+                        continue;
+                    }
+                    let mut flags = Vec::new();
+                    if m.installed {
+                        flags.push("✓ installed".to_string());
+                    }
+                    flags.push(if does_fit { "fits".to_string() } else { "needs more VRAM".to_string() });
+                    if !m.license.commercial_friendly() {
+                        flags.push(format!("⚠ {}", m.license.spdx()));
+                    }
+                    if verify {
+                        match verify_in_library(&m.ollama_tag).await {
+                            Some(false) => flags.push("✗ not in library".to_string()),
+                            None => flags.push("? unverified".to_string()),
+                            Some(true) => {}
+                        }
+                    }
+                    println!(
+                        "  {:30} {:11} {:10}  [{}]",
+                        m.ollama_tag,
+                        m.params,
+                        m.license.spdx(),
+                        flags.join(", ")
+                    );
+                }
+                println!();
+            }
+            println!("Pull a tag, then select it in the chat panel or pass `--model <tag>`.");
+        }
+
         Commands::Optimize {
             aggressive: _,
             dry_run,
@@ -774,6 +840,13 @@ async fn async_main() -> Result<()> {
                 "🔬 research: `{question}`\n   model: `{chosen_model}`  num_ctx: {}  tools: {}",
                 hw.optimal_context,
                 registry.len()
+            );
+            // Honest egress note: inference is local, but the web tools send
+            // queries + fetched page text off the machine (mirrors the server
+            // disclosure for the chat tools toggle).
+            eprintln!(
+                "   🌐 inference stays local, but search queries + fetched pages leave your \
+                 machine (DuckDuckGo / Wikipedia / arXiv / fetched URLs)."
             );
             eprintln!();
 

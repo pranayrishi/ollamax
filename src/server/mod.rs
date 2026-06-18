@@ -365,6 +365,9 @@ async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<S
         }
         ("GET", "/api/status") => handle_status(w, state).await,
         ("GET", "/api/models") => handle_models(w, state).await,
+        ("GET", "/api/models/catalog") => {
+            handle_models_catalog(w, state, query_param(&head.path, "verify")).await
+        }
         ("GET", "/api/model_info") => {
             handle_model_info(w, state, query_param(&head.path, "name")).await
         }
@@ -395,6 +398,13 @@ struct ChatReq {
     context: Vec<ContextItem>,
     #[serde(default)]
     temperature: Option<f32>,
+    /// Feature 2: when true, the selected model can call the free web tools
+    /// (web_search/wikipedia/arxiv/fetch_url) via the agent loop during normal
+    /// chat. Off by default (pure-local). Enabling it sends search queries +
+    /// fetched page text to the internet (inference still stays local) — the
+    /// server discloses this in the `meta` event.
+    #[serde(default)]
+    tools: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -476,6 +486,91 @@ async fn handle_models(w: OwnedWriteHalf, state: &Arc<ServerState>) {
             json!({ "models": [], "default": state.config.default_model, "error": e.to_string() })
         }
     };
+    let _ = write_json(w, 200, &payload).await;
+}
+
+/// `GET /api/models/catalog[?verify=true]` — the curated, hardware-tiered
+/// registry of FREE open-weight models (Feature 1), reconciled with what's
+/// installed locally and filtered to what this machine's VRAM can run. With
+/// `?verify=true`, each tag is best-effort checked against the live Ollama
+/// library (slower; networked). Drives the model picker's "discover / pull /
+/// select" with an honest, hardware-aware default.
+async fn handle_models_catalog(
+    w: OwnedWriteHalf,
+    state: &Arc<ServerState>,
+    verify: Option<String>,
+) {
+    use crate::models::{verify_in_library, HardwareTier, ModelRegistry};
+
+    let sentinel = VramSentinel::new(state.config.min_free_vram_mb, false);
+    let hw = sentinel.detect_hardware().await;
+    let free_vram = hw.free_vram_mb;
+
+    let ollama = OllamaProvider::new(&state.config.ollama_url);
+    let installed: Vec<String> = ollama
+        .list_models()
+        .await
+        .map(|ms| ms.into_iter().map(|m| m.name).collect())
+        .unwrap_or_default();
+
+    let mut registry = ModelRegistry::seed();
+    registry.mark_installed(&installed);
+
+    // Optional live library verification (off by default — it's networked).
+    let do_verify = matches!(verify.as_deref(), Some("true") | Some("1"));
+    let mut verified: std::collections::HashMap<String, Option<bool>> = Default::default();
+    if do_verify {
+        for m in registry.all() {
+            verified.insert(m.ollama_tag.clone(), verify_in_library(&m.ollama_tag).await);
+        }
+    }
+
+    let recommended = registry
+        .recommend(free_vram, &installed)
+        .map(|m| m.ollama_tag.clone());
+
+    let fits: std::collections::HashSet<String> = registry
+        .fits(free_vram)
+        .into_iter()
+        .map(|m| m.ollama_tag.clone())
+        .collect();
+
+    let models: Vec<Value> = registry
+        .all()
+        .iter()
+        .map(|m| {
+            json!({
+                "family": m.family,
+                "ollamaTag": m.ollama_tag,
+                "pullCommand": format!("ollama pull {}", m.ollama_tag),
+                "params": m.params,
+                "tier": m.tier,
+                "tierLabel": m.tier.label(),
+                "approxVramMb": m.approx_vram_mb,
+                "license": m.license.spdx(),
+                "commercialFriendly": m.license.commercial_friendly(),
+                "strengths": m.strengths,
+                "installed": m.installed,
+                "fits": fits.contains(&m.ollama_tag),
+                "libraryVerified": verified.get(&m.ollama_tag).copied().flatten(),
+            })
+        })
+        .collect();
+
+    let payload = json!({
+        "hardware": {
+            "freeVramMb": free_vram,
+            "gpuKind": hw.gpu_kind,
+            "tier": HardwareTier::for_vram(free_vram),
+            "tierLabel": HardwareTier::for_vram(free_vram).label(),
+        },
+        "recommended": recommended,
+        "installed": installed,
+        "verified": do_verify,
+        // Honest disclosure rendered by the picker.
+        "note": "Free, open-weight models run locally via Ollama. Cloud models (GPT/Claude/Gemini) are paid, bring-your-own-key, and not listed here.",
+        "models": models,
+    });
     let _ = write_json(w, 200, &payload).await;
 }
 
@@ -577,6 +672,34 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     let max_input_tokens = (num_ctx * 7) / 10; // reserve ~30% for the response
     let (kept_msgs, trimmed) = budget_messages(&req.messages, &req.context, max_input_tokens);
 
+    // Feature 2: web tools in NORMAL chat (opt-in). Reuse the exact same agent
+    // loop as /api/research over the flattened conversation — the model decides
+    // when to search/fetch, steps stream to the UI, and the meta event discloses
+    // the egress. Off by default = pure-local chat (the plain path below).
+    if req.tools == Some(true) {
+        let question = build_chat_prompt(&kept_msgs, req.prompt.as_deref(), &req.context);
+        let rules = RuleSet::load_default().unwrap_or_default().render();
+        // Carry the secret-scan `warnings` (this path can send context to the
+        // web), the Auto `routing` reasoning, and the `trimmed` count through —
+        // same safety/transparency surface as the plain chat path.
+        run_agent_streamed(
+            w,
+            state,
+            id,
+            model,
+            question,
+            num_ctx,
+            crate::agent::DEFAULT_MAX_ITERATIONS,
+            rules,
+            true,
+            warnings,
+            routing,
+            trimmed,
+        )
+        .await;
+        return;
+    }
+
     let replay_mode = std::env::var_os("FORGE_REPLAY_LOG").is_some();
     let opts = GenerateOptions {
         model: model.clone(),
@@ -668,7 +791,7 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     }
 }
 
-async fn handle_research(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) {
+async fn handle_research(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) {
     let req: ResearchReq = match serde_json::from_str(body) {
         Ok(r) => r,
         Err(e) => {
@@ -698,20 +821,61 @@ async fn handle_research(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: 
         }
     }
 
-    if write_sse_head(&mut w).await.is_err() {
-        return;
-    }
-    let _ = write_sse(
-        &mut w,
-        &json!({"type": "meta", "id": id, "model": model, "numCtx": num_ctx}),
-    )
-    .await;
-
-    let cancel = state.register(&id).await;
-    let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     let max_iterations = req
         .max_iterations
         .unwrap_or(crate::agent::DEFAULT_MAX_ITERATIONS);
+    // The dedicated research mode is web-enabled by definition; the meta event
+    // discloses the egress just like the chat tools toggle does.
+    run_agent_streamed(
+        w, state, id, model, question, num_ctx, max_iterations, rules_suffix, true,
+        Vec::new(), Value::Null, 0,
+    )
+    .await;
+}
+
+/// Shared agent-loop streamer used by BOTH `/api/research` and `/api/chat` (when
+/// its `tools` toggle is on) — the web tools are the *same* system surfaced in
+/// two places, not a fork. Streams `step` events as tools are called, then a
+/// final `answer` + `done`. When `web_disclosure` is set, the `meta` event
+/// states that queries/fetched pages leave the machine even though inference
+/// stays local.
+#[allow(clippy::too_many_arguments)]
+async fn run_agent_streamed(
+    mut w: OwnedWriteHalf,
+    state: &Arc<ServerState>,
+    id: String,
+    model: String,
+    question: String,
+    num_ctx: usize,
+    max_iterations: usize,
+    rules_suffix: String,
+    web_disclosure: bool,
+    // Carried through so the egressing path keeps the SAME safety surface as
+    // plain chat: secret-scan `warnings`, the Auto `routing` reasoning, and the
+    // `trimmed`-history count are all surfaced in the meta event.
+    warnings: Vec<Value>,
+    routing: Value,
+    trimmed: usize,
+) {
+    if write_sse_head(&mut w).await.is_err() {
+        return;
+    }
+    let mut meta = json!({
+        "type": "meta", "id": id, "model": model, "numCtx": num_ctx,
+        "warnings": warnings, "routing": routing, "trimmed": trimmed,
+    });
+    if web_disclosure {
+        meta["toolsEnabled"] = json!(true);
+        meta["disclosure"] = json!(
+            "Web tools are ON. Inference stays local, but your search queries and the text of \
+             fetched pages leave your machine (to DuckDuckGo, Wikipedia, arXiv, and any URL \
+             fetched). Turn tools off for pure-local chat."
+        );
+    }
+    let _ = write_sse(&mut w, &meta).await;
+
+    let cancel = state.register(&id).await;
+    let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     let url = state.config.ollama_url.clone();
     let run = tokio::spawn(async move {
         let provider = Arc::new(OllamaProvider::new(&url));

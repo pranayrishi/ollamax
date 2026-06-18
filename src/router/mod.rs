@@ -562,4 +562,80 @@ mod tests {
             .unwrap();
         assert!(complexity.score >= 0.5);
     }
+
+    fn mi(name: &str, size: u64) -> ModelInfo {
+        ModelInfo {
+            name: name.into(),
+            size,
+            size_human: String::new(),
+            modified_at: String::new(),
+            digest: String::new(),
+        }
+    }
+
+    // Feature 3: heterogeneous routing — architecture/planning goes to the
+    // biggest installed model, boilerplate (frontend/tests) to the smallest.
+    #[test]
+    fn tiered_routing_assigns_big_to_architecture_small_to_boilerplate() {
+        let router = TaskRouter::new(ModelConfig::default());
+        let models = vec![
+            mi("qwen2.5-coder:1.5b", 1_000_000_000),
+            mi("qwen2.5-coder:32b", 20_000_000_000),
+        ];
+        let subs = router.split_into_tiered_subtasks(
+            "build a full-stack app with frontend, backend, auth, and tests",
+            &models,
+            "qwen2.5-coder:7b",
+        );
+        let arch = subs
+            .iter()
+            .find(|s| s.name.to_lowercase().contains("arch"))
+            .expect("an architecture subtask should be inserted");
+        assert_eq!(arch.model_override.as_deref(), Some("qwen2.5-coder:32b"));
+        for s in subs.iter().filter(|s| {
+            let n = s.name.to_lowercase();
+            n.contains("front") || n.contains("test") || n.contains("ui")
+        }) {
+            assert_eq!(
+                s.model_override.as_deref(),
+                Some("qwen2.5-coder:1.5b"),
+                "boilerplate `{}` should route to the smallest model",
+                s.name
+            );
+        }
+    }
+
+    // Feature 3: VRAM safety — if two distinct models wouldn't fit together,
+    // every subtask collapses onto a single model that does fit.
+    #[test]
+    fn tiered_routing_collapses_when_vram_too_small() {
+        let router = TaskRouter::new(ModelConfig::default());
+        let models = vec![
+            mi("small:1.5b", 1_000_000_000),
+            mi("big:32b", 20_000_000_000),
+        ];
+        let subs = router.split_into_tiered_subtasks_vram_aware(
+            "build a frontend and backend with tests",
+            &models,
+            "small:1.5b",
+            2_000, // ~2 GB free — can't hold both models
+        );
+        let overrides: std::collections::BTreeSet<String> =
+            subs.iter().filter_map(|s| s.model_override.clone()).collect();
+        assert!(
+            overrides.len() <= 1,
+            "VRAM-too-small must collapse to one model, got {overrides:?}"
+        );
+    }
+
+    // With a single installed model, heterogeneous routing is meaningless and
+    // we must not invent overrides the executor would choke on.
+    #[test]
+    fn single_model_lineup_skips_heterogeneous_overrides() {
+        let router = TaskRouter::new(ModelConfig::default());
+        let models = vec![mi("only:7b", 5_000_000_000)];
+        let subs =
+            router.split_into_tiered_subtasks("build a frontend and backend", &models, "only:7b");
+        assert!(subs.iter().all(|s| s.model_override.is_none()));
+    }
 }

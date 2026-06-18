@@ -410,6 +410,9 @@
         }
         active.showWarnings(ev.warnings);
         if (!(ev.routing && ev.routing.auto)) active.showTrimmed(ev.trimmed);
+        // Feature 2: when web tools are on, surface the egress disclosure IN the
+        // conversation at use time — not just buried in Settings.
+        if (ev.toolsEnabled && ev.disclosure) active.showNote("🌐 " + ev.disclosure);
         break;
       case "token":
         active.appendToken(ev.text);
