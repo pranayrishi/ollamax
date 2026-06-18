@@ -21,6 +21,12 @@
     "electron-builder": "^25.1.8",
     "@electron/fuses": "^1.8.0"
   },
+  "dependencies": {
+    "monaco-editor": "^0.52.0",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "node-pty": "^1.0.0"
+  },
   "build": {
     "appId": "com.ollamaforge.app",
     "productName": "Ollama-Forge",
@@ -35,6 +41,9 @@
       "output": "release",
       "buildResources": "assets"
     },
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
+    ],
     "extraResources": [
       { "from": "assets/", "to": "assets/" },
       { "from": "bin/", "to": "bin/" }

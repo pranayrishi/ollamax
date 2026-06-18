@@ -275,6 +275,108 @@ ipcMain.handle("hub:support", async (_e, { slug, repos, token } = {}) => {
   }
 });
 
+// =====================================================================
+// IDE workspace (#3) — open a folder, browse files, edit (Monaco in the
+// renderer), and an integrated terminal (xterm.js ↔ node-pty here). All file
+// access is sandboxed to the opened workspace root. This is a normal in-app IDE
+// terminal — it does NOT contradict "no user-facing CLI install" (that was about
+// distribution, not having an editor terminal).
+// =====================================================================
+let workspaceRoot = null;
+const IGNORE_DIRS = new Set([".git", "node_modules", "target", "dist", ".next", "release", ".cache"]);
+const MAX_FILE_BYTES = 2 * 1024 * 1024;
+
+function inWorkspace(p) {
+  if (!workspaceRoot) return false;
+  const r = path.resolve(p);
+  return r === workspaceRoot || r.startsWith(workspaceRoot + path.sep);
+}
+
+ipcMain.handle("ide:openFolder", async () => {
+  const r = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
+  if (r.canceled || !r.filePaths[0]) return null;
+  workspaceRoot = path.resolve(r.filePaths[0]);
+  return { root: workspaceRoot, name: path.basename(workspaceRoot) };
+});
+
+// One directory level (lazy tree expansion). Dirs first, then files, sorted.
+ipcMain.handle("ide:readDir", async (_e, dir) => {
+  const target = dir ? path.resolve(dir) : workspaceRoot;
+  if (!target || !inWorkspace(target)) return { error: "outside workspace" };
+  try {
+    const ents = fs.readdirSync(target, { withFileTypes: true });
+    const out = ents
+      .filter((e) => !(e.isDirectory() && IGNORE_DIRS.has(e.name)) && !e.name.startsWith("."))
+      .map((e) => ({ name: e.name, path: path.join(target, e.name), dir: e.isDirectory() }))
+      .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+    return { entries: out };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle("ide:readFile", async (_e, p) => {
+  if (!inWorkspace(p)) return { error: "outside workspace" };
+  try {
+    const st = fs.statSync(p);
+    if (st.size > MAX_FILE_BYTES) return { error: "file too large to open in-editor" };
+    return { content: fs.readFileSync(p, "utf8"), path: p };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+ipcMain.handle("ide:writeFile", async (_e, { path: p, content }) => {
+  if (!inWorkspace(p)) return { error: "outside workspace" };
+  try {
+    fs.writeFileSync(p, content, "utf8");
+    return { ok: true };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+// Integrated terminal via node-pty (a NATIVE module — guarded so the app still
+// runs if it isn't rebuilt; the terminal panel then shows an install hint).
+let ptyProc = null;
+ipcMain.handle("pty:start", async (_e, { cols, rows } = {}) => {
+  let nodePty;
+  try {
+    nodePty = require("node-pty");
+  } catch (_) {
+    return { ok: false, error: "node-pty not built (run npm install + electron-rebuild)" };
+  }
+  try {
+    if (ptyProc) {
+      try { ptyProc.kill(); } catch (_) {}
+    }
+    const shell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh";
+    ptyProc = nodePty.spawn(shell, [], {
+      name: "xterm-color",
+      cols: cols || 80,
+      rows: rows || 24,
+      cwd: workspaceRoot || app.getPath("home"),
+      env: process.env,
+    });
+    ptyProc.onData((d) => mainWindow && mainWindow.webContents.send("pty:data", d));
+    ptyProc.onExit(() => {
+      mainWindow && mainWindow.webContents.send("pty:exit");
+      ptyProc = null;
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.on("pty:write", (_e, data) => ptyProc && ptyProc.write(data));
+ipcMain.on("pty:resize", (_e, { cols, rows }) => {
+  try { ptyProc && ptyProc.resize(cols, rows); } catch (_) {}
+});
+ipcMain.handle("pty:kill", async () => {
+  if (ptyProc) { try { ptyProc.kill(); } catch (_) {} ptyProc = null; }
+  return { ok: true };
+});
+
 app.whenReady().then(async () => {
   try {
     await startForgeServe();
@@ -294,6 +396,12 @@ function shutdown() {
       forgeProc.kill();
     } catch (_) {}
     forgeProc = null;
+  }
+  if (ptyProc) {
+    try {
+      ptyProc.kill();
+    } catch (_) {}
+    ptyProc = null;
   }
 }
 app.on("window-all-closed", () => {

@@ -19,4 +19,20 @@ contextBridge.exposeInMainWorld("forgeNative", {
     activate: (slug) => ipcRenderer.invoke("hub:activate", slug),
     support: (args) => ipcRenderer.invoke("hub:support", args),
   },
+  // IDE workspace (#3): folder/file access (sandboxed to the opened root) + a
+  // node-pty-backed integrated terminal.
+  ide: {
+    openFolder: () => ipcRenderer.invoke("ide:openFolder"),
+    readDir: (dir) => ipcRenderer.invoke("ide:readDir", dir),
+    readFile: (p) => ipcRenderer.invoke("ide:readFile", p),
+    writeFile: (p, content) => ipcRenderer.invoke("ide:writeFile", { path: p, content }),
+  },
+  pty: {
+    start: (size) => ipcRenderer.invoke("pty:start", size),
+    write: (data) => ipcRenderer.send("pty:write", data),
+    resize: (cols, rows) => ipcRenderer.send("pty:resize", { cols, rows }),
+    kill: () => ipcRenderer.invoke("pty:kill"),
+    onData: (cb) => ipcRenderer.on("pty:data", (_e, d) => cb(d)),
+    onExit: (cb) => ipcRenderer.on("pty:exit", () => cb()),
+  },
 });

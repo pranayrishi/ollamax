@@ -107,12 +107,23 @@ These are substantial; here's the honest status + plan, not half-built code:
   raw stars; license-respecting) already exists on the account server. *Remaining:
   wiring the app token into `hub:support` (currently prompts sign-in) once the
   desktop OAuth loopback is finished, and a running-app visual pass.*
-- **#3 IDE workspace (folder/explorer/Monaco/xterm):** the brief's own honest
-  note — this is essentially rebuilding VS Code's core UI. Plan: open-folder via
-  Electron `dialog`; a file-tree (embed a tree lib or a thin custom tree over
-  `fs`); **Monaco** for the viewer/editor (tabs, highlighting); **xterm.js** + a
-  pty (`node-pty`) for the integrated terminal. Embed proven components, don't
-  reinvent. This is a multi-day feature on its own — sequenced after the Hub.
+- **#3 IDE workspace — BUILT** ✅ (code complete; packaging unverified, see below).
+  A third **Editor** rail view: **open a folder** (Electron `dialog`, all file
+  access sandboxed to that root), a **lazy file-explorer tree** (ignores
+  `.git`/`node_modules`/`target`…), **Monaco** for the viewer/editor with tabs +
+  syntax highlighting + Ctrl-S save (a styled **textarea fallback** if Monaco
+  isn't installed, so it's never blank), and an **integrated terminal**
+  (**xterm.js** ↔ **node-pty** spawned in the main process, streamed over IPC;
+  guarded so the app runs without it and shows an install hint). Main-process IPC
+  (`ide:openFolder/readDir/readFile/writeFile`, `pty:*`), preload surface, and
+  `prepare.mjs` stages Monaco's `vs/` + xterm assets from `node_modules`.
+  package.json adds the deps + `asarUnpack` for the native `node-pty`.
+  **Honest caveat:** I could **not** `npm install` (Monaco/xterm/native node-pty)
+  or rebuild + launch the packaged app here (disk + native build + GUI). All JS
+  is `node --check`-clean; running it needs `cd desktop-app && npm install`
+  (electron-builder rebuilds node-pty), then a GUI pass. The xterm browser-global
+  wiring may need a small bundling tweak depending on the installed build — the
+  fallbacks cover absence cleanly.
 - **#4 Streaming thinking + live code:** stream real reasoning tokens **only where
   the model exposes them** (reasoning-capable models / Ollama `thinking`), else
   fall back to the tasteful rotating status labels (already specced) — never a

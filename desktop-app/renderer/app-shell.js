@@ -2,11 +2,12 @@
 // and the Central Hub view (separate panels, single window). External file
 // because the app CSP is `script-src 'self'` (no inline scripts).
 (function () {
+  const VIEWS = ["chat", "hub", "ide"];
   function show(view) {
-    const chat = document.getElementById("chat-view");
-    const hubv = document.getElementById("hub-view");
-    if (chat) chat.hidden = view !== "chat";
-    if (hubv) hubv.hidden = view !== "hub";
+    VIEWS.forEach((v) => {
+      const el = document.getElementById(v + "-view");
+      if (el) el.hidden = v !== view;
+    });
     document.querySelectorAll("#rail .rail-btn").forEach((b) =>
       b.classList.toggle("active", b.getAttribute("data-view") === view)
     );

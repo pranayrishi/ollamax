@@ -2,8 +2,8 @@
 // media/) into renderer/, and stages the forge engine binary into bin/ for
 // packaging. Run by `npm start` / `npm run dist`. We reuse the UI rather than
 // forking it, so the app and the (now-retired) panel never drift.
-import { existsSync, mkdirSync, copyFileSync, chmodSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, copyFileSync, chmodSync, readdirSync } from "node:fs";
+import { dirname, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +23,37 @@ for (const f of ["main.js", "main.css", "hub.js", "hub.css"]) {
     console.log(`copied UI: ${f}`);
   } else {
     console.warn(`WARN: missing ${src}`);
+  }
+}
+
+// Stage the IDE editor/terminal assets (#3) from node_modules when installed
+// (the dev/CI flow runs `npm install` before this). Best-effort — ide.js falls
+// back gracefully (textarea editor / "terminal needs install" note) when absent.
+const nm = resolve(here, "..", "node_modules");
+function copyDir(src, dst) {
+  if (!existsSync(src)) return false;
+  mkdirSync(dst, { recursive: true });
+  for (const e of readdirSync(src, { withFileTypes: true })) {
+    const s = resolve(src, e.name);
+    const d = resolve(dst, e.name);
+    if (e.isDirectory()) copyDir(s, d);
+    else copyFileSync(s, d);
+  }
+  return true;
+}
+if (copyDir(resolve(nm, "monaco-editor", "min", "vs"), resolve(renderer, "vs"))) {
+  console.log("staged Monaco editor (vs/)");
+} else {
+  console.warn("Monaco not installed — editor uses the textarea fallback (run npm install)");
+}
+for (const from of [
+  resolve(nm, "@xterm/xterm/css/xterm.css"),
+  resolve(nm, "@xterm/xterm/lib/xterm.js"),
+  resolve(nm, "@xterm/addon-fit/lib/addon-fit.js"),
+]) {
+  if (existsSync(from)) {
+    copyFileSync(from, resolve(renderer, basename(from)));
+    console.log(`staged ${basename(from)}`);
   }
 }
 

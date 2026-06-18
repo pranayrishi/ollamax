@@ -161,6 +161,29 @@ pre.code, code { font-family: var(--font-mono); font-size: var(--text-ui); }
 #rail .rail-btn:hover { background: var(--ink-150); color: var(--ink-900); }
 #rail .rail-btn.active { background: var(--accent-soft); color: var(--accent); }
 #views { flex: 1; min-width: 0; }
-#chat-view, #hub-view { display: flex; flex-direction: column; height: 100vh; }
-#chat-view[hidden], #hub-view[hidden] { display: none; }
+#chat-view, #hub-view, #ide-view { display: flex; flex-direction: column; height: 100vh; }
+#chat-view[hidden], #hub-view[hidden], #ide-view[hidden] { display: none; }
 #hub-view { padding: var(--space-3); overflow-y: auto; }
+
+/* #3 IDE workspace: toolbar / tree | editor / terminal */
+#ide-view { overflow: hidden; }
+.ide-toolbar { display: flex; gap: var(--space-3); align-items: center; padding: var(--space-2) var(--space-3); background: var(--ink-50); border-bottom: 1px solid var(--border); }
+.ide-toolbar #open-folder { background: var(--ink-100); border: 1px solid var(--border-strong); color: var(--ink-900); border-radius: var(--r-2); padding: var(--space-1) var(--space-3); font-size: var(--text-ui); cursor: pointer; }
+.ws-name { font-size: var(--text-meta); color: var(--ink-700); font-weight: 600; }
+.ide-status { font-size: var(--text-caption); color: var(--ink-500); margin-left: auto; font-variant-numeric: tabular-nums; }
+.ide-body { display: flex; flex: 1; min-height: 0; }
+#ide-sidebar { width: 240px; flex: 0 0 auto; overflow: auto; background: var(--ink-50); border-right: 1px solid var(--border); padding: var(--space-2); }
+.file-tree, .tree-children { list-style: none; margin: 0; padding: 0; }
+.tree-children { padding-left: var(--space-3); }
+.tree-row { font-size: var(--text-ui); color: var(--ink-700); padding: 2px var(--space-1); border-radius: var(--r-1); cursor: pointer; white-space: nowrap; }
+.tree-row:hover { background: var(--ink-150); color: var(--ink-900); }
+.ide-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.editor-tabs { display: flex; gap: 2px; background: var(--ink-50); border-bottom: 1px solid var(--border); overflow-x: auto; }
+.editor-tabs .tab { font-size: var(--text-meta); color: var(--ink-600); background: transparent; border: 0; padding: var(--space-1) var(--space-3); cursor: pointer; white-space: nowrap; }
+.editor-tabs .tab.active { color: var(--ink-900); background: var(--ink-0); border-bottom: 2px solid var(--accent); }
+.editor-host { flex: 1; min-height: 0; }
+#editor-fallback { width: 100%; height: 100%; box-sizing: border-box; background: var(--ink-0); color: var(--ink-900); border: 0; font-family: var(--font-mono); font-size: 13px; padding: var(--space-3); resize: none; outline: none; }
+.editor-hint { font-size: var(--text-caption); color: var(--ink-500); padding: var(--space-1) var(--space-3); }
+.terminal-panel { height: 200px; flex: 0 0 auto; background: var(--ink-0); border-top: 1px solid var(--border-strong); }
+#terminal-host { height: 100%; padding: var(--space-1); }
+.terminal-missing { color: var(--ink-500); font-size: var(--text-meta); padding: var(--space-3); }
