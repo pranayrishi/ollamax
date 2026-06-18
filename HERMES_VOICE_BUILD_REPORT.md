@@ -16,9 +16,9 @@ Two flagship features were built on the local models, reusing forge's primitives
 2. **Voice demo navigation** — push-to-talk → on-device whisper.cpp STT → intent→code
    over the graph → editor reveal, with a status-bar state machine and Undo/Next.
 
-**Verification: 186 Rust tests pass (was 166 — +20 new); all changed extension JS
+**Verification: 187 Rust tests pass (was 166 — +21 new); all changed extension JS
 passes `node --check`; the extension packages to a valid `.vsix`.** Shipped across
-8 small, individually-tested commits.
+small, individually-tested commits.
 
 ---
 
@@ -97,8 +97,8 @@ is partially covered by per-step Deny + the existing Stop.
   persisted.
 - **Shell** ships deny-list + timeout + audit log + kill-switch; **file tools** are
   sandboxed to the workspace; **MCP** is allowlisted. The new tools widen the trust
-  surface, so interactive per-call consent (the Autonomy Dial) is the flagged next
-  step.
+  surface, so **interactive per-call consent (the Autonomy Dial) now gates them** —
+  in *confirm* mode the agent pauses for Approve/Deny before any write/shell.
 
 ---
 
