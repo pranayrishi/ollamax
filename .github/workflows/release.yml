@@ -73,10 +73,11 @@ jobs:
             target: aarch64-apple-darwin
             label: macos-arm64
             ext: tar.gz
-          - os: macos-13
-            target: x86_64-apple-darwin
-            label: macos-x64
-            ext: tar.gz
+          # NOTE: Intel macOS (macos-13 / x86_64) is intentionally NOT built —
+          # macos-13 Intel runners are starved on this PRIVATE repo and left the
+          # publish job hanging indefinitely. Intel macOS stays "coming soon" in
+          # the download UI. Re-add this entry if the build moves to a public
+          # repo (free, available Intel runners) or once signing lands.
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             label: windows-x64
