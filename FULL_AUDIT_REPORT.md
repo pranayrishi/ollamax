@@ -97,11 +97,30 @@ functional in one app. The genuine non-gaps are **#3 (not built)** and the parti
 
 - **Found gap (B)** by mounting the real `.dmg` (the engine was missing).
 - **Fixed the engine bundling** (post-gulp copy + `.vscodeignore`) — the
-  highest-value fix; it's the difference between a dead app and a working one.
-- **Queued the fork on all 3 platforms** (`release-fork.yml` + win/linux jobs).
-- **Updated the docs** to reflect the fork building in CI.
-- Clean rebuild **in flight**; the engine-present artifact is **pending re-mount
-  verification** (added below once confirmed).
+  highest-value fix; the difference between a dead app and a working one.
+- **VERIFIED the fix in the published Linux artifact.** `ForgeCode-linux-x64.tar.gz`
+  (rebuilt with the fix) now contains
+  `resources/app/extensions/forge-vscode/bin/forge` — the engine is bundled, plus
+  `voice.js` + `product.json`. So the fix is correct and proven on the one platform
+  that rebuilt before the blocker below.
+- **Queued the fork on all 3 platforms** (`release-fork.yml` + win/linux jobs) and
+  fixed two CI failures (ripgrep 403 → `GITHUB_TOKEN`; windows VS detection → MSVC
+  setup). **Updated the docs.**
+
+### ⛔ BLOCKER (external, needs you): GitHub Actions billing
+The macOS + Windows fork rebuilds **cannot run** — every job now fails instantly with:
+> *"The job was not started because recent account payments have failed or your
+> spending limit needs to be increased."*
+
+The repeated macOS fork builds (~50 min each, billed ~10× the Linux rate) exhausted
+the **GitHub Actions spending limit**. **Resolve it** (Settings → Billing & plans →
+raise the Actions spending limit / fix payment), then I re-push one tag and
+macOS/Windows rebuild with the *same verified fix*. Until then:
+- ✅ **Linux** fork app = engine-fixed, working.
+- 🟡 **macOS** `.dmg` on the releases repo is still the **engine-less (broken)** one.
+- 🟡 **Windows** fork not yet published.
+
+To conserve budget I've **stopped re-triggering** builds until you've fixed billing.
 
 ---
 
@@ -111,8 +130,9 @@ functional in one app. The genuine non-gaps are **#3 (not built)** and the parti
 completable + verifiable now is the **engine fix → one working fork app**, plus the
 audit/reconcile. The rest is real work:
 
-1. **(now, in flight)** Engine-in-app fix → verify by re-mounting the new dmg →
-   one working fork download (macOS), with win/linux following.
+1. **(BLOCKED on you — billing)** Engine-in-app fix is done + **verified on Linux**.
+   macOS/Windows just need the GitHub Actions spending limit raised, then one tag
+   push → both rebuild with the verified fix → the consolidated working release.
 2. **(needs your input)** Login-required: give me the deployed account-server URL →
    I bake it into the fork build (`FORGE_ACCOUNT_SERVER`) → gate enforced.
 3. **(small)** Chat-on-the-right default: workbench layout patch in the fork.
@@ -125,7 +145,9 @@ audit/reconcile. The rest is real work:
 
 ---
 
-## 5. Open questions
+## 5. Open questions / actions for you
+0. **Raise the GitHub Actions spending limit / fix payment** — hard blocker on the
+   macOS + Windows fork rebuilds (the engine fix is verified; CI just can't run).
 1. Production **account-server URL** (to enable login-required + dashboard sync)?
 2. Keep **multi-provider BYOK** in scope, or is the product **local-only**?
 3. After fork verification, **retire the Electron app** downloads?
