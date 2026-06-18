@@ -313,6 +313,40 @@
         steps.appendChild(row);
         scrollDown();
       },
+      // Autonomy Dial: the agent paused for approval before a consequential tool.
+      // Render an Approve / Deny prompt; the decision is relayed to the agent.
+      addApprovalPrompt(ev) {
+        this.stopStatus();
+        steps.hidden = false;
+        const row = document.createElement("div");
+        row.className = "step approval";
+        const argsStr = ev.args ? JSON.stringify(ev.args) : "";
+        const head = document.createElement("div");
+        head.innerHTML =
+          `<span class="sdot">⏸</span><span class="badge">approve?</span> ` +
+          `<span class="tool">${escapeHtml(ev.tool)}</span>` +
+          (argsStr ? ` <span class="prev">${escapeHtml(argsStr.slice(0, 200))}</span>` : "");
+        row.appendChild(head);
+        const actions = document.createElement("div");
+        actions.className = "approw";
+        const allow = document.createElement("button");
+        allow.className = "primary";
+        allow.textContent = "Approve";
+        const deny = document.createElement("button");
+        deny.className = "ghost";
+        deny.textContent = "Deny";
+        const decide = (decision) => {
+          vscode.postMessage({ type: "approve", decision });
+          actions.textContent = decision ? "✓ approved" : "✕ denied";
+        };
+        allow.addEventListener("click", () => decide(true));
+        deny.addEventListener("click", () => decide(false));
+        actions.appendChild(allow);
+        actions.appendChild(deny);
+        row.appendChild(actions);
+        steps.appendChild(row);
+        scrollDown();
+      },
       addProgress(ev) {
         this.stopStatus();
         progress.hidden = false;
@@ -357,7 +391,8 @@
     const text = inputEl.value.trim();
     if (!text) return;
     inputEl.value = "";
-    const item = { text, mode, model, context: contextItems.slice() };
+    const autonomyEl = $("#autonomy");
+    const item = { text, mode, model, context: contextItems.slice(), autonomy: autonomyEl ? autonomyEl.value : "confirm" };
     contextItems = []; // consumed by this message
     renderContext();
     if (streaming) {
@@ -389,6 +424,7 @@
       type: "send",
       mode: item.mode,
       model: item.model,
+      autonomy: item.autonomy,
       text: item.text,
       // Strip UI-only fields (thumb/isImage) so we don't send the image twice;
       // the server reads `image` (base64) for vision + `content` for text. For
@@ -472,6 +508,9 @@
         break;
       case "step":
         active.addStep(ev);
+        break;
+      case "approval_request":
+        active.addApprovalPrompt(ev);
         break;
       case "skill_applied":
         active.addSkill(ev.name);
@@ -892,9 +931,12 @@
       document.querySelectorAll(".mode").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       mode = btn.getAttribute("data-mode");
+      // The Autonomy Dial only applies to the autonomous Agent.
+      const dial = $("#autonomy");
+      if (dial) dial.hidden = mode !== "agent";
       inputEl.placeholder =
         mode === "agent"
-          ? "Research question — the agent will use web/wiki/arxiv tools…"
+          ? "Tell the agent what to do — it uses tools, memory & skills (asks before acting)…"
           : mode === "build"
           ? "Describe what to build — runs parallel workers across models…"
           : "Ask anything — runs locally on your hardware…";

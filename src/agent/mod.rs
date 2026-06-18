@@ -44,6 +44,31 @@ pub struct Agent {
     /// Cached `/api/show` digest for `model`. Populated once on first
     /// `run()` so we don't pay the round-trip on every iteration.
     cached_digest: String,
+    /// Optional approval gate consulted before a *consequential* tool runs
+    /// (the Autonomy Dial). `None` = approve everything (default behavior).
+    approval: Option<Arc<dyn ApprovalPolicy>>,
+}
+
+/// Decision returned by an [`ApprovalPolicy`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Approval {
+    Allow,
+    Deny,
+}
+
+/// Consulted before a consequential tool runs so a UI can require human
+/// approval (Hermes-class step-level intervention). Implementors decide based on
+/// the Autonomy Dial mode.
+#[async_trait::async_trait]
+pub trait ApprovalPolicy: Send + Sync {
+    async fn approve(&self, tool: &str, args: &Value) -> Approval;
+}
+
+/// Tools that mutate the workspace or execute code — these are gated by the
+/// Autonomy Dial in "confirm" mode. Read-only tools (research/graph/fs_read)
+/// always stream through.
+pub fn is_consequential(tool: &str) -> bool {
+    matches!(tool, "fs_write" | "fs_edit" | "shell")
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +127,15 @@ impl Agent {
             max_iterations: config.max_iterations.max(1),
             system_suffix: config.system_suffix,
             cached_digest: String::new(),
+            approval: None,
         }
+    }
+
+    /// Attach an approval gate (the Autonomy Dial). Consulted before each
+    /// consequential tool call; on `Deny` the tool is skipped, not executed.
+    pub fn with_approval(mut self, policy: Arc<dyn ApprovalPolicy>) -> Self {
+        self.approval = Some(policy);
+        self
     }
 
     /// Run the agent loop. `on_step` is called for each tool invocation so
@@ -293,6 +326,28 @@ impl Agent {
                         continue;
                     };
 
+                    // Autonomy Dial: gate consequential tools behind approval.
+                    if is_consequential(&tool_name) {
+                        if let Some(policy) = &self.approval {
+                            if policy.approve(&tool_name, &args).await == Approval::Deny {
+                                let result = ToolResult {
+                                    tool: tool_name.clone(),
+                                    ok: false,
+                                    content: "DENIED by user — tool not executed.".to_string(),
+                                };
+                                record_step(
+                                    &mut trace,
+                                    &mut transcript,
+                                    iteration,
+                                    &tool_name,
+                                    &args,
+                                    &result,
+                                    &mut on_step,
+                                );
+                                continue;
+                            }
+                        }
+                    }
                     let result = match tool.invoke(args.clone()).await {
                         Ok(r) => r,
                         Err(e) => ToolResult {
@@ -478,6 +533,26 @@ mod tests {
         let v = extract_first_json_object(s).expect("should recover");
         assert_eq!(v["action"], "answer");
         assert_eq!(v["text"], "42");
+    }
+
+    #[tokio::test]
+    async fn approval_gate_contract() {
+        // Only mutating/executing tools are gated; read-only tools stream through.
+        assert!(is_consequential("shell"));
+        assert!(is_consequential("fs_write"));
+        assert!(is_consequential("fs_edit"));
+        assert!(!is_consequential("fs_read"));
+        assert!(!is_consequential("web_search"));
+        assert!(!is_consequential("graph_query"));
+
+        struct DenyAll;
+        #[async_trait::async_trait]
+        impl ApprovalPolicy for DenyAll {
+            async fn approve(&self, _t: &str, _a: &Value) -> Approval {
+                Approval::Deny
+            }
+        }
+        assert_eq!(DenyAll.approve("shell", &json!({})).await, Approval::Deny);
     }
 
     #[test]

@@ -100,6 +100,9 @@ class ChatViewProvider {
       case "cancel":
         this._handleCancel();
         break;
+      case "approve":
+        await this._approve(!!msg.decision);
+        break;
       case "refresh":
         await this._sendStatusAndModels();
         break;
@@ -147,6 +150,16 @@ class ChatViewProvider {
       await this._sendStatusAndModels();
     } catch (e) {
       this.post({ type: "backendError", message: String(e && e.message) });
+    }
+  }
+
+  /** Relay the user's Autonomy-Dial decision to the waiting agent run. */
+  async _approve(decision) {
+    if (!this.currentAgentId) return;
+    try {
+      await this.backend.postJson("/api/agent/approve", { id: this.currentAgentId, decision });
+    } catch (e) {
+      this.log(`approve failed: ${e && e.message}`);
     }
   }
 
@@ -278,7 +291,16 @@ class ChatViewProvider {
 
     if (msg.mode === "agent") {
       path0 = "/api/research";
-      body = { id, question: msg.text, model: msg.model, context };
+      // Autonomy Dial: "auto" | "confirm" | "readonly" (default confirm-each so a
+      // first-timer is asked before the agent writes/executes anything).
+      this.currentAgentId = id;
+      body = {
+        id,
+        question: msg.text,
+        model: msg.model,
+        context,
+        autonomy: msg.autonomy || "confirm",
+      };
     } else if (msg.mode === "build") {
       path0 = "/api/build";
       body = { id, task: msg.text, output_dir: msg.outputDir || null };
@@ -503,6 +525,11 @@ class ChatViewProvider {
       <button class="mode" data-mode="build" title="Parallel multi-model code build/orchestration">Build</button>
     </div>
     <div class="picker">
+      <select id="autonomy" hidden title="Autonomy Dial — how much the agent does before asking you">
+        <option value="confirm">Confirm each action</option>
+        <option value="auto">Act autonomously</option>
+        <option value="readonly">Read-only (no writes)</option>
+      </select>
       <select id="model" title="Installed Ollama model (auto-selected for your hardware)"></select>
       <button id="refresh" class="iconbtn" title="Refresh installed Ollama models (after ollama pull)">⟳</button>
     </div>

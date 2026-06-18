@@ -68,6 +68,9 @@ pub struct ServerState {
     /// permit, so a cancel that arrives a hair before the handler starts
     /// awaiting is not lost.
     cancels: Mutex<HashMap<String, Arc<Notify>>>,
+    /// In-flight Agent run id → approval-decision sender (the Autonomy Dial). The
+    /// agent task awaits the receiver; `/api/agent/approve` sends into it.
+    approvals: Mutex<HashMap<String, mpsc::UnboundedSender<bool>>>,
 }
 
 impl ServerState {
@@ -85,6 +88,22 @@ impl ServerState {
                 n.notify_one();
                 true
             }
+            None => false,
+        }
+    }
+    /// Register an approval channel for an Agent run; returns the receiver the
+    /// agent's policy awaits.
+    async fn register_approval(&self, id: &str) -> mpsc::UnboundedReceiver<bool> {
+        let (tx, rx) = mpsc::unbounded_channel::<bool>();
+        self.approvals.lock().await.insert(id.to_string(), tx);
+        rx
+    }
+    async fn unregister_approval(&self, id: &str) {
+        self.approvals.lock().await.remove(id);
+    }
+    async fn send_approval(&self, id: &str, decision: bool) -> bool {
+        match self.approvals.lock().await.get(id) {
+            Some(tx) => tx.send(decision).is_ok(),
             None => false,
         }
     }
@@ -117,6 +136,7 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
         config,
         version: crate::cli::VERSION,
         cancels: Mutex::new(HashMap::new()),
+        approvals: Mutex::new(HashMap::new()),
     });
     serve(listener, state).await
 }
@@ -128,6 +148,7 @@ pub async fn serve_listener(listener: TcpListener, config: Config) -> Result<()>
         config,
         version: crate::cli::VERSION,
         cancels: Mutex::new(HashMap::new()),
+        approvals: Mutex::new(HashMap::new()),
     });
     serve(listener, state).await
 }
@@ -417,6 +438,7 @@ async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<S
         ("GET", "/api/model_info") => {
             handle_model_info(w, state, query_param(&head.path, "name")).await
         }
+        ("POST", "/api/agent/approve") => handle_agent_approve(w, state, &body).await,
         ("GET", "/api/voice/locate") => {
             handle_voice_locate(w, query_param(&head.path, "q")).await
         }
@@ -498,6 +520,9 @@ struct ResearchReq {
     max_iterations: Option<usize>,
     #[serde(default)]
     context: Vec<ContextItem>,
+    /// Autonomy Dial mode: "auto" | "confirm" | "readonly" (defaults to "auto").
+    #[serde(default)]
+    autonomy: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -674,6 +699,25 @@ async fn handle_cancel(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) 
             let _ = write_json(w, 400, &json!({"error": e.to_string()})).await;
         }
     }
+}
+
+// --- Autonomy Dial: the webview POSTs the user's approve/deny decision for a
+// paused consequential tool call here; it's routed to the waiting agent run. ----
+async fn handle_agent_approve(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) {
+    #[derive(serde::Deserialize)]
+    struct Req {
+        id: String,
+        decision: bool,
+    }
+    let req: Req = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = write_json(w, 400, &json!({ "error": e.to_string() })).await;
+            return;
+        }
+    };
+    let delivered = state.send_approval(&req.id, req.decision).await;
+    let _ = write_json(w, 200, &json!({ "delivered": delivered })).await;
 }
 
 // --- Phase 2 Voice navigation: resolve a transcribed phrase to a code location
@@ -973,6 +1017,7 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
             warnings,
             routing,
             trimmed,
+            "auto".to_string(),
         )
         .await;
         return;
@@ -1136,11 +1181,12 @@ async fn handle_research(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     let max_iterations = req
         .max_iterations
         .unwrap_or(crate::agent::DEFAULT_MAX_ITERATIONS);
+    let autonomy = req.autonomy.unwrap_or_else(|| "auto".to_string());
     // The dedicated research mode is web-enabled by definition; the meta event
     // discloses the egress just like the chat tools toggle does.
     run_agent_streamed(
         w, state, id, model, question, num_ctx, max_iterations, rules_suffix, true,
-        Vec::new(), Value::Null, 0,
+        Vec::new(), Value::Null, 0, autonomy,
     )
     .await;
 }
@@ -1151,6 +1197,43 @@ async fn handle_research(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
 /// final `answer` + `done`. When `web_disclosure` is set, the `meta` event
 /// states that queries/fetched pages leave the machine even though inference
 /// stays local.
+/// Approval gate (Autonomy Dial) backed by the SSE channel + a decision channel.
+/// "auto" allows all; "readonly" denies all consequential tools; "confirm" emits
+/// an `approval_request` event and awaits the user's decision (timeout → deny).
+struct ChannelApprovalPolicy {
+    mode: String,
+    tx: mpsc::UnboundedSender<Value>,
+    rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<bool>>,
+}
+
+#[async_trait::async_trait]
+impl crate::agent::ApprovalPolicy for ChannelApprovalPolicy {
+    async fn approve(&self, tool: &str, args: &Value) -> crate::agent::Approval {
+        use crate::agent::Approval;
+        match self.mode.as_str() {
+            "auto" => Approval::Allow,
+            "readonly" => Approval::Deny,
+            _ => {
+                let _ = self
+                    .tx
+                    .send(json!({ "type": "approval_request", "tool": tool, "args": args }));
+                let mut rx = self.rx.lock().await;
+                match tokio::time::timeout(std::time::Duration::from_secs(120), rx.recv()).await {
+                    Ok(Some(decision)) => {
+                        if decision {
+                            Approval::Allow
+                        } else {
+                            Approval::Deny
+                        }
+                    }
+                    // Timeout or closed channel → deny (safe default).
+                    _ => Approval::Deny,
+                }
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_agent_streamed(
     mut w: OwnedWriteHalf,
@@ -1168,6 +1251,9 @@ async fn run_agent_streamed(
     warnings: Vec<Value>,
     routing: Value,
     trimmed: usize,
+    // Autonomy Dial: "auto" (run freely), "confirm" (pause for each consequential
+    // tool and await user approval), or "readonly" (deny all consequential tools).
+    autonomy: String,
 ) {
     if write_sse_head(&mut w).await.is_err() {
         return;
@@ -1189,6 +1275,14 @@ async fn run_agent_streamed(
     let cancel = state.register(&id).await;
     let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     let url = state.config.ollama_url.clone();
+    // Autonomy Dial: the agent's approval gate sends approval_request events on
+    // `tx` and awaits decisions from /api/agent/approve via this channel.
+    let appr_rx = state.register_approval(&id).await;
+    let approval: Arc<dyn crate::agent::ApprovalPolicy> = Arc::new(ChannelApprovalPolicy {
+        mode: autonomy,
+        tx: tx.clone(),
+        rx: tokio::sync::Mutex::new(appr_rx),
+    });
     let run = tokio::spawn(async move {
         let provider = Arc::new(OllamaProvider::new(&url));
         let mut registry = ToolRegistry::with_defaults();
@@ -1268,7 +1362,8 @@ async fn run_agent_streamed(
                 max_iterations,
                 system_suffix: suffix,
             },
-        );
+        )
+        .with_approval(approval);
         let result = agent
             .run(&question, |step| {
                 let preview: String = step
@@ -1333,6 +1428,7 @@ async fn run_agent_streamed(
         }
     }
     state.unregister(&id).await;
+    state.unregister_approval(&id).await;
     if cancelled {
         return;
     }
@@ -1420,6 +1516,7 @@ async fn handle_build(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &st
         }
     }
     state.unregister(&id).await;
+    state.unregister_approval(&id).await;
     if cancelled {
         return;
     }

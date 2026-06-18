@@ -663,3 +663,12 @@ body.dropping::after {
   word-break: break-word;
   font-size: 11px;
 }
+
+/* Autonomy Dial + approval prompt (step-level intervention). */
+#autonomy { margin-right: 6px; font-size: 11px; }
+.step.approval { flex-direction: column; align-items: stretch; gap: 6px;
+  border-left: 2px solid var(--vscode-focusBorder, #d29922); padding-left: 8px; }
+.approw { display: flex; gap: 8px; margin-left: 16px; }
+.approw button { padding: 4px 12px; border: none; border-radius: 5px; cursor: pointer; font-size: 12px; }
+.approw .primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.approw .ghost { background: transparent; color: var(--vscode-errorForeground); border: 1px solid var(--vscode-errorForeground); }
