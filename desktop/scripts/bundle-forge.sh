@@ -1,44 +1,66 @@
 #!/usr/bin/env bash
 #
-# desktop/scripts/bundle-forge.sh — SCAFFOLD.
+# desktop/scripts/bundle-forge.sh
 #
-# Stages two things into a Code-OSS fork so the desktop app ships ready to use:
-#   1. the `forge` Rust binary (which provides `forge serve`), and
-#   2. the Phase 2 chat extension (editor-integrations/forge-vscode) as a
-#      *built-in* extension, so the chat panel is present out of the box.
+# Stage two things into a Code-OSS fork so the desktop app ships ready to use:
+#   1. the `forge` Rust binary (which provides `forge serve`), placed INSIDE the
+#      extension at extensions/forge-vscode/bin/ so it travels with the built-in
+#      regardless of app layout, and
+#   2. the chat extension (editor-integrations/forge-vscode) dropped into the
+#      fork's extensions/ dir — Code-OSS auto-discovers source-tree built-ins via
+#      glob('extensions/*/package.json'), so NO product.json entry is needed (and
+#      listing it in builtInExtensions would wrongly trigger a marketplace download).
 #
-# The extension's `forge.serverPath` default ("forge") is overridden at bundle
-# time to point at the binary shipped inside the app's resources, so the user
-# never has to configure a path.
+# Zero-config: backend.js resolves <ext>/bin/forge when forge.serverPath is the
+# default, and set-bundled-defaults.js bakes contributes.configurationDefaults.
+#
+# Gated like bootstrap.sh — pass RUN_REAL=1 (bootstrap.sh does this for you).
 #
 set -euo pipefail
 
 FORK_DIR="${1:-./code-oss}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+EXT_SRC="${REPO_ROOT}/editor-integrations/forge-vscode"
+DEST="${FORK_DIR}/extensions/forge-vscode"
 
-echo "Staging forge backend + chat extension into ${FORK_DIR} (SCAFFOLD)"
-cat <<'NOTE'
-STATUS: scaffold. The steps below are the intended procedure; the script exits
-before mutating anything. Wire these up when executing Phase 3 for real.
-NOTE
-exit 0
+if [[ "${RUN_REAL:-0}" != "1" ]]; then
+  echo "STATUS: gated. Re-run with RUN_REAL=1 to stage forge + the extension into ${FORK_DIR}."
+  echo "  - builds the release binary, copies it to ${DEST}/bin/"
+  echo "  - copies the extension into extensions/forge-vscode (auto-discovered built-in)"
+  echo "  - injects contributes.configurationDefaults (bundled engine + gate)"
+  exit 0
+fi
+
+# Platform-correct binary name.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) BIN="forge.exe" ;;
+  *)                    BIN="forge" ;;
+esac
 
 # 1. Build the release binary.
 ( cd "${REPO_ROOT}" && cargo build --release )
 
-# 2. Copy it into the app resources. The exact path differs per platform; for a
-#    built app it lands under Contents/Resources/app/bin (darwin) or resources/
-#    app/bin (linux/win). For a dev build, stage under the fork's resources.
-mkdir -p "${FORK_DIR}/resources/app/bin"
-cp "${REPO_ROOT}/target/release/forge" "${FORK_DIR}/resources/app/bin/forge"
-
-# 3. Copy the extension in as a built-in.
-DEST="${FORK_DIR}/extensions/forge-vscode"
+# 2. Copy the extension into the fork (rsync, excluding dev noise), then drop the
+#    binary inside it so a built-in carries its own engine.
 mkdir -p "${DEST}"
-cp -r "${REPO_ROOT}/editor-integrations/forge-vscode/." "${DEST}/"
+if command -v rsync >/dev/null; then
+  rsync -a --delete \
+    --exclude '.git' --exclude '*.map' --exclude '.DS_Store' --exclude 'node_modules' \
+    "${EXT_SRC}/" "${DEST}/"
+else
+  cp -R "${EXT_SRC}/." "${DEST}/"
+fi
+mkdir -p "${DEST}/bin"
+cp "${REPO_ROOT}/target/release/${BIN}" "${DEST}/bin/${BIN}"
+chmod +x "${DEST}/bin/${BIN}"
 
-# 4. Point the bundled extension at the bundled binary so no user config is
-#    needed. (A real impl edits package.json's default or injects a setting.)
-#    node desktop/scripts/set-bundled-server-path.js "${DEST}/package.json"
+# 3. Bake in-box defaults via contributes.configurationDefaults (the SUPPORTED
+#    mechanism — product.json has no defaultSettingsOverrides key). forge.serverPath
+#    stays "" so backend.js prefers the bundled bin; set FORGE_ACCOUNT_SERVER to a
+#    deployed URL to enable the login gate by default.
+node "${REPO_ROOT}/desktop/scripts/set-bundled-defaults.js" \
+  "${DEST}/package.json" "${FORGE_ACCOUNT_SERVER:-}"
 
-echo "Staged. The fork now contains forge + the chat panel as a built-in."
+echo "Staged: forge engine + chat panel as a built-in under ${DEST}"
+echo "  binary : ${DEST}/bin/${BIN}"
+echo "  gate   : forge.accountServer default = '${FORGE_ACCOUNT_SERVER:-<unset; gate off>}'"

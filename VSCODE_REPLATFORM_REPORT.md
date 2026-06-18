@@ -270,3 +270,77 @@ changed extension JS passes `node --check`.
 7. **The current shippable app is still the Electron `desktop-app/`** (the one you
    just got a fresh build of). It is superseded by the fork direction but remains the
    working download until the fork is built; the two shouldn't both be shipped long-term.
+
+---
+
+## 9. Fork-readiness update (follow-on round)
+
+After the re-platform decision, I (a) verified the two fork-bundle artifacts build
+here, (b) ran a 4-agent research workflow that **verified the exact Code-OSS build
+pipeline against microsoft/vscode source**, and (c) turned the `desktop/` scaffold
+from stubs into a genuinely runnable pipeline. No GUI/fork build was faked — the
+multi-GB clone+build is still the real-machine step.
+
+### Verified here
+- **The forge extension packages into a valid `.vsix`** (`@vscode/vsce package` →
+  44 KB, manifest validated, all `src/` + `media/` + readme included). This is the
+  artifact the fork bundles as a built-in — confirmed well-formed.
+- **The engine builds in release** (`cargo build --release` → 7.2 MB optimized
+  `forge` binary), the binary `bundle-forge.sh` stages.
+
+### What the research corrected (all verified against vscode source, not guessed)
+- **yarn → npm.** VS Code migrated to npm in 1.94; the scaffold used `yarn`
+  everywhere → would fail on a ≥1.94 pin. Now `npm ci` + `npm run gulp`.
+- **Pinned tag.** `1.95.3` (real, verified via `git ls-remote`; Node 20.18.0 via
+  its `.nvmrc`; plain-JS gulpfiles). bootstrap now **verifies the tag exists**
+  before building.
+- **Full clone, not `--depth 1`** — a shallow clone blocks rebasing the fork onto
+  future tags (the real maintenance model).
+- **Real gulp targets** `vscode-<platform>-<arch>-min` run via `npm run gulp` (for
+  the 8 GB heap); output lands in the checkout's **parent** dir.
+- **Three invented `product.json` keys removed.** `defaultSettingsOverrides`,
+  `telemetryfrom`, and `extensionAllowedProposedApi` are **not** real
+  `IProductConfiguration` keys (VS Code silently ignores them) — critically, the
+  login-gate was wired through `defaultSettingsOverrides`, so it **would never have
+  engaged** in a shipped build. The correct in-box default mechanism is the
+  extension's **`contributes.configurationDefaults`** (now injected at bundle time).
+- **Open VSX needs `resourceUrlTemplate`** (added) — without it, extension *search*
+  works but *install* fails. Added `linkProtectionTrustedDomains` + `licenseName`.
+- **`builtInExtensions` footgun.** It's a *marketplace download manifest*
+  (name/version/sha256), not a source-tree list — listing the unpublished forge
+  extension there would **fail the build**. Source-tree built-ins are auto-discovered
+  by `glob('extensions/*/package.json')`, so the extension just lives in
+  `extensions/forge-vscode/`. Documented; left empty.
+
+### Real code/scaffold changes this round
+- **`backend.js` zero-config engine resolution** (was genuinely unimplemented): a
+  shipped app would default `serverPath` to bare `forge` on PATH and never find the
+  bundled engine. Now, when the user hasn't overridden it, it resolves
+  `<ext>/bin/forge[.exe]` (where `bundle-forge.sh` stages the binary *inside* the
+  extension so it travels with the built-in regardless of app layout), falling back
+  to PATH for dev installs.
+- **`bootstrap.sh`** — runnable end-to-end behind `RUN_REAL=1`: verify tag → full
+  clone on a `forge/` branch → Node from `.nvmrc` + `setuptools` → `npm ci` (with
+  Electron/Playwright download skips) → apply overlay → stage engine+extension →
+  `npm run gulp` per-OS.
+- **`bundle-forge.sh`** — runnable: rsync the extension into `extensions/`, drop the
+  platform-correct binary into `<ext>/bin/`, inject `configurationDefaults`.
+- **`apply-product-overlay.js`** + **`set-bundled-defaults.js`** — small, idempotent,
+  **tested on temp copies** (overlay merges 20 keys, skips `__comments`, no invented
+  keys leak; defaults set `serverPath:""` + optional `accountServer` for the gate).
+- **`.vscodeignore`** hardened (excludes `bin/` from the Open VSX `.vsix`).
+
+### Still needs a real build machine / decision
+- The actual **clone + `npm ci` + gulp build** (~8 GB RAM, ~15 GB disk, 20–40 min)
+  and launching the GUI — per-OS, so a CI matrix.
+- **Icon rasterization** (`forge.svg` → `.icns/.ico/.png`) — flagged with a TODO in
+  bootstrap; not yet scripted.
+- **Signing/notarization** — the scaffold's `sign-macos.sh` still has an invalid
+  identity string + `--deep` + missing entitlements (research flagged these);
+  deferred with signing overall.
+- **Gate is a UX gate, not a hard wall** — `configurationDefaults` is
+  user-overridable, so a determined user can clear `forge.accountServer` and bypass.
+  Truly non-bypassable gating needs server-side enforcement (the local engine can't
+  do that alone). Documented honestly.
+- **Naming decision:** the fork scaffold says **ForgeCode**; the Electron app says
+  **Ollama-Forge**. These need to converge before shipping — an owner call.

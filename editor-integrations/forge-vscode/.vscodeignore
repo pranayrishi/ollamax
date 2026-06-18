@@ -2,3 +2,7 @@
 .gitignore
 **/*.map
 **/.DS_Store
+.git/**
+# The bundled engine (bin/, staged by the fork's bundle-forge.sh for the built-in
+# path) is not shipped in the Open VSX .vsix — a marketplace install uses PATH.
+bin/**

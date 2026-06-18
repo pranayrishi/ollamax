@@ -14,6 +14,8 @@
 const vscode = require("vscode");
 const http = require("http");
 const cp = require("child_process");
+const fs = require("fs");
+const path = require("path");
 
 class ForgeBackend {
   /** @param {(msg: string) => void} log */
@@ -48,7 +50,32 @@ class ForgeBackend {
       return;
     }
 
-    await this._spawn(cfg.get("serverPath", "forge"));
+    await this._spawn(this._resolveBin(cfg.get("serverPath", "forge")));
+  }
+
+  /**
+   * Resolve the `forge` binary to launch. Zero-config in a SHIPPED build: when
+   * the user hasn't overridden `forge.serverPath`, prefer a binary bundled INSIDE
+   * this extension at `<ext>/bin/forge[.exe]` (staged there by the fork's
+   * bundle-forge.sh). This travels with a built-in extension regardless of the
+   * app layout, so a packaged app finds the engine with no PATH/config. Falls
+   * back to the configured value (or bare `forge` on PATH) for dev installs.
+   * @param {string} configured
+   */
+  _resolveBin(configured) {
+    // An explicit, non-default override always wins.
+    if (configured && configured !== "forge") return configured;
+    const binName = process.platform === "win32" ? "forge.exe" : "forge";
+    const bundled = path.join(__dirname, "..", "bin", binName);
+    try {
+      if (fs.existsSync(bundled)) {
+        this.log(`using bundled forge engine: ${bundled}`);
+        return bundled;
+      }
+    } catch {
+      /* fall through to PATH */
+    }
+    return configured || "forge";
   }
 
   /** @param {string} bin */

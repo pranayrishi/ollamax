@@ -1,5 +1,5 @@
 {
-  "__comment": "EXAMPLE rebranding overlay for a Code-OSS fork. STATUS: scaffold — this is a template, not yet applied to a real checkout. Copy the relevant keys into the fork's product.json (or generate it in the build). Working app name is 'ForgeCode' pending confirmation (see desktop/README.md §Naming).",
+  "__comment": "EXAMPLE rebranding overlay for a Code-OSS fork. STATUS: scaffold template — apply with desktop/scripts/bootstrap.sh step 5 (merge into the checkout's product.json, skipping __-prefixed keys). EVERY key below was verified against microsoft/vscode's IProductConfiguration (src/vs/base/common/product.ts) and VSCodium's product.json. Working app name is 'ForgeCode' pending confirmation (see desktop/README.md §Naming).",
 
   "nameShort": "ForgeCode",
   "nameLong": "ForgeCode",
@@ -14,28 +14,25 @@
   "serverApplicationName": "forgecode-server",
   "serverDataFolderName": ".forgecode-server",
   "reportIssueUrl": "https://github.com/pranayrishi/ollamax/issues/new",
+  "licenseName": "MIT",
   "licenseUrl": "https://github.com/pranayrishi/ollamax/blob/main/LICENSE",
 
-  "__telemetry_comment": "Telemetry must be OFF and unconfigured to honor the zero-telemetry promise. Leave these blank so no endpoint exists to send to.",
+  "__telemetry_comment": "enableTelemetry:false is the real, sufficient kill-switch (verified). aiConfig.ariaKey:\"\" is a real key. The previously-listed 'telemetryfrom' key does NOT exist in IProductConfiguration and was removed.",
   "enableTelemetry": false,
   "aiConfig": { "ariaKey": "" },
-  "telemetryfrom": "",
 
-  "__marketplace_comment": "Microsoft Marketplace ToS forbids non-MS products. Point the gallery at Open VSX instead. See desktop/README.md §Licensing.",
+  "__marketplace_comment": "Microsoft Marketplace ToS forbids non-MS products → point the gallery at Open VSX. serviceUrl + itemUrl drive SEARCH; resourceUrlTemplate is REQUIRED for INSTALL to work (verified against VSCodium). linkProtectionTrustedDomains avoids a warning prompt for open-vsx links.",
   "extensionsGallery": {
     "serviceUrl": "https://open-vsx.org/vscode/gallery",
-    "itemUrl": "https://open-vsx.org/vscode/item"
+    "itemUrl": "https://open-vsx.org/vscode/item",
+    "resourceUrlTemplate": "https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}"
   },
+  "linkProtectionTrustedDomains": ["https://open-vsx.org"],
 
-  "__builtin_comment": "Bundle the chat+Hub extension as a built-in so the panel ships in the box. The build copies editor-integrations/forge-vscode into the fork's extensions/ and lists it here. As of this round the Hub catalog + intent search + package activation are served by the BUNDLED forge engine (/api/hub/*), so the Hub works fully offline with no account-server config.",
+  "__builtin_comment": "DO NOT list forge-vscode here. builtInExtensions is a DOWNLOAD manifest (name/version/sha256/repo fetched from the marketplace by build/lib/extensions.ts) — listing an unpublished extension here FAILS the build. Source-tree built-ins are auto-discovered by glob('extensions/*/package.json'), so the forge extension just needs to live in the fork's extensions/ dir (bundle-forge.sh stages it there). Leave this empty.",
   "builtInExtensions": [],
 
-  "__accountserver_comment": "LOGIN-GATE (#6): the app requires website sign-in ONLY when forge.accountServer is set. Bake the production website URL into the fork's default settings (the forge-vscode extension reads forge.accountServer) so the gate is ON in shipped builds. The gate is offline-graceful (a stored session passes without a network call). If accountServer is blank, gating is disabled so local/dev runs aren't bricked.",
-  "defaultSettingsOverrides": {
-    "forge.accountServer": "<SET-TO-DEPLOYED-WEBSITE-URL>"
-  },
+  "__defaults_comment": "There is NO product.json key for default user settings (the previously-listed 'defaultSettingsOverrides' is NOT a real product key — VS Code silently ignores it, which would mean the login-gate never engages). The correct in-box mechanism is contributes.configurationDefaults IN THE EXTENSION's package.json — set by desktop/scripts/set-bundled-defaults.js at bundle time (forge.serverPath='' to use the bundled engine; forge.accountServer=<deployed URL> to enable the gate). Note: configurationDefaults are user-overridable, so the gate is a UX gate, not a hard wall — enforce server-side if it must be non-bypassable.",
 
-  "extensionAllowedProposedApi": [],
-
-  "__icons_comment": "Replace Microsoft's proprietary icons with our own anvil mark across resources/{darwin,win32,linux}. media/forge.svg is the source glyph."
+  "__icons_comment": "Replace Microsoft's proprietary icons with our own anvil mark across resources/{darwin,win32,linux}. media/forge.svg is the source glyph; bootstrap.sh step 5b rasterizes it to .icns/.ico/PNG (iconutil/sips + ImageMagick). 'extensionEnabledApiProposals' is the real key for proposed APIs — omitted because forge-vscode uses none."
 }

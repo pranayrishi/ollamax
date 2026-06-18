@@ -1,55 +1,92 @@
 #!/usr/bin/env bash
 #
-# desktop/scripts/bootstrap.sh — SCAFFOLD (not yet wired to run end-to-end).
+# desktop/scripts/bootstrap.sh
 #
-# Documents the concrete steps to stand up a Code-OSS fork that ships the
-# Ollama-Forge chat panel as a built-in. This script intentionally STOPS and
-# prints guidance rather than performing a multi-GB clone + build, because
-# Phase 3 (fork/rebrand/package) is scoped as "scaffold + document" this round.
+# Stand up a Code-OSS fork that ships the Ollama-Forge chat panel (forge-vscode)
+# as a built-in plus the bundled `forge` engine. Every command below was checked
+# against microsoft/vscode source + VSCodium (see VSCODE_REPLATFORM_REPORT).
 #
-# Run order once we execute Phase 3 for real:
-#   1. ./bootstrap.sh            # clone Code-OSS, pin a release tag
-#   2. apply product.json overlay (desktop/product.json.example)
-#   3. ./bundle-forge.sh         # stage the forge binary + extension as built-ins
-#   4. yarn && yarn gulp vscode-<platform>   # build the branded app
+# This performs a multi-GB clone + build, so it is GATED: it prints the plan and
+# stops unless you opt in with RUN_REAL=1. Run on a build machine with the
+# prerequisites below — NOT in CI without ~8 GB RAM / ~15 GB disk.
+#
+#   RUN_REAL=1 ./bootstrap.sh
 #
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 FORK_DIR="${FORK_DIR:-$(cd "$(dirname "$0")/.." && pwd)/code-oss}"
-# Pin a known-good Code-OSS release tag rather than tracking main.
-VSCODE_TAG="${VSCODE_TAG:-1.95.0}"
+# Pin a real, verified Code-OSS release tag (>= 1.94 so the toolchain is npm, and
+# >= 1.85 so it satisfies the extension's engines.vscode "^1.85.0").
+VSCODE_TAG="${VSCODE_TAG:-1.95.3}"
 
-echo "ForgeCode desktop bootstrap (SCAFFOLD)"
-echo "  fork dir : ${FORK_DIR}"
-echo "  vscode   : tag ${VSCODE_TAG}"
+echo "ForgeCode desktop bootstrap"
+echo "  repo root : ${REPO_ROOT}"
+echo "  fork dir  : ${FORK_DIR}"
+echo "  vscode    : tag ${VSCODE_TAG}"
 echo
 
-cat <<'NOTE'
-STATUS: scaffold. This script does not yet perform the clone/build. To execute
-Phase 3 for real, remove the `exit 0` below and ensure you have:
-  - git, Node.js (matching .nvmrc in the vscode checkout), yarn
-  - ~10 GB free disk, a working native toolchain (Xcode CLT / build-essential / MSVC)
+if [[ "${RUN_REAL:-0}" != "1" ]]; then
+  cat <<NOTE
+STATUS: gated. This does a real clone + build. Re-run with RUN_REAL=1 once you have:
+  - git, a C/C++ toolchain (Xcode CLT / build-essential / MSVC 2022 Build Tools)
+  - Node matching the checkout's .nvmrc (tag ${VSCODE_TAG} -> 20.18.0), via fnm/nvm
+  - python3 + setuptools (node-gyp), and ~8 GB RAM, ~15 GB free disk
+What it will do: verify the tag, full-clone Code-OSS on a forge/ branch, npm ci,
+apply the product.json rebrand, stage forge engine + extension as a built-in,
+then build the per-OS app via 'npm run gulp vscode-<platform>-<arch>-min'.
 NOTE
-exit 0
-
-# --- everything below is the documented-but-gated real procedure ---
-
-# 1. Clone Code-OSS at a pinned tag.
-if [[ ! -d "${FORK_DIR}" ]]; then
-  git clone --depth 1 --branch "${VSCODE_TAG}" https://github.com/microsoft/vscode.git "${FORK_DIR}"
+  exit 0
 fi
 
-# 2. Apply the rebrand overlay. (A real impl merges keys rather than copying;
-#    shown here as the intent.)
-#    node desktop/scripts/apply-product-overlay.js "${FORK_DIR}/product.json" desktop/product.json.example
+# 0. Verify the pinned tag actually exists (never build on a typo'd ref).
+echo "Verifying tag ${VSCODE_TAG} exists upstream…"
+git ls-remote --tags --exit-code https://github.com/microsoft/vscode.git \
+  "refs/tags/${VSCODE_TAG}" >/dev/null \
+  || { echo "ERROR: vscode tag ${VSCODE_TAG} not found"; exit 1; }
 
-# 3. Stage the forge binary + chat extension as built-ins.
-#    ./desktop/scripts/bundle-forge.sh "${FORK_DIR}"
+# 1. FULL clone (not --depth 1) so the fork can be rebased onto future tags, then
+#    check out the tag on a working branch.
+if [[ ! -d "${FORK_DIR}/.git" ]]; then
+  git clone https://github.com/microsoft/vscode.git "${FORK_DIR}"
+fi
+git -C "${FORK_DIR}" fetch --tags origin
+git -C "${FORK_DIR}" checkout "tags/${VSCODE_TAG}" -b "forge/${VSCODE_TAG}" 2>/dev/null \
+  || git -C "${FORK_DIR}" checkout "forge/${VSCODE_TAG}"
 
-# 4. Install deps and build the branded desktop app for this platform.
-( cd "${FORK_DIR}" && yarn )
-# macOS:   ( cd "${FORK_DIR}" && yarn gulp vscode-darwin-arm64 )
-# Linux:   ( cd "${FORK_DIR}" && yarn gulp vscode-linux-x64 )
-# Windows: ( cd "${FORK_DIR}" && yarn gulp vscode-win32-x64 )
+# 2. Select the Node version the checkout pins, and prep node-gyp's Python.
+if [[ -f "${FORK_DIR}/.nvmrc" ]]; then
+  NODE_WANT="$(cat "${FORK_DIR}/.nvmrc")"
+  echo "Checkout wants Node ${NODE_WANT} (.nvmrc). Current: $(node -v 2>/dev/null || echo none)"
+  command -v fnm >/dev/null && fnm use "${NODE_WANT}" 2>/dev/null || true
+fi
+python3 -m pip install --quiet setuptools 2>/dev/null || true
 
-echo "Done. The built app is a sibling of ${FORK_DIR} (e.g. VSCode-darwin-arm64)."
+# 3. Install deps with npm (VS Code migrated yarn -> npm in 1.94). Skip the heavy
+#    binary downloads not needed at install time; gulp fetches Electron later.
+export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+( cd "${FORK_DIR}" && npm ci )
+
+# 4. Apply the rebrand overlay (MERGE keys, skip __comments) into product.json.
+node "${REPO_ROOT}/desktop/scripts/apply-product-overlay.js" \
+  "${FORK_DIR}/product.json" "${REPO_ROOT}/desktop/product.json.example"
+
+# 5. Stage the forge engine + chat extension as a built-in (own script).
+RUN_REAL=1 bash "${REPO_ROOT}/desktop/scripts/bundle-forge.sh" "${FORK_DIR}"
+
+# 5b. (manual/CI) rasterize media/forge.svg -> resources/{darwin,win32,linux} icons.
+echo "TODO icons: rasterize editor-integrations/forge-vscode/media/forge.svg to"
+echo "  ${FORK_DIR}/resources/{darwin/code.icns, win32/code.ico, linux/code.png}"
+
+# 6. Build the per-OS app. Run gulp via npm so it inherits the 8 GB heap.
+case "$(uname -s)" in
+  Darwin) TARGET="vscode-darwin-$([[ "$(uname -m)" == arm64 ]] && echo arm64 || echo x64)-min" ;;
+  Linux)  TARGET="vscode-linux-x64-min" ;;
+  *)      TARGET="vscode-win32-x64-min" ;;
+esac
+echo "Building ${TARGET} …"
+( cd "${FORK_DIR}" && npm run gulp "${TARGET}" )
+
+echo "Done. The built app tree is a SIBLING of ${FORK_DIR} (e.g. ../VSCode-darwin-arm64)."
+echo "Wrap it into a .dmg/.exe/.deb per OS (see desktop/scripts/sign-*.sh and README)."
