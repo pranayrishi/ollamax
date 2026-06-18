@@ -5,6 +5,7 @@
   "description": "Local-first AI coding — a standalone desktop app. Chat, agent, and parallel build on your own hardware via local Ollama.",
   "author": "Ollama-Forge",
   "license": "MIT",
+  "homepage": "https://github.com/pranayrishi/ollamax-releases",
   "main": "main.js",
   "private": true,
   "scripts": {
@@ -61,11 +62,11 @@
     },
     "linux": {
       "artifactName": "Ollama-Forge-linux-${arch}.${ext}",
+      "maintainer": "Ollama-Forge <74742835+pranayrishi@users.noreply.github.com>",
       "target": [
         { "target": "AppImage", "arch": ["x64"] },
         { "target": "deb", "arch": ["x64"] }
       ],
-      "icon": "assets/icons",
       "category": "Development"
     },
     "nsis": {

@@ -371,6 +371,10 @@ async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<S
         ("GET", "/api/model_info") => {
             handle_model_info(w, state, query_param(&head.path, "name")).await
         }
+        ("GET", "/api/memory") => handle_memory_list(w).await,
+        ("POST", "/api/memory/clear") => handle_memory_clear(w).await,
+        ("GET", "/api/graph/status") => handle_graph_status(w).await,
+        ("POST", "/api/graph/build") => handle_graph_build(w, &body).await,
         ("POST", "/api/chat") => handle_chat(w, state, &body).await,
         ("POST", "/api/research") => handle_research(w, state, &body).await,
         ("POST", "/api/build") => handle_build(w, state, &body).await,
@@ -608,6 +612,84 @@ async fn handle_cancel(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) 
     }
 }
 
+// --- Part B: on-device conversational memory (view/clear). The store is local
+// per-project; nothing here ever reaches the identity backend. ----------------
+fn project_cwd() -> std::path::PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+async fn handle_memory_list(w: OwnedWriteHalf) {
+    let store = crate::memory::MemoryStore::for_project(&project_cwd());
+    let entries = store.all();
+    let items: Vec<Value> = entries
+        .iter()
+        .map(|e| json!({ "ts": e.ts, "kind": e.kind, "text": e.text, "tags": e.tags }))
+        .collect();
+    let _ = write_json(
+        w,
+        200,
+        &json!({ "memory": items, "path": store.path().to_string_lossy(), "onDevice": true }),
+    )
+    .await;
+}
+
+async fn handle_memory_clear(w: OwnedWriteHalf) {
+    let store = crate::memory::MemoryStore::for_project(&project_cwd());
+    let ok = store.clear().is_ok();
+    let _ = write_json(w, 200, &json!({ "ok": ok })).await;
+}
+
+// --- Part A: code knowledge graph status + build (graphify managed builder). ---
+async fn handle_graph_status(w: OwnedWriteHalf) {
+    let idx = crate::graph::GraphIndex::new(project_cwd());
+    let exists = idx.exists();
+    let node_count = if exists {
+        crate::graph::CodeGraph::from_file(&idx.graph_path())
+            .map(|g| g.node_count())
+            .ok()
+    } else {
+        None
+    };
+    let _ = write_json(
+        w,
+        200,
+        &json!({
+            "indexed": exists,
+            "stale": exists && idx.is_stale(),
+            "path": idx.graph_path().to_string_lossy(),
+            "nodeCount": node_count,
+        }),
+    )
+    .await;
+}
+
+async fn handle_graph_build(w: OwnedWriteHalf, body: &str) {
+    // Spawns the managed graphify builder (Python, hidden). `graphify` must be
+    // resolvable (bundled with the app / on PATH for dev). Fails gracefully.
+    let bin = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| v.get("graphify").and_then(|b| b.as_str()).map(String::from))
+        .unwrap_or_else(|| "graphify".to_string());
+    let update = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| v.get("update").and_then(|b| b.as_bool()))
+        .unwrap_or(true);
+    let idx = crate::graph::GraphIndex::new(project_cwd());
+    match idx.build(&bin, update) {
+        Ok(p) => {
+            let _ = write_json(w, 200, &json!({ "ok": true, "path": p.to_string_lossy() })).await;
+        }
+        Err(e) => {
+            let _ = write_json(
+                w,
+                200,
+                &json!({ "ok": false, "error": e.to_string(), "hint": "graphify not installed/bundled yet" }),
+            )
+            .await;
+        }
+    }
+}
+
 async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) {
     let req: ChatReq = match serde_json::from_str(body) {
         Ok(r) => r,
@@ -639,7 +721,16 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     };
 
     // Reload rules per request so `forge rules edit` takes effect live.
-    let rules_suffix = RuleSet::load_default().unwrap_or_default().render();
+    let mut rules_suffix = RuleSet::load_default().unwrap_or_default().render();
+    // Part B: prepend on-device memory relevant to this turn (token-budgeted) so
+    // plain chat isn't a cold start either. Local only — never sent anywhere.
+    {
+        let task_text = latest_user_text(&req.messages, req.prompt.as_deref());
+        let mem = crate::memory::MemoryStore::for_project(&project_cwd()).render_for_context(&task_text, 400);
+        if !mem.is_empty() {
+            rules_suffix = format!("{rules_suffix}\n\n{mem}");
+        }
+    }
     let system = if rules_suffix.is_empty() {
         None
     } else {
@@ -879,7 +970,19 @@ async fn run_agent_streamed(
     let url = state.config.ollama_url.clone();
     let run = tokio::spawn(async move {
         let provider = Arc::new(OllamaProvider::new(&url));
-        let registry = ToolRegistry::with_defaults();
+        let mut registry = ToolRegistry::with_defaults();
+        // Part A: if this project is indexed (graphify graph present), give the
+        // agent the graph tools so it queries the graph instead of reading whole
+        // files — the token win.
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        crate::graph::register_graph_tools(&mut registry, &cwd.join("graphify-out").join("graph.json"));
+        // Part B: prepend on-device memory relevant to this question (token-
+        // budgeted) so the session isn't a cold start. Stays on the device.
+        let mut suffix = rules_suffix;
+        let mem = crate::memory::MemoryStore::for_project(&cwd).render_for_context(&question, 400);
+        if !mem.is_empty() {
+            suffix = format!("{suffix}\n\n{mem}");
+        }
         let mut agent = Agent::new(
             provider,
             registry,
@@ -888,7 +991,7 @@ async fn run_agent_streamed(
                 num_ctx,
                 keep_alive: "1h".to_string(),
                 max_iterations,
-                system_suffix: rules_suffix,
+                system_suffix: suffix,
             },
         );
         agent
