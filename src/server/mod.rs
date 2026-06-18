@@ -1083,6 +1083,20 @@ async fn run_agent_streamed(
             &cwd,
             crate::tools::shell::ShellPolicy::default(),
         )));
+        // #1f Sub-agent delegation: the child gets a read-only research toolset
+        // (no shell/write/delegate) so it can't recurse or mutate.
+        let mut child_registry = ToolRegistry::with_defaults();
+        crate::graph::register_graph_tools(
+            &mut child_registry,
+            &cwd.join("graphify-out").join("graph.json"),
+        );
+        child_registry.register(Arc::new(crate::tools::files::FsReadTool::new(&cwd)));
+        registry.register(Arc::new(crate::tools::delegate::DelegateTool::new(
+            provider.clone(),
+            model.clone(),
+            num_ctx,
+            child_registry,
+        )));
         // Part B: prepend on-device memory relevant to this question (token-
         // budgeted) so the session isn't a cold start. Stays on the device.
         let mut suffix = rules_suffix;

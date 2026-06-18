@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 pub mod arxiv;
+pub mod delegate;
 pub mod fetch_url;
 pub mod files;
 pub mod shell;
