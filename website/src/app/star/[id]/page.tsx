@@ -1,0 +1,119 @@
+import type { Metadata } from "next";
+import { auth } from "@/auth";
+import { getStarIntent } from "@/lib/db";
+import { Nav } from "@/components/Nav";
+import { Footer } from "@/components/Footer";
+import { GitHubMark } from "@/components/GitHubMark";
+import { StarList } from "./StarList";
+
+export const metadata: Metadata = { title: "Support maintainers" };
+
+export default async function StarPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ done?: string; ok?: string; fail?: string; err?: string }>;
+}) {
+  const { id } = await params;
+  const sp = await searchParams;
+  const session = await auth();
+  const userId = session?.user?.accountId;
+
+  // Results view (after the round-trip). Only render the outcome for the OWNER
+  // of a genuinely-consumed intent — so a forged `?done=1&ok=99` URL can't show
+  // a fake "Starred N repos" confirmation to anyone but its own crafter.
+  if (sp.done) {
+    const doneIntent = userId ? await getStarIntent(id) : null;
+    const owned = !!doneIntent && doneIntent.user_id === userId && doneIntent.consumed;
+    if (!owned) {
+      return (
+        <Shell>
+          <h1 className="text-2xl font-bold text-zinc-50">Link expired</h1>
+          <p className="mt-2 text-zinc-400">This support link is no longer valid.</p>
+        </Shell>
+      );
+    }
+    const ok = Number(sp.ok || 0);
+    const fail = Number(sp.fail || 0);
+    return (
+      <Shell>
+        <h1 className="text-2xl font-bold text-zinc-50">Thanks for supporting maintainers ⭐</h1>
+        {sp.err === "scope" ? (
+          <p className="mt-3 text-amber-300">
+            The starring permission wasn&rsquo;t granted, so nothing was starred.
+          </p>
+        ) : (
+          <p className="mt-3 text-zinc-400">
+            Starred <strong className="text-zinc-100">{ok}</strong> repo(s)
+            {fail > 0 ? ` · ${fail} couldn't be starred` : ""}. You can unstar any of them anytime
+            from GitHub.
+          </p>
+        )}
+      </Shell>
+    );
+  }
+
+  if (!userId) {
+    const signin = `/api/auth/signin?callbackUrl=${encodeURIComponent(`/star/${id}`)}`;
+    return (
+      <Shell>
+        <h1 className="text-2xl font-bold text-zinc-50">Support these maintainers</h1>
+        <p className="mt-2 text-sm text-zinc-400">Sign in to review and star the repos.</p>
+        <a
+          href={signin}
+          className="mt-6 inline-flex items-center gap-2 rounded-xl bg-ember-500 px-5 py-3 font-semibold text-ink-950 hover:bg-ember-400"
+        >
+          <GitHubMark className="h-4 w-4" />
+          Sign in with GitHub
+        </a>
+      </Shell>
+    );
+  }
+
+  const intent = await getStarIntent(id);
+  if (!intent || intent.consumed || new Date(intent.expires_at).getTime() < Date.now()) {
+    return (
+      <Shell>
+        <h1 className="text-2xl font-bold text-zinc-50">Link expired</h1>
+        <p className="mt-2 text-zinc-400">This support link is no longer valid. Start again from the Hub.</p>
+      </Shell>
+    );
+  }
+  if (intent.user_id !== userId) {
+    return (
+      <Shell>
+        <h1 className="text-2xl font-bold text-zinc-50">Not your request</h1>
+        <p className="mt-2 text-zinc-400">This link was created for a different account.</p>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell>
+      <h1 className="text-2xl font-bold text-zinc-50">Support these maintainers</h1>
+      <p className="mt-2 text-sm text-zinc-400">
+        Star the open-source repos behind this package to credit and support their maintainers. This
+        is entirely optional and up to you — pick all or just some. Nothing is starred unless you
+        choose it here, and you can unstar anytime.
+      </p>
+      <p className="mt-2 text-xs text-zinc-500">
+        Starring needs a one-time GitHub permission (<code>public_repo</code>), requested only for
+        this action. We never star anything automatically.
+      </p>
+      <StarList id={id} repos={intent.repos} />
+    </Shell>
+  );
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Nav />
+      <main id="main" className="mx-auto max-w-2xl px-4 py-16">
+        {children}
+      </main>
+      <Footer />
+    </>
+  );
+}

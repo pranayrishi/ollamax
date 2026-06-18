@@ -51,15 +51,23 @@ pub struct ModelConfig {
 
 impl Default for ModelConfig {
     fn default() -> Self {
+        // Aligned with the canonical qwen2.5-coder ladder used everywhere else
+        // (monitoring::suggest_model, Config::default, OrchestratorConfig). These
+        // are only *fallback* names when no installed model matches a tier
+        // pattern — `route_to_model`/`select_model_for_task` prefer installed
+        // models — but keeping the ladder consistent avoids recommending a model
+        // family the rest of the app never mentions. (Flagged in the original
+        // codebase analysis as a stale inconsistency.)
         Self {
-            small_model: "llama3.2:3b".to_string(),
+            small_model: "qwen2.5-coder:1.5b".to_string(),
             medium_model: "qwen2.5-coder:7b".to_string(),
-            large_model: "deepseek-coder-v2:16b".to_string(),
+            large_model: "qwen2.5-coder:14b".to_string(),
             planner_model: "qwen2.5-coder:7b".to_string(),
             code_models: vec![
-                "llama3.2:3b".to_string(),
+                "qwen2.5-coder:1.5b".to_string(),
                 "qwen2.5-coder:7b".to_string(),
-                "deepseek-coder-v2:16b".to_string(),
+                "qwen2.5-coder:14b".to_string(),
+                "qwen2.5-coder:32b".to_string(),
                 "llama3.3:70b".to_string(),
             ],
         }

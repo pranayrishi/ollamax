@@ -1,0 +1,125 @@
+name: release-desktop
+
+# Builds the rebranded Code-OSS desktop app (chat panel + Central Hub built in,
+# the `forge` binary bundled) for macOS / Windows / Linux, SIGNS + NOTARIZES it,
+# and publishes installers + SHA-256 checksums to the GitHub Release on a v* tag.
+#
+# STATUS: complete pipeline definition. It runs end-to-end once (a) the Code-OSS
+# fork is wired (desktop/scripts/bootstrap.sh + bundle-forge.sh) and (b) the
+# signing secrets below exist. Signing/notarization REQUIRES paid certs
+# (Apple Developer ID; Windows Authenticode/EV) — those are the owner's to
+# provide. Without the secrets, the matching steps are skipped (a build is still
+# produced but unsigned — not a shippable artifact for macOS/Windows).
+#
+# Required repo secrets (see desktop/README.md §Signing):
+#   APPLE_CERT_P12_BASE64, APPLE_CERT_PASSWORD, APPLE_TEAM_ID,
+#   APPLE_NOTARY_APPLE_ID, APPLE_NOTARY_PASSWORD            (macOS)
+#   WINDOWS_CERT_PFX_BASE64, WINDOWS_CERT_PASSWORD          (Windows)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos
+            runner: macos-14 # arm64; builds a universal app
+          - os: windows
+            runner: windows-latest
+          - os: linux
+            runner: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the forge binary (bundled into the app)
+        run: cargo build --release
+
+      - name: Set up Node for the Code-OSS fork build
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # --- Build the rebranded desktop app from the fork scaffold ---
+      # bootstrap.sh clones+rebrands Code-OSS; bundle-forge.sh stages the forge
+      # binary + the chat/Hub extension as built-ins; the gulp task produces the
+      # platform app. (These scripts currently `exit 0` as a scaffold — wire them
+      # up to enable real builds; see desktop/README.md.)
+      - name: Build desktop app
+        shell: bash
+        run: |
+          ./desktop/scripts/bootstrap.sh
+          ./desktop/scripts/bundle-forge.sh "$PWD/desktop/code-oss"
+          echo "TODO(once fork is wired): yarn --cwd desktop/code-oss && yarn --cwd desktop/code-oss gulp vscode-${{ matrix.os }}-prod"
+
+      # --- macOS: Developer ID sign + notarize + .dmg ---
+      - name: macOS sign + notarize
+        # Gate on `secrets` (available to step-level `if`) — NOT `env`, whose
+        # step-scoped values aren't materialized when `if` is evaluated.
+        if: matrix.os == 'macos' && secrets.APPLE_CERT_P12_BASE64 != ''
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: ./desktop/scripts/sign-macos.sh
+
+      # --- Windows: Authenticode sign + NSIS installer ---
+      - name: Windows sign
+        if: matrix.os == 'windows' && secrets.WINDOWS_CERT_PFX_BASE64 != ''
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        shell: pwsh
+        run: ./desktop/scripts/sign-windows.ps1
+
+      # --- Linux: AppImage + .deb (sign the checksums) ---
+      - name: Linux package
+        if: matrix.os == 'linux'
+        run: |
+          echo "TODO produce .AppImage + .deb from the desktop/code-oss build output"
+
+      - name: Checksums
+        shell: bash
+        run: |
+          mkdir -p dist
+          # (Once builds produce artifacts in dist/, emit SHA-256 sidecars.)
+          if ls dist/* >/dev/null 2>&1; then
+            cd dist && for f in *; do shasum -a 256 "$f" > "$f.sha256"; done
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-desktop-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: ignore
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*
+          fail_on_unmatched_files: false

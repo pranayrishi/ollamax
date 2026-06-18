@@ -253,6 +253,24 @@ impl OllamaProvider {
             .filter(|d| !d.is_empty())
     }
 
+    /// Raw `/api/show` document for a model. Used by the UI to surface the
+    /// model's context window and capabilities (e.g. `tools`, `thinking`,
+    /// `vision`) in the picker — all local, no inference. Returns the parsed
+    /// JSON so the caller can pull whatever fields it needs.
+    pub async fn show(&self, model: &str) -> Result<serde_json::Value> {
+        let resp = self
+            .client
+            .post(format!("{}/api/show", self.base_url))
+            .json(&serde_json::json!({ "name": model }))
+            .send()
+            .await
+            .context("send /api/show to ollama")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("ollama /api/show returned {}", resp.status());
+        }
+        resp.json().await.context("parse /api/show response")
+    }
+
     /// Models currently resident in VRAM/RAM (Ollama `/api/ps`).
     /// Returns `(name, vram_bytes, expires_at)` for each loaded model.
     pub async fn running_models(&self) -> Result<Vec<RunningModel>> {

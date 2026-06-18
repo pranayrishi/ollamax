@@ -1,0 +1,36 @@
+{
+  "__comment": "EXAMPLE rebranding overlay for a Code-OSS fork. STATUS: scaffold — this is a template, not yet applied to a real checkout. Copy the relevant keys into the fork's product.json (or generate it in the build). Working app name is 'ForgeCode' pending confirmation (see desktop/README.md §Naming).",
+
+  "nameShort": "ForgeCode",
+  "nameLong": "ForgeCode",
+  "applicationName": "forgecode",
+  "dataFolderName": ".forgecode",
+  "win32MutexName": "forgecode",
+  "darwinBundleIdentifier": "com.ollamaforge.forgecode",
+  "win32DirName": "ForgeCode",
+  "win32NameVersion": "ForgeCode",
+  "win32AppUserModelId": "OllamaForge.ForgeCode",
+  "win32ShellNameShort": "ForgeCode",
+  "serverApplicationName": "forgecode-server",
+  "serverDataFolderName": ".forgecode-server",
+  "reportIssueUrl": "https://github.com/pranayrishi/ollamax/issues/new",
+  "licenseUrl": "https://github.com/pranayrishi/ollamax/blob/main/LICENSE",
+
+  "__telemetry_comment": "Telemetry must be OFF and unconfigured to honor the zero-telemetry promise. Leave these blank so no endpoint exists to send to.",
+  "enableTelemetry": false,
+  "aiConfig": { "ariaKey": "" },
+  "telemetryfrom": "",
+
+  "__marketplace_comment": "Microsoft Marketplace ToS forbids non-MS products. Point the gallery at Open VSX instead. See desktop/README.md §Licensing.",
+  "extensionsGallery": {
+    "serviceUrl": "https://open-vsx.org/vscode/gallery",
+    "itemUrl": "https://open-vsx.org/vscode/item"
+  },
+
+  "__builtin_comment": "Bundle the Phase 2 chat extension as a built-in so the panel ships in the box. The build copies editor-integrations/forge-vscode into the fork's .build/builtInExtensions (or extensions/) and lists it here.",
+  "builtInExtensions": [],
+
+  "extensionAllowedProposedApi": [],
+
+  "__icons_comment": "Replace Microsoft's proprietary icons with our own anvil mark across resources/{darwin,win32,linux}. media/forge.svg is the source glyph."
+}

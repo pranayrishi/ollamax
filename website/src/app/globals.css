@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* System font stacks — no webfont fetch, so the build never depends on a
+     font CDN and first paint is instant. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-ink-950 text-zinc-300 antialiased;
+}
+
+/* Visible keyboard focus everywhere. */
+:focus-visible {
+  @apply outline-none ring-2 ring-ember-500 ring-offset-2 ring-offset-ink-950;
+}
+
+/* Honor reduced-motion: kill animations/transitions and smooth-scroll. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Subtle radial glow used behind the hero. */
+.glow {
+  background: radial-gradient(60% 60% at 50% 0%, rgba(255, 140, 43, 0.12), transparent 70%);
+}

@@ -240,6 +240,28 @@ pub enum Commands {
         #[arg(short, long, help = "Show changes without applying")]
         dry_run: bool,
     },
+
+    #[command(
+        about = "Run the local backend server for the desktop app / VSCode extension. \
+                 Binds 127.0.0.1 only (never 0.0.0.0). Exposes chat/research/build over \
+                 a streaming (SSE) API. The CLI is unaffected; this is additive."
+    )]
+    Serve {
+        #[arg(
+            short,
+            long,
+            default_value = "7878",
+            help = "Port to bind on 127.0.0.1. Use 0 for an OS-assigned port (printed on startup)."
+        )]
+        port: u16,
+
+        #[arg(
+            long,
+            default_value = "127.0.0.1",
+            help = "Host to bind. Forced to loopback; 0.0.0.0 and external hosts are refused."
+        )]
+        host: String,
+    },
 }
 
 #[derive(ValueEnum, Debug, Clone)]

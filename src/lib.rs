@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod cli;
+pub mod codeblocks;
 pub mod context;
 pub mod executor;
 pub mod instincts;
@@ -10,6 +11,7 @@ pub mod replay;
 pub mod router;
 pub mod rules;
 pub mod security;
+pub mod server;
 pub mod skills;
 pub mod tools;
 

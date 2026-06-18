@@ -1,0 +1,59 @@
+name: security
+
+# Dependency + secret scanning for both the Rust crate and the website.
+# Runs on every push/PR to main and weekly (so new advisories surface even
+# without a code change).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+env:
+  # See ci.yml — opt JS-based actions onto Node 24.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  rust-audit:
+    name: cargo audit (RustSec advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: RustSec audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  web-audit:
+    name: npm audit (website deps)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install (locked)
+        run: npm ci
+      - name: Audit production dependencies
+        # Fail on high/critical in shipped deps. Tune --audit-level as needed.
+        run: npm audit --audit-level=high --omit=dev
+
+  secret-scan:
+    name: gitleaks (committed secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

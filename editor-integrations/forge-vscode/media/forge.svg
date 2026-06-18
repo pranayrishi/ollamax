@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+  <!-- Stylized anvil — the "forge" mark. Monochrome, uses currentColor so it
+       picks up the activity-bar icon theming. -->
+  <path d="M3 8h11.2a3.8 3.8 0 0 1-3.7 3H9.5l1.2 2.2a1 1 0 0 1-.88 1.48H8.2v1.6h4.6V19H6.4v-1.72h.16l1.1-2.04H7A4 4 0 0 1 3 11.2V8Z"/>
+  <path d="M15.4 6.1l1.5-1.5 3.6 3.6-1.5 1.5a1 1 0 0 1-1.42 0l-2.18-2.18a1 1 0 0 1 0-1.42Z"/>
+  <rect x="4.5" y="5.2" width="7" height="1.8" rx="0.6"/>
+</svg>
