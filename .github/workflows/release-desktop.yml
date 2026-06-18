@@ -16,9 +16,11 @@ name: release-desktop
 #   APPLE_NOTARY_APPLE_ID, APPLE_NOTARY_PASSWORD            (macOS)
 #   WINDOWS_CERT_PFX_BASE64, WINDOWS_CERT_PASSWORD          (Windows)
 
+# Manual-only: this is the FUTURE *signed* desktop-app pipeline (scaffold). The
+# active, unsigned release pipeline is release.yml (publishes bundles to the
+# public releases repo on a v* tag). Kept off the v* trigger so the two don't
+# both fire on one tag.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch: {}
 
 permissions:

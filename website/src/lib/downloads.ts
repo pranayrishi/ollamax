@@ -1,0 +1,37 @@
+// Public download bundles. The SOURCE repo is private; built (unsigned) binaries
+// are published to a PUBLIC releases repo so anonymous visitors can download
+// them. URLs use the stable `releases/latest/download/<asset>` form so they
+// don't change per version. Override the host with NEXT_PUBLIC_RELEASES_REPO
+// (a build-time value on Vercel — set it and REDEPLOY to take effect).
+//
+// Client-safe (no secrets, no "server-only") so the client download grid can
+// import it directly.
+
+const RELEASES_REPO = (
+  process.env.NEXT_PUBLIC_RELEASES_REPO || "https://github.com/pranayrishi/ollamax-releases"
+).replace(/\/$/, "");
+
+export type Bundle = {
+  os: "macos" | "windows" | "linux";
+  arch: "arm64" | "x64";
+  label: string;
+  note: string;
+  asset: string;
+};
+
+// Each download is a BUNDLE (forge CLI + VS Code panel .vsix + install script),
+// NOT a one-click app — labelled honestly in the UI.
+export const BUNDLES: Bundle[] = [
+  { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · CLI + VS Code panel", asset: "ollama-forge-macos-arm64.tar.gz" },
+  { os: "macos", arch: "x64", label: "macOS — Intel", note: "x86_64 · CLI + VS Code panel", asset: "ollama-forge-macos-x64.tar.gz" },
+  { os: "windows", arch: "x64", label: "Windows — x64", note: "CLI + VS Code panel", asset: "ollama-forge-windows-x64.zip" },
+  { os: "linux", arch: "x64", label: "Linux — x64", note: "CLI + VS Code panel", asset: "ollama-forge-linux-x64.tar.gz" },
+];
+
+export function assetUrl(asset: string): string {
+  return `${RELEASES_REPO}/releases/latest/download/${asset}`;
+}
+export function checksumUrl(asset: string): string {
+  return `${assetUrl(asset)}.sha256`;
+}
+export const allReleasesUrl = `${RELEASES_REPO}/releases/latest`;

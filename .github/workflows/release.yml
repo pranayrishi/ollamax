@@ -1,26 +1,65 @@
 name: release
 
-# Triggered by pushing a `v*` tag, e.g. `git tag v0.2.0 && git push --tags`.
-# Builds release binaries for the four platforms r/LocalLLaMA actually runs
-# on (NVIDIA Linux x86_64, Apple Silicon, Intel Mac, AMD Linux x86_64) and
-# attaches them to a GitHub release.
+# Triggered by pushing a `v*` tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`).
 #
-# Cross-compilation is intentionally NOT used — every binary is built on the
-# native runner so we never ship a binary that has never executed on the
-# target architecture. The Linux runner does double duty for both Intel and
-# AMD targets since the binary is the same.
+# Builds the `forge` binary natively on each OS (no cross-compilation, so we never
+# ship a binary that has never run on its target), assembles a per-OS BUNDLE
+# (forge + the VS Code .vsix panel + an install script + first-run README), and
+# publishes the bundles + SHA-256 checksums to a GitHub Release.
+#
+# UNSIGNED this round — the bundles carry first-run instructions for the OS
+# "unidentified developer" warnings (see desktop/bundle/README-FIRST.md).
+#
+# Cross-repo publish: source is private (pranayrishi/ollamax); binaries are
+# published to the PUBLIC pranayrishi/ollamax-releases so anonymous website
+# visitors can download them. That requires a PAT (see below).
+#
+# REQUIRED SECRET (owner): RELEASES_REPO_TOKEN — a fine-grained PAT with
+#   Contents: Read and write  on  pranayrishi/ollamax-releases.
+#   Add it under pranayrishi/ollamax → Settings → Secrets → Actions.
+#
+# PREREQUISITE (already done): the releases repo must have at least one commit on
+#   its default branch so the cross-repo Releases API has a commit to tag — it was
+#   seeded with a README. Don't delete that or the first publish will 422.
+#
+# NOTE: workflow_dispatch is BUILD-ONLY (the publish job is gated on a v* tag), so
+#   a green manual run does NOT prove the publish path. To dry-run the real
+#   cross-repo publish + token, push a throwaway tag (e.g. v0.0.1-test), check the
+#   release in ollamax-releases, then delete that tag/release.
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+  workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  RELEASES_REPO: pranayrishi/ollamax-releases
 
 jobs:
+  # Package the VS Code extension once (platform-independent) and share it.
+  vsix:
+    name: package vsix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Package extension (.vsix)
+        working-directory: editor-integrations/forge-vscode
+        # Pinned major so a future vsce release can't silently break packaging.
+        run: npx --yes @vscode/vsce@3 package --no-dependencies --allow-missing-repository -o "$GITHUB_WORKSPACE/forge-vscode.vsix"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: forge-vscode.vsix
+
   build:
-    name: build (${{ matrix.target }})
+    name: build (${{ matrix.label }})
+    needs: vsix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -28,13 +67,20 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
+            label: linux-x64
+            ext: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
-            archive: tar.gz
+            label: macos-arm64
+            ext: tar.gz
           - os: macos-13
             target: x86_64-apple-darwin
-            archive: tar.gz
+            label: macos-x64
+            ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+            ext: zip
     steps:
       - uses: actions/checkout@v4
 
@@ -55,56 +101,93 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Strip binary
+      - name: Strip binary (unix)
         if: runner.os != 'Windows'
         run: strip target/${{ matrix.target }}/release/forge || true
 
-      - name: Smoke-test the binary
+      - name: Smoke-test the binary (unix)
+        if: runner.os != 'Windows'
         run: target/${{ matrix.target }}/release/forge --version
 
-      - name: Package
-        id: package
+      - name: Smoke-test the binary (windows)
+        if: runner.os == 'Windows'
+        run: target\${{ matrix.target }}\release\forge.exe --version
+
+      - name: Download vsix
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix
+          path: .
+
+      - name: Assemble bundle + checksum
+        shell: bash
         run: |
           set -euo pipefail
-          name="forge-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          cp target/${{ matrix.target }}/release/forge "dist/$name/forge"
-          cp README.md LICENSE CHANGELOG.md "dist/$name/"
-          cp -r skills "dist/$name/"
-          cd dist
-          tar -czf "$name.tar.gz" "$name"
-          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
-          echo "archive=dist/$name.tar.gz" >> "$GITHUB_OUTPUT"
-          echo "shasum=dist/$name.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+          name="ollama-forge-${{ matrix.label }}"
+          mkdir -p "stage/$name" dist
+          cp forge-vscode.vsix "stage/$name/"
+          cp desktop/bundle/README-FIRST.md "stage/$name/"
+          cp LICENSE "stage/$name/" 2>/dev/null || true
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/forge.exe" "stage/$name/forge.exe"
+            cp desktop/bundle/install.ps1 "stage/$name/install.ps1"
+            ( cd stage && 7z a -tzip "../dist/$name.zip" "$name" >/dev/null )
+          else
+            cp "target/${{ matrix.target }}/release/forge" "stage/$name/forge"
+            cp desktop/bundle/install.sh "stage/$name/install.sh"
+            chmod +x "stage/$name/install.sh" "stage/$name/forge"
+            tar -czf "dist/$name.tar.gz" -C stage "$name"
+          fi
+          # Portable SHA-256 sidecar.
+          archive="dist/$name.${{ matrix.ext }}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            ( cd dist && sha256sum "$name.${{ matrix.ext }}" > "$name.${{ matrix.ext }}.sha256" )
+          else
+            ( cd dist && shasum -a 256 "$name.${{ matrix.ext }}" > "$name.${{ matrix.ext }}.sha256" )
+          fi
+          ls -la dist
 
-      - name: Upload artifacts
+      - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
         with:
-          name: forge-${{ matrix.target }}
+          name: bundle-${{ matrix.label }}
           path: |
-            dist/*.tar.gz
+            dist/ollama-forge-*
             dist/*.sha256
 
   release:
-    name: publish github release
+    name: publish release (public repo)
     needs: build
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
+      - name: Download all bundles
         uses: actions/download-artifact@v4
         with:
+          pattern: bundle-*
           path: dist
           merge-multiple: true
 
-      - name: Create release
+      - name: Also include the standalone .vsix
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix
+          path: dist
+
+      - name: Publish to the PUBLIC releases repo
         uses: softprops/action-gh-release@v2
         with:
-          # Use the existing CHANGELOG section for this tag if present;
-          # otherwise GitHub auto-generates from commits.
-          generate_release_notes: true
+          repository: ${{ env.RELEASES_REPO }}
+          token: ${{ secrets.RELEASES_REPO_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Ollama-Forge ${{ github.ref_name }}
+          body: |
+            Unsigned cross-platform bundles (forge CLI + VS Code panel + setup script).
+            Verify each download against its `.sha256`. First-run notes are inside each bundle.
+            Requires a local Ollama daemon (https://ollama.com/download).
           files: |
-            dist/*.tar.gz
+            dist/ollama-forge-*.tar.gz
+            dist/ollama-forge-*.zip
             dist/*.sha256
+            dist/forge-vscode.vsix
           fail_on_unmatched_files: true
