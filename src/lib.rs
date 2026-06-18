@@ -6,6 +6,7 @@ pub mod executor;
 pub mod graph;
 pub mod hub;
 pub mod instincts;
+pub mod mcp;
 pub mod memory;
 pub mod models;
 pub mod monitoring;

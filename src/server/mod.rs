@@ -1192,6 +1192,14 @@ async fn run_agent_streamed(
             num_ctx,
             child_registry,
         )));
+        // #1d MCP tools: connect any allowlisted MCP servers and register their
+        // remote tools (the open protocol Hermes is built on). Failures are
+        // logged + skipped — a broken MCP server never breaks the agent.
+        if let Some(mcp_cfg) =
+            dirs::config_dir().map(|d| d.join("ollama-forge").join("mcp_servers.json"))
+        {
+            crate::mcp::register_mcp_tools(&mut registry, &mcp_cfg).await;
+        }
         // Part B: prepend on-device memory relevant to this question (token-
         // budgeted) so the session isn't a cold start. Stays on the device.
         let mut suffix = rules_suffix;
