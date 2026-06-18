@@ -81,10 +81,15 @@ relays the decision to the waiting run. Webview: an **Autonomy Dial** select
 (default *Confirm each*, shown only in Agent mode) + an inline **Approve/Deny**
 prompt in the timeline. This is genuine step-level intervention.
 
+**Sub-agents lane — now real (follow-on wave).** The `delegate` tool streams the
+child's lifecycle (`subagent_start`/`subagent_step`/`subagent_end`) to the SSE
+channel; the webview renders a collapsible **Sub-agents lane** (one block per
+child, out of the main step stream) with each child step + a running/done state.
+Only the child's final answer still crosses back into the parent context.
+
 **Still deferred UI**: the **Plan card / Intent Preview** (the agent emitting a
-plan before executing) and a separate **sub-agent lane** (the `delegate` tool
-currently discards child steps rather than streaming them to a lane). Pause/Resume
-is partially covered by per-step Deny + the existing Stop.
+plan up front before executing — needs a planning pass before the loop). Pause/
+Resume is partially covered by per-step Deny + the existing Stop.
 
 ---
 
