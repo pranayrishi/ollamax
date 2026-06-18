@@ -88,5 +88,25 @@ esac
 echo "Building ${TARGET} …"
 ( cd "${FORK_DIR}" && npm run gulp "${TARGET}" )
 
+# CRITICAL: ensure the forge engine is INSIDE the BUILT app's bundled extension.
+# gulp's built-in packaging strips dirs ignored by .vscodeignore (and bin/ isn't a
+# standard extension dir), so the staged engine can vanish from the final app —
+# which leaves a VS Code app that can't start `forge serve`. Copy it into the
+# final tree directly. This is the load-bearing zero-config bit (audit finding).
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) BIN="forge.exe" ;;
+  *) BIN="forge" ;;
+esac
+OUT_PARENT="$(cd "${FORK_DIR}/.." && pwd)"
+APP_EXT="$(find "${OUT_PARENT}" -maxdepth 8 -type d -path '*/extensions/forge-vscode' 2>/dev/null | head -1)"
+if [[ -n "${APP_EXT}" && -f "${REPO_ROOT}/target/release/${BIN}" ]]; then
+  mkdir -p "${APP_EXT}/bin"
+  cp "${REPO_ROOT}/target/release/${BIN}" "${APP_EXT}/bin/${BIN}"
+  chmod +x "${APP_EXT}/bin/${BIN}" || true
+  echo "post-build: staged forge engine into ${APP_EXT}/bin/${BIN}"
+else
+  echo "WARN: could not stage engine post-build (APP_EXT='${APP_EXT}')"
+fi
+
 echo "Done. The built app tree is a SIBLING of ${FORK_DIR} (e.g. ../VSCode-darwin-arm64)."
 echo "Wrap it into a .dmg/.exe/.deb per OS (see desktop/scripts/sign-*.sh and README)."
