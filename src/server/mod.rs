@@ -1072,6 +1072,17 @@ async fn run_agent_streamed(
         // files — the token win.
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         crate::graph::register_graph_tools(&mut registry, &cwd.join("graphify-out").join("graph.json"));
+        // Hermes-class file + shell tools, sandboxed to the workspace. The shell
+        // carries its own deny-list + timeout + audit; interactive per-call
+        // consent is layered in the Agent UI (Autonomy Dial). Shell honors the
+        // FORGE_SHELL_DISABLED kill-switch.
+        registry.register(Arc::new(crate::tools::files::FsReadTool::new(&cwd)));
+        registry.register(Arc::new(crate::tools::files::FsWriteTool::new(&cwd)));
+        registry.register(Arc::new(crate::tools::files::FsEditTool::new(&cwd)));
+        registry.register(Arc::new(crate::tools::shell::ShellTool::new(
+            &cwd,
+            crate::tools::shell::ShellPolicy::default(),
+        )));
         // Part B: prepend on-device memory relevant to this question (token-
         // budgeted) so the session isn't a cold start. Stays on the device.
         let mut suffix = rules_suffix;

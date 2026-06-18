@@ -27,6 +27,8 @@ use tokio::sync::Mutex;
 
 pub mod arxiv;
 pub mod fetch_url;
+pub mod files;
+pub mod shell;
 pub mod web_search;
 pub mod wikipedia;
 
