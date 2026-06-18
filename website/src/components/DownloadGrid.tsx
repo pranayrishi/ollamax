@@ -72,20 +72,31 @@ export function DownloadGrid() {
                 {match && <span className="text-xs text-ember-400">recommended</span>}
               </div>
               <p className="mt-1 text-xs text-zinc-500">{b.note}</p>
-              <a
-                href={url}
-                className="mt-4 block rounded-lg bg-ember-500 px-4 py-2 text-center text-sm font-semibold text-ink-950 hover:bg-ember-400"
-              >
-                Download
-              </a>
-              <a
-                href={checksumUrl(b.asset)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 block text-center text-[11px] text-zinc-500 hover:text-ember-400"
-              >
-                SHA-256 checksum
-              </a>
+              {b.published ? (
+                <>
+                  <a
+                    href={url}
+                    className="mt-4 block rounded-lg bg-ember-500 px-4 py-2 text-center text-sm font-semibold text-ink-950 hover:bg-ember-400"
+                  >
+                    Download
+                  </a>
+                  <a
+                    href={checksumUrl(b.asset)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 block text-center text-[11px] text-zinc-500 hover:text-ember-400"
+                  >
+                    SHA-256 checksum
+                  </a>
+                </>
+              ) : (
+                <span
+                  className="mt-4 block cursor-not-allowed rounded-lg bg-ink-800 px-4 py-2 text-center text-sm text-zinc-500"
+                  title="This build isn't published yet"
+                >
+                  Coming soon
+                </span>
+              )}
             </div>
           );
         })}

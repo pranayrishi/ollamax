@@ -17,15 +17,19 @@ export type Bundle = {
   label: string;
   note: string;
   asset: string;
+  /// Whether this asset is actually published in the releases repo. `false`
+  /// shows an honest "coming soon" instead of a download link that would 404.
+  published: boolean;
 };
 
 // Each download is a BUNDLE (forge CLI + VS Code panel .vsix + install script),
-// NOT a one-click app — labelled honestly in the UI.
+// NOT a one-click app — labelled honestly in the UI. `published` reflects which
+// assets exist on the latest release (Intel macOS is pending its CI runner).
 export const BUNDLES: Bundle[] = [
-  { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · CLI + VS Code panel", asset: "ollama-forge-macos-arm64.tar.gz" },
-  { os: "macos", arch: "x64", label: "macOS — Intel", note: "x86_64 · CLI + VS Code panel", asset: "ollama-forge-macos-x64.tar.gz" },
-  { os: "windows", arch: "x64", label: "Windows — x64", note: "CLI + VS Code panel", asset: "ollama-forge-windows-x64.zip" },
-  { os: "linux", arch: "x64", label: "Linux — x64", note: "CLI + VS Code panel", asset: "ollama-forge-linux-x64.tar.gz" },
+  { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · CLI + VS Code panel", asset: "ollama-forge-macos-arm64.tar.gz", published: true },
+  { os: "macos", arch: "x64", label: "macOS — Intel", note: "x86_64 · CLI + VS Code panel", asset: "ollama-forge-macos-x64.tar.gz", published: false },
+  { os: "windows", arch: "x64", label: "Windows — x64", note: "CLI + VS Code panel", asset: "ollama-forge-windows-x64.zip", published: true },
+  { os: "linux", arch: "x64", label: "Linux — x64", note: "CLI + VS Code panel", asset: "ollama-forge-linux-x64.tar.gz", published: true },
 ];
 
 export function assetUrl(asset: string): string {
