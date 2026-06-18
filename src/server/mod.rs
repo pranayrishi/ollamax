@@ -815,6 +815,19 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
         warnings.push(vw);
     }
 
+    // #4 Streaming "thinking": enable reasoning output ONLY for thinking-capable
+    // models (we never fabricate a transcript for models that don't reason). The
+    // UI falls back to the rotating status labels otherwise. Cheap local
+    // /api/show capability check.
+    let think = {
+        let probe = OllamaProvider::new(&state.config.ollama_url);
+        if probe.supports_thinking(&model).await {
+            Some(true)
+        } else {
+            None
+        }
+    };
+
     let replay_mode = std::env::var_os("FORGE_REPLAY_LOG").is_some();
     let opts = GenerateOptions {
         model: model.clone(),
@@ -829,6 +842,7 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
         },
         seed: if replay_mode { Some(0) } else { None },
         images: if images.is_empty() { None } else { Some(images) },
+        think,
         ..Default::default()
     };
 
@@ -851,19 +865,30 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
 
     let cancel = state.register(&id).await;
     let url = state.config.ollama_url.clone();
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    // The channel now carries discriminated SSE events so reasoning ("thinking")
+    // streams distinctly from the answer ("token").
+    let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     let full = Arc::new(std::sync::Mutex::new(String::new()));
     let full_for_task = full.clone();
+    let tx_think = tx.clone();
     let gen_opts = opts.clone();
     let gen = tokio::spawn(async move {
         let provider = OllamaProvider::new(&url);
         provider
-            .generate_streaming(gen_opts, move |chunk| {
-                let _ = tx.send(chunk.to_string());
-                if let Ok(mut g) = full_for_task.lock() {
-                    g.push_str(chunk);
-                }
-            })
+            .generate_streaming_parts(
+                gen_opts,
+                move |chunk| {
+                    let _ = tx.send(json!({"type": "token", "text": chunk}));
+                    if let Ok(mut g) = full_for_task.lock() {
+                        g.push_str(chunk);
+                    }
+                },
+                move |thinking| {
+                    // Real reasoning tokens — rendered in a collapsible block; the
+                    // answer text is NOT polluted with them.
+                    let _ = tx_think.send(json!({"type": "thinking", "text": thinking}));
+                },
+            )
             .await
     });
 
@@ -878,8 +903,8 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
                 break;
             }
             msg = rx.recv() => match msg {
-                Some(chunk) => {
-                    if write_sse(&mut w, &json!({"type": "token", "text": chunk})).await.is_err() {
+                Some(ev) => {
+                    if write_sse(&mut w, &ev).await.is_err() {
                         gen.abort();
                         cancelled = true;
                         break;

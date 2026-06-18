@@ -186,6 +186,7 @@
     scrollDown();
 
     let raw = "";
+    let thinkingRaw = "";
     let statusTimer = null;
 
     function renderContent() {
@@ -229,6 +230,17 @@
         this.stopStatus();
         raw += t;
         renderContent();
+      },
+      // #4: REAL reasoning tokens from a thinking-capable model (Ollama's
+      // separate `thinking` stream), shown in the collapsible block — distinct
+      // from the answer. We only ever render reasoning the model actually emits.
+      appendThinking(t) {
+        this.stopStatus(); // real reasoning is progress — drop the spinner
+        thinkingRaw += t;
+        thinking.hidden = false;
+        if (!thinking.open) thinking.open = true;
+        tpre.textContent = thinkingRaw;
+        scrollDown();
       },
       setAnswerText(t) {
         this.stopStatus();
@@ -416,6 +428,9 @@
         break;
       case "token":
         active.appendToken(ev.text);
+        break;
+      case "thinking":
+        active.appendThinking(ev.text || "");
         break;
       case "step":
         active.addStep(ev);

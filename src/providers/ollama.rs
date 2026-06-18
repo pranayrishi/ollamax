@@ -40,6 +40,9 @@ struct GenerateRequest {
     /// Base64 images for multimodal models (vision).
     #[serde(skip_serializing_if = "Option::is_none")]
     images: Option<Vec<String>>,
+    /// Reasoning toggle for thinking-capable models (Ollama `think`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    think: Option<bool>,
     /// Ollama `format` parameter (v0.5+). Either the literal string `"json"`
     /// for free-form valid JSON, or a full JSON Schema document for
     /// schema-constrained decoding. We pass it through as raw JSON so
@@ -95,6 +98,10 @@ struct ChatOptionsDto {
 #[allow(dead_code)] // `context`/`total_duration` arrive from Ollama; surfaced in Debug only
 struct GenerateResponse {
     response: String,
+    /// Reasoning tokens from thinking-capable models (Ollama `thinking`),
+    /// streamed separately from `response`. Absent for non-reasoning models.
+    #[serde(default)]
+    thinking: Option<String>,
     model: String,
     done: bool,
     context: Option<Vec<i32>>,
@@ -199,13 +206,27 @@ impl OllamaProvider {
     /// `bytes_stream()` to avoid pulling in the `futures` crate just for
     /// `StreamExt`. NDJSON line-buffering is done by hand because chunks
     /// can split a line in half.
-    pub async fn generate_streaming<F>(
+    pub async fn generate_streaming<F>(&self, opts: GenerateOptions, mut on_token: F) -> Result<usize>
+    where
+        F: FnMut(&str),
+    {
+        // Delegate, dropping the reasoning stream (CLI callers want answer text).
+        self.generate_streaming_parts(opts, |t| on_token(t), |_| {}).await
+    }
+
+    /// Streaming generate that surfaces the answer text (`on_token`) and the
+    /// model's REASONING tokens (`on_thinking`) separately. Reasoning only
+    /// arrives for thinking-capable models with `think: true` — we never invent
+    /// it. Returns total answer bytes.
+    pub async fn generate_streaming_parts<F, G>(
         &self,
         opts: GenerateOptions,
         mut on_token: F,
+        mut on_thinking: G,
     ) -> Result<usize>
     where
         F: FnMut(&str),
+        G: FnMut(&str),
     {
         let mut request = Self::build_generate_request(&opts);
         request.stream = true;
@@ -264,6 +285,11 @@ impl OllamaProvider {
                         continue;
                     }
                 };
+                if let Some(t) = parsed.thinking.as_deref() {
+                    if !t.is_empty() {
+                        on_thinking(t);
+                    }
+                }
                 if !parsed.response.is_empty() {
                     total += parsed.response.len();
                     on_token(&parsed.response);
@@ -383,7 +409,22 @@ impl OllamaProvider {
             context: None,
             keep_alive: opts.keep_alive.clone(),
             images: opts.images.clone().filter(|v| !v.is_empty()),
+            think: opts.think,
             format: opts.format.clone(),
+        }
+    }
+
+    /// True if the model advertises the `thinking` capability (Ollama
+    /// `/api/show`). Used to enable reasoning output only where it's real — we
+    /// never fabricate a thinking transcript for non-reasoning models.
+    pub async fn supports_thinking(&self, model: &str) -> bool {
+        match self.show(model).await {
+            Ok(doc) => doc
+                .get("capabilities")
+                .and_then(|c| c.as_array())
+                .map(|arr| arr.iter().any(|v| v.as_str() == Some("thinking")))
+                .unwrap_or(false),
+            Err(_) => false,
         }
     }
 
@@ -588,6 +629,7 @@ impl LlmProvider for OllamaProvider {
             context: None,
             keep_alive: Some(keep_alive.to_string()),
             images: None,
+            think: None,
             format: None,
         };
         // Per-call timeout: a 70B cold-load can legitimately take 60-90s,
@@ -683,6 +725,28 @@ mod tests {
             serde_json::to_string(&OllamaProvider::build_generate_request(&GenerateOptions::default()))
                 .unwrap();
         assert!(!json.contains("images"), "images must be omitted when absent");
+    }
+
+    #[test]
+    fn generate_request_carries_think_only_when_set() {
+        let on = GenerateOptions { think: Some(true), ..Default::default() };
+        assert!(serde_json::to_string(&OllamaProvider::build_generate_request(&on))
+            .unwrap()
+            .contains("\"think\":true"));
+        let off = serde_json::to_string(&OllamaProvider::build_generate_request(&GenerateOptions::default())).unwrap();
+        assert!(!off.contains("think"), "think must be omitted for non-reasoning models");
+    }
+
+    #[test]
+    fn response_parses_separate_thinking_stream() {
+        let line = r#"{"response":"hi","thinking":"let me reason","model":"m","done":false}"#;
+        let r: super::GenerateResponse = serde_json::from_str(line).unwrap();
+        assert_eq!(r.thinking.as_deref(), Some("let me reason"));
+        assert_eq!(r.response, "hi");
+        // Absent thinking field still parses (non-reasoning models).
+        let plain: super::GenerateResponse =
+            serde_json::from_str(r#"{"response":"x","model":"m","done":true}"#).unwrap();
+        assert!(plain.thinking.is_none());
     }
 
     #[test]

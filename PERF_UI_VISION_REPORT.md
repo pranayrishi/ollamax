@@ -124,11 +124,17 @@ These are substantial; here's the honest status + plan, not half-built code:
   (electron-builder rebuilds node-pty), then a GUI pass. The xterm browser-global
   wiring may need a small bundling tweak depending on the installed build — the
   fallbacks cover absence cleanly.
-- **#4 Streaming thinking + live code:** stream real reasoning tokens **only where
-  the model exposes them** (reasoning-capable models / Ollama `thinking`), else
-  fall back to the tasteful rotating status labels (already specced) — never a
-  fabricated transcript. Code already streams token-by-token (the perf fix);
-  next is per-file diff rendering as writes happen.
+- **#4 Streaming "thinking" — BUILT** ✅. The engine now sends Ollama's `think`
+  param **only for thinking-capable models** (detected via `supports_thinking` /
+  `/api/show` capabilities) and streams the model's **separate `thinking` field**
+  as a distinct `thinking` SSE event (`generate_streaming_parts` surfaces answer
+  vs. reasoning separately; the 5 CLI callers are unchanged via a delegating
+  shim). The panel renders real reasoning in the existing **collapsible
+  "Thinking" block**, distinct from the answer. For non-reasoning models, `think`
+  is omitted and the UI keeps the **rotating status labels** — so we **never
+  fabricate a thinking transcript**. (+2 tests.) Code already streams token-by-
+  token from the perf fix; per-file diff rendering as writes happen is the small
+  next step.
 
 ---
 

@@ -42,6 +42,10 @@ pub struct GenerateOptions {
     /// Base64-encoded images for VISION input (Ollama `/api/generate` `images`).
     /// Only honored by multimodal models — see `OllamaProvider::supports_vision`.
     pub images: Option<Vec<String>>,
+    /// Ask the model to emit its reasoning ("thinking") separately (Ollama
+    /// `think`). Only set for reasoning-capable models — see
+    /// `OllamaProvider::supports_thinking`; otherwise leave `None`.
+    pub think: Option<bool>,
     /// Ollama `format` parameter (v0.5+).
     /// - `Some(json!("json"))` → free-form valid JSON
     /// - `Some(json!({...}))`  → strict JSON Schema (constrained decoding)
@@ -73,6 +77,7 @@ impl Default for GenerateOptions {
             format: None,
             seed: None,
             images: None,
+            think: None,
         }
     }
 }
