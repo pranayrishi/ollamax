@@ -30,6 +30,12 @@ jobs:
   build:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.runner }}
+    # Capture "is this signing secret set?" at the JOB level — job env CAN read
+    # `secrets` and IS available to a step's `if` (the `secrets` context itself is
+    # NOT allowed in `if`, which is what previously made this a startup failure).
+    env:
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERT_P12_BASE64 != '' }}
+      HAS_WIN_CERT: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -68,9 +74,7 @@ jobs:
 
       # --- macOS: Developer ID sign + notarize + .dmg ---
       - name: macOS sign + notarize
-        # Gate on `secrets` (available to step-level `if`) — NOT `env`, whose
-        # step-scoped values aren't materialized when `if` is evaluated.
-        if: matrix.os == 'macos' && secrets.APPLE_CERT_P12_BASE64 != ''
+        if: matrix.os == 'macos' && env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
@@ -81,7 +85,7 @@ jobs:
 
       # --- Windows: Authenticode sign + NSIS installer ---
       - name: Windows sign
-        if: matrix.os == 'windows' && secrets.WINDOWS_CERT_PFX_BASE64 != ''
+        if: matrix.os == 'windows' && env.HAS_WIN_CERT == 'true'
         env:
           WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
