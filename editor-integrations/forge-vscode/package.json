@@ -93,6 +93,10 @@
       {
         "command": "forge.signOut",
         "title": "Ollama-Forge: Sign out"
+      },
+      {
+        "command": "forge.voiceNavigate",
+        "title": "Ollama-Forge: Voice — navigate to code by speaking"
       }
     ],
     "menus": {
@@ -127,6 +131,11 @@
         "key": "ctrl+shift+k",
         "mac": "cmd+shift+k",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "forge.voiceNavigate",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v"
       }
     ],
     "configuration": {
@@ -166,6 +175,16 @@
           "type": "boolean",
           "default": false,
           "description": "Let the model use the free web tools (search / Wikipedia / arXiv / fetch URL) during normal chat — it decides when to look things up. PRIVACY: inference stays local, but your search queries and the text of fetched pages leave your machine (to those services). Off = pure-local chat."
+        },
+        "forge.whisperPath": {
+          "type": "string",
+          "default": "whisper-cli",
+          "description": "Path to a local whisper.cpp CLI binary, used by Voice navigation for ON-DEVICE speech-to-text. Audio never leaves your machine. Install whisper.cpp and set this if it isn't on your PATH."
+        },
+        "forge.whisperModel": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a whisper.cpp ggml model (e.g. ggml-base.en.bin) for Voice navigation. Required to enable voice. Download once from the whisper.cpp model repo; transcription runs locally."
         }
       }
     }

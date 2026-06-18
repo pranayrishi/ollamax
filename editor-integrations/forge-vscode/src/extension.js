@@ -14,6 +14,7 @@ const { ChatViewProvider } = require("./chatViewProvider");
 const { ForgeAuth } = require("./auth");
 const { HubViewProvider } = require("./hub");
 const { ForgeTelemetry } = require("./telemetry");
+const { VoiceNavigator } = require("./voice");
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
@@ -26,6 +27,7 @@ function activate(context) {
   const telemetry = new ForgeTelemetry(auth, log);
   const provider = new ChatViewProvider(context, backend, log, auth, telemetry);
   const hub = new HubViewProvider(context, auth, log, telemetry, backend);
+  const voice = new VoiceNavigator(context, backend, log);
 
   // One-time, honest telemetry disclosure (opt-out model). Shown once; the user
   // can turn it off immediately or in Settings.
@@ -70,6 +72,9 @@ function activate(context) {
     vscode.commands.registerCommand("forge.signIn", () => provider.signIn(false)),
     vscode.commands.registerCommand("forge.signInDevice", () => provider.signIn(true)),
     vscode.commands.registerCommand("forge.signOut", () => provider.signOut()),
+    // Phase 2: voice-activated demo navigation.
+    vscode.commands.registerCommand("forge.voiceNavigate", () => voice.open()),
+    { dispose: () => voice.dispose() },
     // Make sure the backend process is killed and pending telemetry flushed.
     { dispose: () => backend.stop() },
     { dispose: () => telemetry.dispose() }
