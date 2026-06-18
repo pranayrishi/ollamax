@@ -75,9 +75,9 @@ node "${REPO_ROOT}/desktop/scripts/apply-product-overlay.js" \
 # 5. Stage the forge engine + chat extension as a built-in (own script).
 RUN_REAL=1 bash "${REPO_ROOT}/desktop/scripts/bundle-forge.sh" "${FORK_DIR}"
 
-# 5b. (manual/CI) rasterize media/forge.svg -> resources/{darwin,win32,linux} icons.
-echo "TODO icons: rasterize editor-integrations/forge-vscode/media/forge.svg to"
-echo "  ${FORK_DIR}/resources/{darwin/code.icns, win32/code.ico, linux/code.png}"
+# 5b. Rasterize media/forge.svg -> resources/{darwin,win32,linux} icons.
+RUN_REAL=1 bash "${REPO_ROOT}/desktop/scripts/make-icons.sh" "${FORK_DIR}" || \
+  echo "WARN: icon generation skipped/failed (needs ImageMagick + iconutil); continuing"
 
 # 6. Build the per-OS app. Run gulp via npm so it inherits the 8 GB heap.
 case "$(uname -s)" in
