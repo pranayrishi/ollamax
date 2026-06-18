@@ -252,10 +252,15 @@ changed extension JS passes `node --check`.
 
 ## 8. Open questions & risks
 
-1. **The fork itself is not built here.** Cloning + building Code-OSS needs a real
-   build machine (~10–15 GB, native toolchain, 20–40 min) and GUI verification. The
-   scaffold + the carried-over extension make it actionable, but the actual fork
-   build/launch is the next real-machine step. **This is the honest big lift.**
+1. **The fork now BUILDS in CI (2026-06-18).** `release-fork.yml` ran
+   `desktop/bootstrap.sh` on a `macos-latest` runner and produced a real, rebranded
+   **`ForgeCode.app`** (clone vscode 1.95.3 → npm ci → 20-key rebrand → forge engine
+   + `forge-vscode` built-in → `gulp vscode-darwin-arm64-min`, ~50 min, no OOM) →
+   `ForgeCode-macos-arm64.dmg` (149 MB) published to `ollamax-releases`. The "needs a
+   real build machine" lift turned out to fit a standard runner (44 GB disk free).
+   Still open: **GUI verification** (does it launch + look right — owner to confirm),
+   **Windows/Linux** fork builds, **signing**, and the **ForgeCode vs Ollama-Forge**
+   naming convergence (both apps are currently published side by side).
 2. **`forge.accountServer` must point at a deployed website** for the gate (and
    starring) to function. It currently defaults to `""` (gate disabled). The owner
    sets the production URL in the fork's defaults. I did **not** hardcode a guessed
