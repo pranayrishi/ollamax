@@ -106,7 +106,13 @@
         const id = newId();
         const context = msg.context || [];
         if (msg.mode === "agent") {
-          streamPost("/api/research", { id, question: msg.text, model: msg.model, context }, id);
+          // Autonomy Dial: carry the mode so the engine gates consequential tools
+          // + the Plan card (confirm = pause for Run/Approve).
+          streamPost(
+            "/api/research",
+            { id, question: msg.text, model: msg.model, context, autonomy: msg.autonomy || "confirm" },
+            id
+          );
         } else if (msg.mode === "build") {
           streamPost("/api/build", { id, task: msg.text, output_dir: null }, id);
         } else {
@@ -130,6 +136,20 @@
             });
           } catch (_) {}
           post({ type: "stream", ev: { type: "cancelled" } });
+        }
+        break;
+      }
+      case "approve": {
+        // Autonomy Dial / Plan card decision → relay to the waiting agent run.
+        const id = current && current.id;
+        if (id) {
+          try {
+            await fetch(baseUrl + "/api/agent/approve", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id, decision: !!msg.decision }),
+            });
+          } catch (_) {}
         }
         break;
       }

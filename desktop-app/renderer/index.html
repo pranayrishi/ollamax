@@ -28,9 +28,9 @@
       <section id="chat-view">
         <header id="topbar">
           <div class="modes" role="tablist">
-            <button class="mode active" data-mode="chat" title="Single-turn / multi-turn chat">Chat</button>
-            <button class="mode" data-mode="agent" title="Tool-using research agent">Agent</button>
-            <button class="mode" data-mode="build" title="Parallel multi-model build">Build</button>
+            <button class="mode active" data-mode="chat" title="Quick local Q&A — single model, no tools, nothing leaves your machine">Chat</button>
+            <button class="mode" data-mode="agent" title="Autonomous agent — uses tools, memory and skills, can delegate sub-agents and run scheduled tasks (all local)">Agent</button>
+            <button class="mode" data-mode="build" title="Parallel multi-model code build/orchestration">Build</button>
           </div>
         </header>
 
@@ -46,6 +46,11 @@
         <footer id="composer">
           <!-- #6: model/router picker directly above the input. Auto = default. -->
           <div class="modelrow">
+            <select id="autonomy" hidden title="Autonomy Dial — how much the agent does before asking you">
+              <option value="confirm">Confirm each action</option>
+              <option value="auto">Act autonomously</option>
+              <option value="readonly">Read-only (no writes)</option>
+            </select>
             <select id="model" title="Model / router (Auto = pick the best installed model for this task)"></select>
             <button id="refresh" class="iconbtn" title="Refresh installed Ollama models (after ollama pull)">⟳</button>
           </div>
