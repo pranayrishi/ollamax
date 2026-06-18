@@ -417,6 +417,9 @@ async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<S
         ("GET", "/api/model_info") => {
             handle_model_info(w, state, query_param(&head.path, "name")).await
         }
+        ("GET", "/api/voice/locate") => {
+            handle_voice_locate(w, query_param(&head.path, "q")).await
+        }
         ("GET", "/api/schedule") => handle_schedule_list(w).await,
         ("POST", "/api/schedule") => handle_schedule_add(w, &body).await,
         ("POST", "/api/schedule/remove") => handle_schedule_remove(w, &body).await,
@@ -669,6 +672,33 @@ async fn handle_cancel(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) 
         }
         Err(e) => {
             let _ = write_json(w, 400, &json!({"error": e.to_string()})).await;
+        }
+    }
+}
+
+// --- Phase 2 Voice navigation: resolve a transcribed phrase to a code location
+// via the local code graph (intent -> file:line). No audio touches the engine —
+// STT happens in the extension; only the transcript text arrives here. ---------
+async fn handle_voice_locate(w: OwnedWriteHalf, q: Option<String>) {
+    let q = q.unwrap_or_default();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let graph_path = cwd.join("graphify-out").join("graph.json");
+    match crate::graph::CodeGraph::from_file(&graph_path) {
+        Ok(g) => match g.locate(&q) {
+            Some(loc) => {
+                let _ = write_json(w, 200, &json!({ "found": true, "query": q, "target": loc })).await;
+            }
+            None => {
+                let _ = write_json(w, 200, &json!({ "found": false, "query": q })).await;
+            }
+        },
+        Err(_) => {
+            let _ = write_json(
+                w,
+                200,
+                &json!({ "found": false, "query": q, "error": "no code graph indexed for this workspace" }),
+            )
+            .await;
         }
     }
 }

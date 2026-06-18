@@ -48,6 +48,15 @@ pub struct GraphEdge {
     pub confidence: Option<String>,
 }
 
+/// A resolved editor jump target (voice navigation / intent → code).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CodeLocation {
+    pub file: String,
+    pub line: u32,
+    pub symbol: String,
+    pub score: f32,
+}
+
 /// An in-memory view of a graphify `graph.json` with the few query operations
 /// the agent needs. Cheap, read-only, no Python.
 pub struct CodeGraph {
@@ -196,6 +205,37 @@ impl CodeGraph {
             }
         }
         out
+    }
+
+    /// Voice-nav: resolve a natural-language query to ONE code location
+    /// (file + line + symbol) — the editor jump target. Returns None if nothing
+    /// matches or the best node carries no source file. Reuses the same scoring
+    /// as `query`, so spoken intent ("the login handler") lands the right node.
+    pub fn locate(&self, query: &str) -> Option<CodeLocation> {
+        for (score, id) in self.score(query) {
+            if let Some(n) = self.get(&id) {
+                if let Some(file) = &n.source_file {
+                    let line = n
+                        .source_location
+                        .as_deref()
+                        .map(|l| {
+                            l.chars()
+                                .skip_while(|c| !c.is_ascii_digit())
+                                .take_while(|c| c.is_ascii_digit())
+                                .collect::<String>()
+                        })
+                        .and_then(|d| d.parse::<u32>().ok())
+                        .unwrap_or(1);
+                    return Some(CodeLocation {
+                        file: file.clone(),
+                        line: line.max(1),
+                        symbol: Self::node_text(n),
+                        score,
+                    });
+                }
+            }
+        }
+        None
     }
 
     fn short(n: Option<&GraphNode>, id: &str) -> String {
@@ -438,6 +478,17 @@ mod tests {
         let g = CodeGraph::from_json(FIXTURE).unwrap();
         let out = g.query("kubernetes helm chart", 5);
         assert!(out.contains("No graph matches"));
+    }
+
+    #[test]
+    fn locate_resolves_spoken_intent_to_a_jump_target() {
+        let g = CodeGraph::from_json(FIXTURE).unwrap();
+        let loc = g.locate("take me to the login handler").expect("should locate");
+        assert_eq!(loc.file, "src/auth.rs");
+        assert_eq!(loc.line, 10); // parsed from "L10"
+        assert!(loc.symbol.contains("login"));
+        // No match -> None (voice UI shows "didn't catch that").
+        assert!(g.locate("kubernetes helm chart").is_none());
     }
 
     #[test]
