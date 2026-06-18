@@ -71,10 +71,20 @@ connectors** — wrong shape for a desktop IDE.
   (idle/listening/transcribing/locating), live "Heard: … → file:line", **Undo/Next**,
   and a status-bar item. Designed first-timer-legible per the UI research.
 
-**Honestly deferred UI** (needs agent-loop *approval* plumbing — a larger backend
-change): the interactive **Plan card / Autonomy-Dial per-step approval**,
-**Pause/Resume**, and a separate **sub-agent lane**. The timeline + skill/memory
-surfacing land the trust payoff now; the approval round-trip is the next wave.
+**Autonomy Dial — now real (follow-on wave).** The agent **pauses before
+consequential tools** (`fs_write`/`fs_edit`/`shell`) and asks the user. Engine:
+an `ApprovalPolicy` the agent consults before each consequential tool (Deny → the
+tool is skipped, not executed); a `ChannelApprovalPolicy` with three modes —
+**auto** (allow all), **confirm** (emit `approval_request`, await the user, 120 s
+timeout → deny), **readonly** (deny all consequential). `POST /api/agent/approve`
+relays the decision to the waiting run. Webview: an **Autonomy Dial** select
+(default *Confirm each*, shown only in Agent mode) + an inline **Approve/Deny**
+prompt in the timeline. This is genuine step-level intervention.
+
+**Still deferred UI**: the **Plan card / Intent Preview** (the agent emitting a
+plan before executing) and a separate **sub-agent lane** (the `delegate` tool
+currently discards child steps rather than streaming them to a lane). Pause/Resume
+is partially covered by per-step Deny + the existing Stop.
 
 ---
 
@@ -94,7 +104,7 @@ surfacing land the trust payoff now; the approval round-trip is the next wave.
 
 ## Verification
 
-- `cargo test`: **186 passed / 0 failed** (+20 new: files 5, shell 4, skills 1,
+- `cargo test`: **187 passed / 0 failed** (+21 new: files 5, shell 4, skills 1,
   delegate 1, scheduler 5, mcp 4, graph-locate 1 — counts approximate per module).
 - All changed extension JS: `node --check` clean; extension packages to a valid
   `.vsix` (17 files).
