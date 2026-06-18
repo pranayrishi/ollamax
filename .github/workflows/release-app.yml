@@ -45,8 +45,19 @@ jobs:
         with:
           node-version: 22
 
+      # node-pty (the integrated terminal) is a native module rebuilt by node-gyp.
+      # The runners ship Python 3.12+, which removed `distutils` → node-gyp fails
+      # ("No module named 'distutils'"). Pin Python 3.11 (still has distutils) so
+      # the native rebuild succeeds on macOS/Windows.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install + package the app (prepare.mjs stages the engine + UI)
         working-directory: desktop-app
+        env:
+          # `python` resolves to the pinned 3.11 on all runners (setup-python).
+          npm_config_python: python
         run: |
           npm install
           npm run dist
