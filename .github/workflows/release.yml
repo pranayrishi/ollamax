@@ -161,6 +161,10 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
+      # Checkout FIRST (it cleans the workspace) so the install scripts are
+      # present, THEN download artifacts into dist/.
+      - uses: actions/checkout@v4
+
       - name: Download all bundles
         uses: actions/download-artifact@v4
         with:
@@ -174,6 +178,9 @@ jobs:
           name: vsix
           path: dist
 
+      - name: Stage the one-line installers
+        run: cp desktop/install.sh desktop/install.ps1 dist/
+
       - name: Publish to the PUBLIC releases repo
         uses: softprops/action-gh-release@v2
         with:
@@ -183,11 +190,18 @@ jobs:
           name: Ollama-Forge ${{ github.ref_name }}
           body: |
             Unsigned cross-platform bundles (forge CLI + VS Code panel + setup script).
-            Verify each download against its `.sha256`. First-run notes are inside each bundle.
-            Requires a local Ollama daemon (https://ollama.com/download).
+
+            Smoothest install (no Gatekeeper/SmartScreen warning):
+              macOS/Linux:  curl -fsSL https://github.com/pranayrishi/ollamax-releases/releases/latest/download/install.sh | sh
+              Windows:      irm https://github.com/pranayrishi/ollamax-releases/releases/latest/download/install.ps1 | iex
+
+            Or download a bundle below and verify it against its `.sha256` (first-run
+            notes inside each bundle). Requires a local Ollama daemon (https://ollama.com/download).
           files: |
             dist/ollama-forge-*.tar.gz
             dist/ollama-forge-*.zip
             dist/*.sha256
             dist/forge-vscode.vsix
+            dist/install.sh
+            dist/install.ps1
           fail_on_unmatched_files: true

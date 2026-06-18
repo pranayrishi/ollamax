@@ -27,11 +27,11 @@ export function DownloadButtons({ compact = false }: { compact?: boolean }) {
         ))}
       </div>
       <p className="mt-3 text-xs text-zinc-500">
-        Unsigned build · CLI + VS Code panel (quick setup) · needs{" "}
-        <a href="https://ollama.com/download" className="text-zinc-400 hover:text-ember-400" target="_blank" rel="noopener noreferrer">Ollama</a>.{" "}
-        <Link href="/download" className="text-ember-400 hover:underline">
-          Intel Mac, checksums &amp; first-run notes →
-        </Link>
+        These are direct (unsigned) downloads. For the smoothest install with{" "}
+        <strong className="text-zinc-400">no security warning</strong>, use the{" "}
+        <Link href="/download" className="text-ember-400 hover:underline">one-line installer →</Link>{" "}
+        · needs{" "}
+        <a href="https://ollama.com/download" className="text-zinc-400 hover:text-ember-400" target="_blank" rel="noopener noreferrer">Ollama</a>.
       </p>
     </div>
   );
