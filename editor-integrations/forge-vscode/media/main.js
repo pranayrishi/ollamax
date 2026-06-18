@@ -276,10 +276,40 @@
         steps.hidden = false;
         const row = document.createElement("div");
         row.className = "step " + (ev.ok ? "ok" : "fail");
+        // Activity Timeline: status dot + tool + result preview + expandable args
+        // (the agent's `args` were captured but never shown before).
+        const argsStr = ev.args ? JSON.stringify(ev.args) : "";
         row.innerHTML =
+          `<span class="sdot">${ev.ok ? "●" : "✕"}</span>` +
           `<span class="badge">round ${ev.iteration}</span> ` +
           `<span class="tool">${escapeHtml(ev.tool)}</span> ` +
-          `<span class="prev">${escapeHtml(ev.preview || "")}</span>`;
+          `<span class="prev">${escapeHtml(ev.preview || "")}</span>` +
+          (argsStr
+            ? `<details class="sargs"><summary>args</summary><pre>${escapeHtml(argsStr)}</pre></details>`
+            : "");
+        steps.appendChild(row);
+        scrollDown();
+      },
+      // Surface that a skill was auto-applied (Hermes-class skills-in-the-loop).
+      addSkill(name) {
+        steps.hidden = false;
+        const row = document.createElement("div");
+        row.className = "step skill";
+        row.innerHTML =
+          `<span class="sdot">✦</span><span class="badge">skill</span> ` +
+          `<span class="tool">${escapeHtml(name)}</span> ` +
+          `<span class="prev">applied to this task</span>`;
+        steps.appendChild(row);
+        scrollDown();
+      },
+      // Surface recalled on-device memory (the Memory drawer).
+      addMemory(preview) {
+        steps.hidden = false;
+        const row = document.createElement("div");
+        row.className = "step memory";
+        row.innerHTML =
+          `<span class="sdot">⌘</span><span class="badge">memory</span> ` +
+          `<details class="sargs"><summary>recalled context</summary><pre>${escapeHtml(preview)}</pre></details>`;
         steps.appendChild(row);
         scrollDown();
       },
@@ -442,6 +472,12 @@
         break;
       case "step":
         active.addStep(ev);
+        break;
+      case "skill_applied":
+        active.addSkill(ev.name);
+        break;
+      case "memory_used":
+        active.addMemory(ev.preview || "");
         break;
       case "answer":
         active.setAnswerText(ev.text || "");

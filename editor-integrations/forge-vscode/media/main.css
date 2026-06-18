@@ -645,3 +645,21 @@ body.dropping::after {
   border-radius: 3px;
   vertical-align: middle;
 }
+
+/* Agent Activity Timeline (skill/memory/tool steps) — legible + trustworthy. */
+.step { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.step .sdot { font-size: 10px; opacity: 0.8; }
+.step.ok .sdot { color: var(--vscode-testing-iconPassed, #3fb950); }
+.step.fail .sdot { color: var(--vscode-errorForeground, #f85149); }
+.step.skill .sdot, .step.memory .sdot { color: var(--vscode-textLink-foreground); }
+.step .sargs { width: 100%; margin: 2px 0 4px 16px; }
+.step .sargs summary { cursor: pointer; opacity: 0.7; font-size: 11px; }
+.step .sargs pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.1));
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+}

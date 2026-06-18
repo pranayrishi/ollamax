@@ -284,12 +284,12 @@ class ChatViewProvider {
       body = { id, task: msg.text, output_dir: msg.outputDir || null };
     } else {
       path0 = "/api/chat";
-      // Feature 2: opt-in web tools in normal chat. When `forge.webTools` is on,
-      // the model can search/fetch via the agent loop; the backend discloses the
-      // egress in its `meta` event and streams tool steps (rendered like agent
-      // mode). Off by default = pure-local chat.
-      const webTools = vscode.workspace.getConfiguration("forge").get("webTools", false);
-      body = { id, model: msg.model, messages: msg.messages || [], context, tools: webTools };
+      // 3-TAB REFRAME: Chat is now PURE-LOCAL, zero-egress, single-model quick
+      // Q&A — tools are always OFF here. Tool-using / autonomous work lives in the
+      // Agent tab (/api/research → the full run_agent_streamed with memory,
+      // skills, file/shell/MCP tools, delegation, and the scheduler). This makes
+      // the three tabs genuinely distinct (talk / act-autonomously / build).
+      body = { id, model: msg.model, messages: msg.messages || [], context, tools: false };
     }
 
     // Telemetry context (metadata only): the language is inferred from an
@@ -498,9 +498,9 @@ class ChatViewProvider {
 
   <header id="topbar">
     <div class="modes" role="tablist">
-      <button class="mode active" data-mode="chat" title="Single-turn / multi-turn chat">Chat</button>
-      <button class="mode" data-mode="agent" title="Tool-using research agent">Agent</button>
-      <button class="mode" data-mode="build" title="Parallel multi-model build">Build</button>
+      <button class="mode active" data-mode="chat" title="Quick local Q&A — single model, no tools, nothing leaves your machine">Chat</button>
+      <button class="mode" data-mode="agent" title="Autonomous agent — uses tools, memory and skills, can delegate sub-agents and run scheduled tasks (all local)">Agent</button>
+      <button class="mode" data-mode="build" title="Parallel multi-model code build/orchestration">Build</button>
     </div>
     <div class="picker">
       <select id="model" title="Installed Ollama model (auto-selected for your hardware)"></select>

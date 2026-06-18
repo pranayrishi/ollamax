@@ -1205,6 +1205,12 @@ async fn run_agent_streamed(
         let mut suffix = rules_suffix;
         let mem = crate::memory::MemoryStore::for_project(&cwd).render_for_context(&question, 400);
         if !mem.is_empty() {
+            // Surface recalled memory to the Agent UI (Memory drawer) before
+            // appending it to the prompt.
+            let _ = tx.send(json!({
+                "type": "memory_used",
+                "preview": mem.chars().take(400).collect::<String>(),
+            }));
             suffix = format!("{suffix}\n\n{mem}");
         }
         // #1c Skills-in-the-loop: auto-apply the single most relevant skill's
