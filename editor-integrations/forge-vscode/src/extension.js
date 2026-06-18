@@ -25,7 +25,7 @@ function activate(context) {
   const auth = new ForgeAuth(context, log);
   const telemetry = new ForgeTelemetry(auth, log);
   const provider = new ChatViewProvider(context, backend, log, auth, telemetry);
-  const hub = new HubViewProvider(context, auth, log, telemetry);
+  const hub = new HubViewProvider(context, auth, log, telemetry, backend);
 
   // One-time, honest telemetry disclosure (opt-out model). Shown once; the user
   // can turn it off immediately or in Settings.

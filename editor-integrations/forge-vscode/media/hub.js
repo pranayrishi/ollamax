@@ -19,16 +19,17 @@
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  function renderGrid(filter) {
+  // #7: search is INTENT-AWARE and runs in the engine (fuzzy + intent expansion),
+  // so the grid just renders whatever `categories` the host returned — no brittle
+  // client-side exact-keyword filter, no "no matching categories" dead-end on
+  // loose queries like "build a website".
+  function renderGrid() {
     detail.hidden = true;
     grid.hidden = false;
     grid.innerHTML = "";
-    const f = (filter || "").toLowerCase();
-    const list = categories.filter(
-      (c) => !f || c.name.toLowerCase().includes(f) || (c.topics || []).some((t) => t.includes(f))
-    );
+    const list = categories;
     if (list.length === 0) {
-      grid.innerHTML = `<p class="muted">No matching categories.</p>`;
+      grid.innerHTML = `<p class="muted">No categories matched — try a broader search.</p>`;
       return;
     }
     for (const c of list) {
@@ -80,7 +81,7 @@
         </ul>
         <button id="support" class="ghost" ${refs.length ? "" : "disabled"}>⭐ Support these maintainers (${refs.length})</button>
       </div>`;
-    detail.querySelector("#back").addEventListener("click", () => renderGrid(searchEl.value));
+    detail.querySelector("#back").addEventListener("click", () => renderGrid());
     detail.querySelector("#activate").addEventListener("click", () =>
       vscode.postMessage({ type: "activate", slug: pkg.slug })
     );
@@ -96,8 +97,13 @@
     }
   }
 
+  // Debounce, then ask the ENGINE for intent-aware results (empty → full catalog).
+  let searchTimer = null;
   searchEl.addEventListener("input", () => {
-    if (detail.hidden) renderGrid(searchEl.value);
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      vscode.postMessage({ type: "search", q: searchEl.value });
+    }, 180);
   });
 
   window.addEventListener("message", (event) => {
@@ -106,7 +112,7 @@
       case "categories":
         categories = m.categories || [];
         statusEl.textContent = `${categories.length} domains · curated from public GitHub repos`;
-        renderGrid(searchEl.value);
+        renderGrid();
         break;
       case "package":
         renderDetail(m.pkg);

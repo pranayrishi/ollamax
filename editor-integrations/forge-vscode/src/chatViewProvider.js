@@ -138,12 +138,40 @@ class ChatViewProvider {
     // Account state is independent of the inference backend — surface it even
     // if Ollama isn't running, and never block on it.
     this._sendAccount();
+    // #6: gate the app behind website sign-in (deliberate owner choice — reverses
+    // the earlier logged-out-usable default). Offline-graceful: a stored session
+    // passes the gate without a network call.
+    await this._sendGate();
     try {
       await this.backend.ensureStarted();
       await this._sendStatusAndModels();
     } catch (e) {
       this.post({ type: "backendError", message: String(e && e.message) });
     }
+  }
+
+  /** Tell the webview whether to show the chat or the sign-in screen. */
+  async _sendGate() {
+    // Gating requires an account server to authenticate against. With none
+    // configured, gating is impossible — don't brick a local/dev run. The owner
+    // turns the gate ON for production by setting `forge.accountServer` (baked
+    // into the fork's product/defaults). When set, sign-in is REQUIRED.
+    const cfg = vscode.workspace.getConfiguration("forge");
+    const accountConfigured = !!(cfg.get("accountServer", "") || "").trim();
+    if (!this.auth || !accountConfigured) {
+      this.post({ type: "gate", signedIn: true });
+      return;
+    }
+    const signedIn = await this.auth.isSignedIn().catch(() => false);
+    this.post({ type: "gate", signedIn, user: signedIn ? await this.auth.cachedUser() : null });
+  }
+
+  /** Whether the action path must enforce sign-in (account server present). */
+  async _gateBlocks() {
+    const cfg = vscode.workspace.getConfiguration("forge");
+    const accountConfigured = !!(cfg.get("accountServer", "") || "").trim();
+    if (!this.auth || !accountConfigured) return false;
+    return !(await this.auth.isSignedIn().catch(() => false));
   }
 
   // ----- account (identity only; never gates local inference) -----
@@ -168,6 +196,8 @@ class ChatViewProvider {
     try {
       const user = device ? await this.auth.signInDevice() : await this.auth.signIn();
       this.post({ type: "account", user });
+      // #6: opening the gate the moment sign-in succeeds.
+      this.post({ type: "gate", signedIn: !!user, user: user || null });
       if (user) {
         vscode.window.showInformationMessage(`Ollama-Forge: signed in as @${user.login}.`);
       }
@@ -186,6 +216,8 @@ class ChatViewProvider {
       this.log(`sign-out error: ${e}`);
     }
     this.post({ type: "account", user: null });
+    // #6: signing out drops back to the gate.
+    this.post({ type: "gate", signedIn: false, user: null });
   }
 
   async _sendStatusAndModels() {
@@ -218,6 +250,13 @@ class ChatViewProvider {
 
   /** @param {any} msg */
   async _handleSend(msg) {
+    // #6: enforce the gate on the action path too — not just at boot — so the
+    // app can't be driven without an account session even if the UI is bypassed.
+    if (await this._gateBlocks()) {
+      this.post({ type: "gate", signedIn: false });
+      this.post({ type: "backendError", message: "Sign in with your Ollama-Forge account to use the app." });
+      return;
+    }
     try {
       await this.backend.ensureStarted();
     } catch (e) {
@@ -437,6 +476,19 @@ class ChatViewProvider {
   <title>Ollama-Forge</title>
 </head>
 <body>
+  <!-- #6 login gate: covers the whole panel until the user signs in. -->
+  <div id="gate" class="gate" hidden>
+    <div class="gate-card">
+      <div class="gate-logo">⚒</div>
+      <h1>Sign in to Ollama-Forge</h1>
+      <p class="gate-sub">An Ollama-Forge account is required to use the app. Your code and
+        prompts stay on your device — only anonymous usage metadata syncs to your dashboard.</p>
+      <button id="gate-signin" class="primary">Sign in with GitHub or Google</button>
+      <button id="gate-signin-device" class="linkbtn">Use a device code instead</button>
+      <p id="gate-error" class="gate-error" hidden></p>
+    </div>
+  </div>
+
   <header id="topbar">
     <div class="modes" role="tablist">
       <button class="mode active" data-mode="chat" title="Single-turn / multi-turn chat">Chat</button>

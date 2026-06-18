@@ -371,6 +371,13 @@ async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<S
         ("GET", "/api/model_info") => {
             handle_model_info(w, state, query_param(&head.path, "name")).await
         }
+        ("GET", "/api/hub/categories") => handle_hub_categories(w).await,
+        ("GET", "/api/hub/search") => {
+            handle_hub_search(w, query_param(&head.path, "q")).await
+        }
+        ("GET", p) if p.starts_with("/api/hub/package/") => {
+            handle_hub_package(w, p.trim_start_matches("/api/hub/package/")).await
+        }
         ("GET", "/api/memory") => handle_memory_list(w).await,
         ("POST", "/api/memory/clear") => handle_memory_clear(w).await,
         ("GET", "/api/graph/status") => handle_graph_status(w).await,
@@ -613,6 +620,32 @@ async fn handle_cancel(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) 
         }
         Err(e) => {
             let _ = write_json(w, 400, &json!({"error": e.to_string()})).await;
+        }
+    }
+}
+
+// --- #7 Central Hub catalog, served LOCALLY (auto-loads with no account server)
+// + intent-aware search. The account server is optional enrichment only. --------
+async fn handle_hub_categories(w: OwnedWriteHalf) {
+    let cats = crate::hub::categories();
+    let _ = write_json(w, 200, &json!({ "categories": cats, "source": "local-engine" })).await;
+}
+
+async fn handle_hub_search(w: OwnedWriteHalf, q: Option<String>) {
+    let q = q.unwrap_or_default();
+    let results = crate::hub::search(&q, 24);
+    let _ = write_json(w, 200, &json!({ "query": q, "categories": results })).await;
+}
+
+async fn handle_hub_package(w: OwnedWriteHalf, slug: &str) {
+    // URL-decode the slug (it's simple kebab-case but decode defensively).
+    let slug = slug.split('?').next().unwrap_or(slug);
+    match crate::hub::package(slug) {
+        Some(p) => {
+            let _ = write_json(w, 200, &serde_json::to_value(&p).unwrap_or_else(|_| json!({}))).await;
+        }
+        None => {
+            let _ = write_json(w, 404, &json!({ "error": "unknown package", "slug": slug })).await;
         }
     }
 }

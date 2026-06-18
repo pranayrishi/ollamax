@@ -4,6 +4,7 @@ pub mod codeblocks;
 pub mod context;
 pub mod executor;
 pub mod graph;
+pub mod hub;
 pub mod instincts;
 pub mod memory;
 pub mod models;

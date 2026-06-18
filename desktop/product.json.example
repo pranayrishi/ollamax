@@ -27,8 +27,13 @@
     "itemUrl": "https://open-vsx.org/vscode/item"
   },
 
-  "__builtin_comment": "Bundle the Phase 2 chat extension as a built-in so the panel ships in the box. The build copies editor-integrations/forge-vscode into the fork's .build/builtInExtensions (or extensions/) and lists it here.",
+  "__builtin_comment": "Bundle the chat+Hub extension as a built-in so the panel ships in the box. The build copies editor-integrations/forge-vscode into the fork's extensions/ and lists it here. As of this round the Hub catalog + intent search + package activation are served by the BUNDLED forge engine (/api/hub/*), so the Hub works fully offline with no account-server config.",
   "builtInExtensions": [],
+
+  "__accountserver_comment": "LOGIN-GATE (#6): the app requires website sign-in ONLY when forge.accountServer is set. Bake the production website URL into the fork's default settings (the forge-vscode extension reads forge.accountServer) so the gate is ON in shipped builds. The gate is offline-graceful (a stored session passes without a network call). If accountServer is blank, gating is disabled so local/dev runs aren't bricked.",
+  "defaultSettingsOverrides": {
+    "forge.accountServer": "<SET-TO-DEPLOYED-WEBSITE-URL>"
+  },
 
   "extensionAllowedProposedApi": [],
 

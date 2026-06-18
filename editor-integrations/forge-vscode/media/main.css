@@ -580,3 +580,68 @@ pre.code code {
   background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
   color: var(--vscode-foreground);
 }
+
+/* #6 login gate — full-panel sign-in overlay shown until the user authenticates. */
+.gate {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--vscode-editor-background, #1e1e1e);
+}
+.gate[hidden] { display: none; }
+.gate-card {
+  max-width: 360px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.gate-logo { font-size: 40px; line-height: 1; }
+.gate-card h1 { font-size: 18px; margin: 0; }
+.gate-sub { font-size: 12.5px; opacity: 0.8; margin: 0; line-height: 1.5; }
+.gate .primary {
+  padding: 9px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  font-weight: 600;
+}
+.gate .primary:hover { background: var(--vscode-button-hoverBackground); }
+.gate .linkbtn {
+  background: none;
+  border: none;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  font-size: 12px;
+}
+.gate-error { color: var(--vscode-errorForeground); font-size: 12px; margin: 0; }
+
+/* #5 drag-and-drop: drop affordance + image thumbnails in the context row. */
+body.dropping::after {
+  content: "Drop files or images to attach";
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--vscode-foreground);
+  background: color-mix(in srgb, var(--vscode-editor-background) 80%, transparent);
+  border: 2px dashed var(--vscode-focusBorder, #007acc);
+  pointer-events: none;
+}
+.chip-img { align-items: center; gap: 6px; }
+.chip-thumb {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 3px;
+  vertical-align: middle;
+}

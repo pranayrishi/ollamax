@@ -37,11 +37,15 @@ class HubViewProvider {
    * @param {import('./auth').ForgeAuth} auth
    * @param {(m: string) => void} log
    */
-  constructor(context, auth, log, telemetry) {
+  constructor(context, auth, log, telemetry, backend) {
     this.context = context;
     this.auth = auth;
     this.log = log;
     this.telemetry = telemetry;
+    // #7: the catalog is now served by the LOCAL engine (forge serve), so the
+    // Hub loads with NO account-server config. The account server is only used
+    // for the opt-in starring flow.
+    this.backend = backend;
     /** @type {vscode.WebviewView | undefined} */
     this.view = undefined;
   }
@@ -70,6 +74,9 @@ class HubViewProvider {
       case "ready":
         await this._loadCategories();
         break;
+      case "search":
+        await this._search(msg.q);
+        break;
       case "openPackage":
         await this._openPackage(msg.slug);
         break;
@@ -84,25 +91,36 @@ class HubViewProvider {
     }
   }
 
+  // Catalog comes from the LOCAL engine now — auto-loads, no account server.
   async _loadCategories() {
-    const base = this.base();
-    if (!base) {
-      this.post({ type: "needsServer" });
-      return;
-    }
     try {
-      const data = await this._get(`${base}/api/hub/categories`);
+      await this.backend.ensureStarted();
+      const data = await this.backend.getJson("/api/hub/categories");
       this.post({ type: "categories", categories: data.categories || [] });
     } catch (e) {
       this.post({ type: "error", message: `Could not load Hub catalog: ${e && e.message}` });
     }
   }
 
-  async _openPackage(slug) {
-    const base = this.base();
-    if (!base) return;
+  // #7: intent-aware search via the engine — loose queries return sensible hits.
+  async _search(q) {
+    if (!q || !q.trim()) {
+      await this._loadCategories();
+      return;
+    }
     try {
-      const pkg = await this._get(`${base}/api/hub/package/${encodeURIComponent(slug)}`);
+      await this.backend.ensureStarted();
+      const data = await this.backend.getJson(`/api/hub/search?q=${encodeURIComponent(q)}`);
+      this.post({ type: "categories", categories: data.categories || [] });
+    } catch (e) {
+      this.post({ type: "error", message: `Search failed: ${e && e.message}` });
+    }
+  }
+
+  async _openPackage(slug) {
+    try {
+      await this.backend.ensureStarted();
+      const pkg = await this.backend.getJson(`/api/hub/package/${encodeURIComponent(slug)}`);
       this.post({ type: "package", pkg });
     } catch (e) {
       this.post({ type: "error", message: `Could not load package: ${e && e.message}` });
@@ -112,11 +130,10 @@ class HubViewProvider {
   // Apply a package: write its rules + skills into the local config dirs. This
   // is the entirety of "activation" — transparent, inspectable, reversible.
   async _activate(slug) {
-    const base = this.base();
-    if (!base) return;
     let pkg;
     try {
-      pkg = await this._get(`${base}/api/hub/package/${encodeURIComponent(slug)}`);
+      await this.backend.ensureStarted();
+      pkg = await this.backend.getJson(`/api/hub/package/${encodeURIComponent(slug)}`);
     } catch (e) {
       this.post({ type: "error", message: `Activate failed: ${e && e.message}` });
       return;

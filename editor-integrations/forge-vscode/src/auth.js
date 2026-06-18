@@ -97,6 +97,25 @@ class ForgeAuth {
 
   // ----- public API -----
 
+  /**
+   * #6 login-gate: does the user have an account session? OFFLINE-GRACEFUL by
+   * design — it does NOT touch the network. Having signed in before (a stored
+   * token) is enough to pass the gate; token validity is enforced lazily when
+   * the token is actually used (getAccessToken refreshes/clears as needed). This
+   * means a signed-in user is not locked out of the app just because they're
+   * temporarily offline.
+   */
+  async isSignedIn() {
+    const tokens = await this._load();
+    return !!(tokens && tokens.access_token);
+  }
+
+  /** The stored user profile without a network round-trip (for the gate UI). */
+  async cachedUser() {
+    const tokens = await this._load();
+    return (tokens && tokens.user) || this.user || null;
+  }
+
   /** Current user if signed in (refreshes the access token if needed). */
   async getUser() {
     const tokens = await this._load();

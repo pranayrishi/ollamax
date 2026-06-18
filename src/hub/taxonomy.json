@@ -1,0 +1,2384 @@
+[
+  {
+    "slug": "frontend-spa-frameworks",
+    "name": "Frontend SPA Frameworks",
+    "description": "Component-based single-page application development across the major reactive UI frameworks and their idiomatic patterns.",
+    "githubTopics": [
+      "react",
+      "vuejs",
+      "svelte",
+      "angular",
+      "solidjs",
+      "frontend",
+      "javascript-framework",
+      "reactive",
+      "spa",
+      "web-components"
+    ],
+    "searchQueries": [
+      "topic:react language:typescript stars:>5000",
+      "topic:vue language:typescript stars:>3000",
+      "topic:svelte stars:>2000",
+      "topic:angular language:typescript stars:>3000",
+      "topic:solidjs stars:>1000",
+      "topic:frontend topic:framework stars:>10000"
+    ],
+    "exampleRepos": [
+      "facebook/react",
+      "vuejs/core",
+      "sveltejs/svelte",
+      "angular/angular",
+      "solidjs/solid",
+      "preactjs/preact",
+      "pmndrs/zustand",
+      "TanStack/query"
+    ],
+    "conventions": [
+      "Keep components small, single-responsibility, and presentational where possible; lift shared state up or into a dedicated store rather than duplicating it across siblings.",
+      "Derive state instead of duplicating it; compute values from a single source of truth (memos/computed/derived) rather than syncing multiple state variables with effects.",
+      "Provide stable, unique keys for list rendering (never array indices for reorderable lists) so the framework can diff and preserve component identity correctly.",
+      "Treat effects as synchronization with external systems, not as a place for data derivation; always clean up subscriptions, timers, and listeners.",
+      "Avoid unnecessary re-renders by memoizing expensive computations and stable callbacks, and by keeping context/provider values narrow so consumers do not re-render on unrelated changes.",
+      "Prefer controlled, accessible form primitives and colocate validation with the form; debounce or batch expensive updates triggered by user input.",
+      "Type props, events, and store contracts explicitly and forbid implicit any at component boundaries.",
+      "Co-locate component, styles, tests, and stories, and split bundles with lazy/dynamic imports at route or heavy-component boundaries."
+    ],
+    "scaffolds": [
+      "Scaffold a typed component with co-located unit test, story, and an exported public prop interface.",
+      "Generate a feature module (route + container + presentational components + store slice + tests) following the chosen framework's idioms.",
+      "Set up a global state store slice with typed actions, selectors, and devtools wiring.",
+      "Wire up a data-fetching hook with caching, loading/error states, and optimistic updates."
+    ]
+  },
+  {
+    "slug": "fullstack-meta-frameworks-ssr",
+    "name": "Full-Stack Meta-Frameworks & SSR",
+    "description": "Server-rendered and hybrid meta-frameworks with routing, data loading, server components, and edge/serverless deployment.",
+    "githubTopics": [
+      "nextjs",
+      "nuxt",
+      "sveltekit",
+      "remix",
+      "astro",
+      "ssr",
+      "static-site-generator",
+      "jamstack",
+      "server-side-rendering",
+      "isr"
+    ],
+    "searchQueries": [
+      "topic:nextjs language:typescript stars:>3000",
+      "topic:nuxt stars:>1500",
+      "topic:sveltekit stars:>1000",
+      "topic:astro stars:>2000",
+      "topic:ssr topic:react stars:>2000",
+      "topic:jamstack stars:>3000"
+    ],
+    "exampleRepos": [
+      "vercel/next.js",
+      "nuxt/nuxt",
+      "sveltejs/kit",
+      "remix-run/remix",
+      "withastro/astro",
+      "redwoodjs/redwood"
+    ],
+    "conventions": [
+      "Choose the rendering mode per route by data needs: static generation for stable content, server rendering for personalized/SEO-critical pages, client rendering only for interactive shells; use revalidation for content that changes periodically.",
+      "Fetch data on the server in loaders/server components and pass minimal serializable props to the client; never ship secrets or full database clients to the browser.",
+      "Keep server-only code clearly separated from client bundles using framework boundaries (server components, server files, route handlers).",
+      "Stream responses and use loading boundaries so above-the-fold content paints before slow data resolves.",
+      "Set explicit caching headers and revalidation strategies per data source; treat the cache as part of the contract and invalidate it on mutation.",
+      "Use the framework router's file-based conventions and nested layouts to avoid layout re-mounting and to share data fetching across nested routes.",
+      "Optimize images, fonts, and scripts through the framework's built-in primitives to protect Core Web Vitals.",
+      "Validate and sanitize all server-action/route-handler inputs with a schema, and return typed, structured errors."
+    ],
+    "scaffolds": [
+      "Scaffold a new route with server-side data loading, a loading/error boundary, and SEO metadata.",
+      "Generate a server action / route handler with schema validation, auth check, and typed response.",
+      "Set up incremental static regeneration or on-demand revalidation for a content-driven route.",
+      "Bootstrap a deployment config for an edge/serverless target with environment variable wiring and caching headers."
+    ]
+  },
+  {
+    "slug": "design-systems-component-libraries",
+    "name": "Design Systems & Component Libraries",
+    "description": "Reusable, accessible, themeable component libraries and design-token systems that enforce consistency across products.",
+    "githubTopics": [
+      "design-system",
+      "component-library",
+      "design-tokens",
+      "ui-components",
+      "storybook",
+      "headless-ui",
+      "react-components",
+      "ui-kit",
+      "accessibility"
+    ],
+    "searchQueries": [
+      "topic:design-system language:typescript stars:>2000",
+      "topic:component-library stars:>3000",
+      "topic:design-tokens stars:>500",
+      "topic:headless-ui stars:>1000",
+      "topic:ui-components topic:accessibility stars:>1000"
+    ],
+    "exampleRepos": [
+      "radix-ui/primitives",
+      "mui/material-ui",
+      "chakra-ui/chakra-ui",
+      "ariakit/ariakit",
+      "adobe/react-spectrum",
+      "storybookjs/storybook"
+    ],
+    "conventions": [
+      "Build on accessible headless primitives so keyboard navigation, focus management, and ARIA semantics are correct before styling is layered on.",
+      "Define a design-token layer (color, spacing, typography, radius, motion) as the single source of truth and reference tokens everywhere instead of hard-coded values.",
+      "Expose a small, composable API: prefer compound components and slots over large monolithic prop lists; allow consumers to override styles via class/style props or a theming API.",
+      "Document every component with stories for all states and an interaction/a11y addon, and treat the docs as the contract.",
+      "Version the library with semantic versioning, ship a changelog, and provide codemods or deprecation warnings for breaking API changes.",
+      "Support theming and dark mode through CSS variables or a theme provider rather than duplicating component variants.",
+      "Forward refs and spread remaining props to the underlying DOM element so components remain composable and accessible.",
+      "Test components for accessibility, visual regression, and behavior, and ship tree-shakeable, side-effect-free ES modules."
+    ],
+    "scaffolds": [
+      "Scaffold a new accessible component built on a headless primitive with variants, tokens, story, and a11y test.",
+      "Generate a design-token pipeline producing CSS variables, a JS theme object, and platform outputs.",
+      "Set up a component-docs workspace with a11y, interactions, and visual-regression addons.",
+      "Create a theming provider with light/dark/system modes backed by CSS custom properties."
+    ]
+  },
+  {
+    "slug": "css-styling-architecture",
+    "name": "CSS & Styling Architecture",
+    "description": "Modern CSS authoring with utility frameworks, CSS-in-JS, preprocessors, and scalable styling architecture.",
+    "githubTopics": [
+      "css",
+      "tailwindcss",
+      "css-in-js",
+      "sass",
+      "postcss",
+      "styled-components",
+      "css-framework",
+      "responsive-design",
+      "css-modules"
+    ],
+    "searchQueries": [
+      "topic:tailwindcss stars:>3000",
+      "topic:css-in-js stars:>2000",
+      "topic:postcss stars:>1000",
+      "topic:css-framework stars:>5000",
+      "topic:css language:typescript stars:>2000"
+    ],
+    "exampleRepos": [
+      "tailwindlabs/tailwindcss",
+      "css-modules/css-modules",
+      "postcss/postcss",
+      "vanilla-extract-css/vanilla-extract",
+      "emotion-js/emotion",
+      "system-ui/theme-ui"
+    ],
+    "conventions": [
+      "Use modern responsive layout primitives (Flexbox, Grid, container queries, logical properties) and fluid sizing instead of fixed pixel breakpoints where possible.",
+      "Centralize design decisions in CSS custom properties or a token scale, and avoid magic numbers and one-off hard-coded colors.",
+      "Prefer zero-runtime or compiled styling for performance; reserve runtime CSS-in-JS for genuinely dynamic styles.",
+      "Scope styles to components to avoid global cascade leaks; use a naming methodology or scoping mechanism when writing plain CSS.",
+      "Respect user preferences with reduced-motion and color-scheme queries and accessible focus-visible styles; never remove focus outlines without a replacement.",
+      "Keep specificity low and flat; avoid important and deep descendant selectors that are hard to override.",
+      "Purge/tree-shake unused CSS in production and inline critical CSS for above-the-fold content to reduce render-blocking.",
+      "Ensure sufficient color contrast (WCAG AA) for text and interactive states directly in the token/theme definitions."
+    ],
+    "scaffolds": [
+      "Scaffold a utility-CSS config with a custom design-token theme, dark mode, and content paths.",
+      "Set up a PostCSS pipeline (autoprefixer, nesting, custom-media, purge) for a build.",
+      "Generate a typed-token style sheet with responsive variants.",
+      "Create a responsive layout template using CSS Grid and container queries with fluid type."
+    ]
+  },
+  {
+    "slug": "web-performance",
+    "name": "Web Performance & Core Web Vitals",
+    "description": "Measuring and optimizing load time, runtime performance, and Core Web Vitals across the rendering pipeline.",
+    "githubTopics": [
+      "web-performance",
+      "performance",
+      "core-web-vitals",
+      "lighthouse",
+      "web-vitals",
+      "bundle-size",
+      "code-splitting",
+      "performance-monitoring"
+    ],
+    "searchQueries": [
+      "topic:web-performance stars:>1000",
+      "topic:core-web-vitals stars:>500",
+      "topic:lighthouse stars:>2000",
+      "topic:performance topic:javascript stars:>3000",
+      "topic:bundle-size stars:>1000"
+    ],
+    "exampleRepos": [
+      "GoogleChrome/lighthouse",
+      "GoogleChrome/web-vitals",
+      "GoogleChromeLabs/quicklink",
+      "google/wptagent",
+      "pmndrs/detect-gpu"
+    ],
+    "conventions": [
+      "Optimize for Core Web Vitals: minimize Largest Contentful Paint with prioritized hero assets, keep Cumulative Layout Shift near zero with explicit dimensions, and reduce Interaction to Next Paint by breaking up long tasks.",
+      "Set width/height or aspect-ratio on media and reserve space for dynamically injected content to prevent layout shift.",
+      "Ship less JavaScript: code-split by route, lazy-load below-the-fold and heavy components, and tree-shake dependencies.",
+      "Serve modern, compressed assets: responsive images in AVIF/WebP with srcset, Brotli/gzip text compression, and subsetted, preloaded fonts with font-display swap.",
+      "Use resource hints deliberately (preload critical assets, preconnect to required origins, prefetch likely navigations) without over-hinting.",
+      "Cache aggressively with immutable hashed filenames, a Service Worker or CDN, and appropriate Cache-Control headers; defer or async non-critical third-party scripts.",
+      "Measure with field data (real-user monitoring) in addition to lab tools, and enforce performance budgets in CI to prevent regressions.",
+      "Avoid main-thread blocking by moving heavy work to Web Workers and virtualizing large lists."
+    ],
+    "scaffolds": [
+      "Set up a performance-CI workflow with budgets that fail the build on regression.",
+      "Add real-user monitoring reporting LCP/CLS/INP to an analytics endpoint.",
+      "Generate a responsive-image component emitting AVIF/WebP srcset with correct sizes and dimensions.",
+      "Configure a bundle-analyzer plus code-splitting pass for a build to flag oversized chunks."
+    ]
+  },
+  {
+    "slug": "web-accessibility",
+    "name": "Web Accessibility (a11y / WCAG)",
+    "description": "Building inclusive, WCAG-conformant interfaces with correct semantics, keyboard support, and assistive-tech compatibility.",
+    "githubTopics": [
+      "accessibility",
+      "a11y",
+      "wcag",
+      "aria",
+      "screen-reader",
+      "axe",
+      "inclusive-design",
+      "keyboard-navigation"
+    ],
+    "searchQueries": [
+      "topic:accessibility language:javascript stars:>2000",
+      "topic:a11y stars:>1000",
+      "topic:wcag stars:>500",
+      "topic:axe stars:>1000",
+      "topic:accessibility topic:testing stars:>1000"
+    ],
+    "exampleRepos": [
+      "dequelabs/axe-core",
+      "dequelabs/axe-core-npm",
+      "nickcolley/jest-axe",
+      "alphagov/accessible-autocomplete"
+    ],
+    "conventions": [
+      "Use native semantic HTML elements before reaching for ARIA; ARIA should supplement, not replace, correct semantics.",
+      "Ensure every interactive element is keyboard operable with a visible focus indicator and a logical tab order; manage focus on route changes, modals, and dynamically revealed content.",
+      "Associate form controls with labels, group related inputs, and surface validation errors programmatically with aria-describedby and aria-invalid.",
+      "Provide text alternatives: meaningful alt text for informative images, empty alt for decorative ones, captions/transcripts for media, and accessible names for icon-only controls.",
+      "Meet WCAG color-contrast minimums (AA: 4.5:1 text, 3:1 large text/UI) and never convey information by color alone.",
+      "Use ARIA live regions for asynchronous status updates and announce loading/error states to screen readers.",
+      "Respect reduced-motion, support 200% zoom and reflow without loss of content, and ensure touch targets are large enough.",
+      "Test with automated tooling plus manual keyboard and screen-reader passes, since automation catches only a subset of issues."
+    ],
+    "scaffolds": [
+      "Add automated accessibility tests to the test suite and CI.",
+      "Scaffold an accessible modal/dialog with focus trap, escape handling, and ARIA roles.",
+      "Generate an accessible form with associated labels, error messaging, and live-region validation.",
+      "Create a skip-link plus landmark-region layout template with managed route focus."
+    ]
+  },
+  {
+    "slug": "browser-extensions",
+    "name": "Browser Extensions (WebExtensions / MV3)",
+    "description": "Cross-browser extensions using the WebExtensions API and Manifest V3 with service workers, content scripts, and messaging.",
+    "githubTopics": [
+      "browser-extension",
+      "chrome-extension",
+      "firefox-addon",
+      "webextension",
+      "manifest-v3",
+      "web-extension",
+      "chrome-extensions"
+    ],
+    "searchQueries": [
+      "topic:browser-extension language:typescript stars:>1000",
+      "topic:chrome-extension stars:>2000",
+      "topic:manifest-v3 stars:>200",
+      "topic:webextension stars:>500",
+      "topic:firefox-addon stars:>500"
+    ],
+    "exampleRepos": [
+      "PlasmoHQ/plasmo",
+      "wxt-dev/wxt",
+      "GoogleChrome/chrome-extensions-samples",
+      "mozilla/webextension-polyfill"
+    ],
+    "conventions": [
+      "Target Manifest V3 with a service-worker background that is event-driven and stateless; persist state to extension storage rather than relying on a long-lived background page.",
+      "Request the minimum permissions and host permissions needed, prefer activeTab and optional permissions, and justify each permission for store review.",
+      "Use the standardized cross-browser WebExtensions API via a polyfill instead of vendor-specific callback APIs.",
+      "Isolate content scripts from page scripts, inject styles in a way that avoids leaking into or breaking the host page, and clean up injected DOM and listeners.",
+      "Communicate between content scripts, background, and UI via typed message passing or a port; never trust messages without validating sender and shape.",
+      "Follow a strict Content Security Policy: no remote code execution, bundle all scripts locally, and avoid inline scripts and eval.",
+      "Store user data with the appropriate extension storage area, encrypt sensitive data, and document data usage for privacy and store policies.",
+      "Build with a framework or bundler that handles HMR, cross-browser manifests, and store packaging."
+    ],
+    "scaffolds": [
+      "Scaffold an MV3 extension with background service worker, content script, and popup UI.",
+      "Set up typed message passing between content script, background, and popup with a shared schema.",
+      "Generate an options page persisting settings to extension storage with a cross-browser polyfill.",
+      "Configure cross-browser build and store-packaging with per-browser manifest variants."
+    ]
+  },
+  {
+    "slug": "immersive-web-webgl-xr",
+    "name": "Immersive Web (WebGL / WebGPU / WebXR / AR-VR)",
+    "description": "3D graphics, AR/VR, and GPU-accelerated experiences in the browser via Three.js, WebGL/WebGPU, and the WebXR API.",
+    "githubTopics": [
+      "webgl",
+      "webgpu",
+      "webxr",
+      "threejs",
+      "augmented-reality",
+      "virtual-reality",
+      "3d",
+      "aframe",
+      "babylonjs",
+      "ar"
+    ],
+    "searchQueries": [
+      "topic:threejs stars:>2000",
+      "topic:webxr stars:>500",
+      "topic:webgpu stars:>1000",
+      "topic:webgl language:typescript stars:>2000",
+      "topic:augmented-reality topic:web stars:>1000"
+    ],
+    "exampleRepos": [
+      "mrdoob/three.js",
+      "pmndrs/react-three-fiber",
+      "pmndrs/drei",
+      "BabylonJS/Babylon.js",
+      "aframevr/aframe",
+      "google/model-viewer"
+    ],
+    "conventions": [
+      "Reuse geometries, materials, and textures, and dispose of GPU resources explicitly on unmount to prevent memory leaks; instance repeated meshes rather than cloning.",
+      "Budget for the target device: cap draw calls and polygon counts, use compressed textures and geometry compression, and lazy-load assets progressively.",
+      "Drive animation from a single render/XR frame loop tied to a delta-time clock; pause rendering when the canvas is offscreen or the tab is hidden.",
+      "For WebXR, design for room-scale safety and comfort: stable framerate, avoid unintended camera acceleration, support both controllers and hand tracking, and gate entering VR/AR behind a user gesture.",
+      "Feature-detect WebGL2/WebGPU/WebXR support and provide graceful fallbacks when hardware or permissions are unavailable.",
+      "Manage color space, tone mapping, and physically based lighting consistently, and bake lighting where possible to reduce runtime cost.",
+      "Use a scene-graph abstraction instead of raw WebGL for maintainability, and keep CPU-side state separate from the render loop.",
+      "Provide accessible affordances for immersive content: alternative non-XR interactions, captions for audio, and motion-comfort options."
+    ],
+    "scaffolds": [
+      "Scaffold a scene-graph render loop with orbit controls, lighting, and resource disposal.",
+      "Set up a WebXR session (VR/AR) with feature detection, enter-XR gate, and controller/hand input.",
+      "Generate a glTF model-viewer component with geometry/texture compression and progressive fallback.",
+      "Create a WebGPU compute/render pipeline scaffold with capability detection and WebGL fallback."
+    ]
+  },
+  {
+    "slug": "react-native-mobile",
+    "name": "React Native Mobile Apps",
+    "description": "Cross-platform iOS/Android apps built with React Native, including Expo-managed and bare workflows.",
+    "githubTopics": [
+      "react-native",
+      "expo",
+      "ios",
+      "android",
+      "typescript"
+    ],
+    "searchQueries": [
+      "topic:react-native language:typescript stars:>2000",
+      "topic:expo stars:>1000",
+      "topic:react-native topic:android stars:>3000"
+    ],
+    "exampleRepos": [
+      "facebook/react-native",
+      "expo/expo",
+      "infinitered/ignite",
+      "callstack/react-native-paper",
+      "software-mansion/react-native-reanimated",
+      "react-navigation/react-navigation",
+      "wix/Detox"
+    ],
+    "conventions": [
+      "Prefer the managed workflow and cloud build/update tooling; only eject to a bare/prebuild workflow when a native module truly requires it, and keep config-as-code.",
+      "Adopt the New Architecture (Fabric renderer plus TurboModules/JSI) and a modern JS engine; gate legacy bridge-only native modules behind compatibility checks.",
+      "Run animations and gestures on the UI thread with worklet-based libraries instead of the JS-thread animation API to avoid frame drops.",
+      "Type the whole app, share a typed API client, and centralize navigation params in a typed param list.",
+      "Use windowed list components with stable key extractors and item layout hints rather than mapping over arrays in a scroll view.",
+      "Persist with a fast key-value store for small data and SQLite for relational data; never store secrets in plain async storage, use Keychain/Keystore wrappers.",
+      "Keep platform-specific code in platform-suffixed files or platform-select calls rather than scattering OS branches throughout components.",
+      "Wire crash/performance monitoring and end-to-end tests into CI before shipping to stores."
+    ],
+    "scaffolds": [
+      "Scaffold a typed app with stack/tab navigators, theming, and cloud build/update profiles wired in.",
+      "Generate a typed API/data layer with a query cache, a store, and a fast persistence adapter.",
+      "Add an end-to-end test suite plus a CI matrix that runs lint, typecheck, unit tests, and preview builds.",
+      "Create a reusable native module template with iOS and Android bindings and a typed JS interface."
+    ]
+  },
+  {
+    "slug": "flutter-apps",
+    "name": "Flutter Apps",
+    "description": "Cross-platform apps from a single Dart codebase targeting iOS, Android, web, and desktop with Flutter.",
+    "githubTopics": [
+      "flutter",
+      "dart",
+      "flutter-apps",
+      "android",
+      "ios"
+    ],
+    "searchQueries": [
+      "topic:flutter language:dart stars:>3000",
+      "topic:flutter topic:material-design stars:>1000",
+      "topic:dart topic:state-management stars:>1000"
+    ],
+    "exampleRepos": [
+      "flutter/flutter",
+      "felangel/bloc",
+      "rrousselGit/riverpod",
+      "firebase/flutterfire",
+      "localsend/localsend"
+    ],
+    "conventions": [
+      "Structure the app in feature-first layers (presentation/application/domain/data) and keep widgets small, const, and free of business logic.",
+      "Pick one state-management approach and apply it consistently; expose immutable state and pure reducers/notifiers.",
+      "Use const constructors, keys, and builder-based lists/slivers for performance; avoid rebuilding large subtrees by scoping rebuilds narrowly.",
+      "Model immutable data with sealed/value classes and generate JSON serialization rather than hand-writing it.",
+      "Centralize theming via Material 3 color schemes and design tokens; support light/dark and dynamic color instead of hardcoding colors.",
+      "Handle async with builder widgets or async notifiers and always render loading/error/empty states explicitly.",
+      "Isolate platform code behind platform channels or federated plugins, and keep flavors/environments configured via compile-time defines and build flavors.",
+      "Enforce static analysis with a strict analysis config and cover logic with widget and integration tests in CI."
+    ],
+    "scaffolds": [
+      "Scaffold a feature-first app with a state-management layer, declarative routing, Material 3 theming, and flavor/env configuration.",
+      "Generate a value-class data model plus repository and HTTP client with JSON serialization and typed error handling.",
+      "Set up golden, widget, and integration tests plus a CI workflow running analyze, test, and build for iOS/Android.",
+      "Create a federated plugin template exposing a platform channel with Android and iOS implementations."
+    ]
+  },
+  {
+    "slug": "native-ios-swift",
+    "name": "Native iOS (Swift/SwiftUI)",
+    "description": "First-class iOS/iPadOS apps built with Swift, SwiftUI, and modern Apple frameworks.",
+    "githubTopics": [
+      "ios",
+      "swift",
+      "swiftui",
+      "xcode",
+      "swift-package-manager"
+    ],
+    "searchQueries": [
+      "topic:swiftui language:swift stars:>2000",
+      "topic:ios language:swift stars:>5000",
+      "topic:swift-package-manager stars:>1000"
+    ],
+    "exampleRepos": [
+      "pointfreeco/swift-composable-architecture",
+      "Alamofire/Alamofire",
+      "onevcat/Kingfisher",
+      "airbnb/lottie-ios",
+      "realm/realm-swift"
+    ],
+    "conventions": [
+      "Build UI with SwiftUI first and drop to UIKit only where SwiftUI lacks coverage; bridge via representable wrappers rather than rewriting screens.",
+      "Adopt Swift Concurrency (async/await, actors, tasks) for asynchronous work and isolate mutable shared state in actors instead of callback pyramids.",
+      "Use the Observation framework for view models and keep views as pure functions of state.",
+      "Manage dependencies with Swift Package Manager, pin versions, and keep modules small with explicit public APIs for faster incremental builds.",
+      "Store secrets in the Keychain, never in user defaults; gate capabilities behind entitlements and request permissions just-in-time with clear usage strings.",
+      "Localize all user-facing strings via String Catalogs and support Dynamic Type, Dark Mode, and VoiceOver accessibility from the start.",
+      "Keep privacy usage descriptions accurate and declare required-reason APIs and a privacy manifest to satisfy App Store review.",
+      "Test with the platform test frameworks and UI tests, and automate builds/signing rather than manual archive steps."
+    ],
+    "scaffolds": [
+      "Scaffold a SwiftUI app with a unidirectional architecture, dependency injection, and a typed navigation router.",
+      "Generate a networking layer using async/await with Codable models, retry/backoff, and a mockable protocol boundary.",
+      "Add a UI-test suite plus an automation lane for build, test, screenshots, and beta upload with managed signing.",
+      "Create a multi-module Swift Package workspace separating features, core, and UI components with explicit public interfaces."
+    ]
+  },
+  {
+    "slug": "native-android-kotlin",
+    "name": "Native Android (Kotlin/Compose)",
+    "description": "Modern Android apps built with Kotlin, Jetpack Compose, and Android architecture components.",
+    "githubTopics": [
+      "android",
+      "kotlin",
+      "jetpack-compose",
+      "android-development",
+      "kotlin-coroutines"
+    ],
+    "searchQueries": [
+      "topic:jetpack-compose language:kotlin stars:>2000",
+      "topic:android topic:kotlin stars:>5000",
+      "topic:android-architecture stars:>1000"
+    ],
+    "exampleRepos": [
+      "android/nowinandroid",
+      "android/compose-samples",
+      "square/retrofit",
+      "square/okhttp",
+      "coil-kt/coil",
+      "Kotlin/kotlinx.coroutines"
+    ],
+    "conventions": [
+      "Build UI with Compose and unidirectional data flow: view models expose immutable UI state via observable streams and receive events, composables stay stateless and hoist state.",
+      "Follow a layered architecture (UI / domain / data) with repositories abstracting data sources behind interfaces.",
+      "Use coroutines and flows for async work, scoping collection with lifecycle-aware collectors to avoid leaks.",
+      "Inject dependencies with a DI framework instead of manual singletons, and keep modules build-isolated for speed.",
+      "Persist relational data with a typed database layer and key-value/settings with a modern datastore, not legacy shared preferences for new code.",
+      "Centralize theming with Material 3 and dynamic color, support dark theme, and externalize all strings/dimens into resources for localization.",
+      "Target a recent SDK level, request runtime permissions just-in-time, and respect scoped storage and background-execution limits.",
+      "Enforce linting/static analysis and run unit, Compose UI, and instrumented tests in CI; manage versions via a version catalog."
+    ],
+    "scaffolds": [
+      "Scaffold a multi-module Compose app with DI, a view model plus state-stream pattern, declarative navigation, and Material 3 theming.",
+      "Generate a data layer with an HTTP client plus serialization, a local database, and a repository exposing flows.",
+      "Add Compose UI tests, unit tests, and a CI workflow running static analysis, assemble, and instrumented tests on an emulator.",
+      "Create a build-convention-plugin and version-catalog setup to standardize build logic across feature modules."
+    ]
+  },
+  {
+    "slug": "hybrid-webview-mobile",
+    "name": "Hybrid / WebView Mobile (Ionic & Capacitor)",
+    "description": "Web-tech mobile apps that wrap a web UI in native shells using Capacitor/Cordova with Ionic or any web framework.",
+    "githubTopics": [
+      "ionic",
+      "capacitor",
+      "cordova",
+      "hybrid-app",
+      "mobile"
+    ],
+    "searchQueries": [
+      "topic:capacitor stars:>500",
+      "topic:ionic topic:angular stars:>500",
+      "topic:cordova stars:>500"
+    ],
+    "exampleRepos": [
+      "ionic-team/ionic-framework",
+      "ionic-team/capacitor"
+    ],
+    "conventions": [
+      "Prefer a modern native-bridge runtime over legacy hybrid frameworks for new projects; access native capabilities through official/community plugins with a consistent JS bridge.",
+      "Keep the web bundle small and lazy-loaded; hybrid startup is dominated by WebView load time, so code-split routes and defer non-critical work.",
+      "Use platform-adaptive components and CSS variables for theming so the same UI feels native on both iOS and Android.",
+      "Commit the web layer to source control but treat native projects as managed; sync via the tooling rather than hand-editing generated files.",
+      "Guard native plugin calls behind a platform check so the same codebase degrades gracefully when run as a PWA in the browser.",
+      "Handle safe-area insets, hardware back button, and keyboard resize behavior explicitly since WebViews do not get these for free.",
+      "Store sensitive data with secure-storage/Keychain plugins, not local storage, and configure a strict Content Security Policy for the WebView."
+    ],
+    "scaffolds": [
+      "Scaffold a hybrid app with platform-adaptive routing, CSS-variable theming, and iOS/Android platforms added.",
+      "Generate a native-plugin wrapper that exposes a typed API and provides a browser fallback for PWA builds.",
+      "Set up a CI pipeline that builds the web bundle, syncs native projects, and produces signed iOS/Android artifacts."
+    ]
+  },
+  {
+    "slug": "electron-desktop",
+    "name": "Electron Desktop Apps",
+    "description": "Cross-platform desktop apps built on Chromium plus Node.js with Electron and a web-based UI.",
+    "githubTopics": [
+      "electron",
+      "desktop-app",
+      "cross-platform",
+      "electron-app",
+      "nodejs"
+    ],
+    "searchQueries": [
+      "topic:electron stars:>3000",
+      "topic:electron topic:typescript stars:>1000",
+      "topic:electron-app stars:>1000"
+    ],
+    "exampleRepos": [
+      "electron/electron",
+      "microsoft/vscode",
+      "standardnotes/app"
+    ],
+    "conventions": [
+      "Enable context isolation and sandboxing, disable node integration in renderers, and expose only a minimal, validated API surface via the preload bridge.",
+      "Treat the main process as a privileged backend: keep file/system/network access there and communicate over typed, validated IPC channels rather than exposing Node to the UI.",
+      "Validate and allow-list every IPC message and never pass raw user input into shell/exec; set a strict Content Security Policy and disable the remote module.",
+      "Ship auto-updates with code-signed and notarized builds for each platform.",
+      "Bundle and tree-shake renderer code, and lazy-load heavy features to keep startup memory and time reasonable.",
+      "Externalize native Node modules correctly and rebuild them against the bundled runtime ABI instead of the system Node.",
+      "Persist app data in the per-user data directory with versioned migrations, and instrument crash reporting per process.",
+      "Test main and renderer separately and add end-to-end coverage with a driver that supports Electron."
+    ],
+    "scaffolds": [
+      "Scaffold an Electron app with a bundler, a secure preload using the context bridge, typed IPC, and packaging for win/mac/linux.",
+      "Generate an auto-update pipeline with code signing, notarization, and a releases publish step.",
+      "Add an end-to-end test harness plus crash reporting wired into main and renderer processes.",
+      "Create a typed IPC layer with request/response validation and a shared schema between main and renderer."
+    ]
+  },
+  {
+    "slug": "rust-native-desktop",
+    "name": "Lightweight Native Desktop (Tauri / Wails / Slint)",
+    "description": "Small, fast desktop apps using OS-native webviews or native toolkits with Rust/Go backends.",
+    "githubTopics": [
+      "tauri",
+      "wails",
+      "rust",
+      "desktop-app",
+      "cross-platform"
+    ],
+    "searchQueries": [
+      "topic:tauri stars:>1000",
+      "topic:wails stars:>1000",
+      "topic:rust topic:gui stars:>2000"
+    ],
+    "exampleRepos": [
+      "tauri-apps/tauri",
+      "wailsapp/wails",
+      "slint-ui/slint"
+    ],
+    "conventions": [
+      "Keep privileged operations (filesystem, network, shell) in the native core and expose them to the webview only through explicit, narrowly-scoped commands.",
+      "Lock down the capability allowlist and CSP so the frontend can call only the commands it actually needs, following least privilege.",
+      "Validate and type all command inputs crossing the JS-to-native boundary; treat the webview as untrusted and never interpolate input into shell calls.",
+      "Leverage the OS-provided webview to keep binaries small, and account for per-platform webview behavioral differences.",
+      "Use the framework's updater with signed update artifacts and public-key verification rather than rolling a custom update mechanism.",
+      "Code-sign and notarize per platform and produce platform-native installers.",
+      "Keep the native core testable with unit tests and run the full bundle build in CI across macOS, Windows, and Linux runners."
+    ],
+    "scaffolds": [
+      "Scaffold an app with a typed command bridge, scoped capabilities/CSP, a web frontend, and cross-platform bundle configuration.",
+      "Generate a signed auto-updater setup with key generation, update manifest, and CI publishing.",
+      "Add a cross-platform CI matrix that builds, signs, and notarizes installers for macOS, Windows, and Linux.",
+      "Create a native command module with input validation, error mapping to the frontend, and unit tests."
+    ]
+  },
+  {
+    "slug": "qt-cpp-desktop",
+    "name": "Qt / C++ Cross-Platform Desktop",
+    "description": "High-performance native desktop and embedded apps using the Qt framework with C++ or QML.",
+    "githubTopics": [
+      "qt",
+      "qml",
+      "cpp",
+      "qt6",
+      "cross-platform"
+    ],
+    "searchQueries": [
+      "topic:qt language:cpp stars:>1000",
+      "topic:qml stars:>500",
+      "topic:qt6 stars:>200"
+    ],
+    "exampleRepos": [
+      "KDE/krita"
+    ],
+    "conventions": [
+      "Build UI with Qt Quick/QML for modern fluid interfaces or Qt Widgets for classic desktop apps; keep business logic in C++ and expose it to QML via context properties or registered types.",
+      "Use the signal/slot mechanism and parent-based ownership for memory management instead of manual new/delete, and prefer smart pointers at API boundaries.",
+      "Keep the GUI thread responsive by moving long-running work to worker threads, communicating results back via queued signals.",
+      "Target a current Qt version with CMake as the build system, and structure platform-specific code behind Qt's abstractions rather than ifdef sprawl.",
+      "Mark user-facing strings for translation and ship translation files; respect system theme, high-DPI scaling, and accessibility.",
+      "Be deliberate about licensing: ship under LGPL with dynamic linking (or hold a commercial license) and document third-party attributions.",
+      "Package per platform with the deployment tooling and test on each target OS in CI."
+    ],
+    "scaffolds": [
+      "Scaffold a Qt plus CMake project with a QML frontend, a C++ backend registered to QML, and a model exposed to the view.",
+      "Generate a worker-thread pattern with signal/slot result delivery for background tasks.",
+      "Set up translation extraction and a cross-platform deployment/packaging step in CI."
+    ]
+  },
+  {
+    "slug": "pwa-offline-web",
+    "name": "Progressive Web Apps & Offline-First",
+    "description": "Installable, offline-capable web apps using service workers, web app manifests, and modern web platform APIs.",
+    "githubTopics": [
+      "pwa",
+      "progressive-web-app",
+      "service-worker",
+      "offline-first",
+      "web-app-manifest"
+    ],
+    "searchQueries": [
+      "topic:pwa stars:>1000",
+      "topic:service-worker stars:>500",
+      "topic:progressive-web-app topic:typescript stars:>500"
+    ],
+    "exampleRepos": [
+      "GoogleChrome/workbox",
+      "vite-pwa/vite-plugin-pwa",
+      "GoogleChrome/web-vitals"
+    ],
+    "conventions": [
+      "Ship a complete web app manifest (name, icons in multiple sizes, theme color, display, start URL) and serve over HTTPS so the app is installable.",
+      "Generate and version service workers with a build tool rather than hand-writing caching logic, and adopt explicit precache plus runtime-cache strategies.",
+      "Choose caching strategy per request type (cache-first for static assets, network-first or stale-while-revalidate for API data) and never cache opaque/auth responses blindly.",
+      "Handle service-worker lifecycle deliberately: prompt the user to refresh on a new version instead of silently breaking an open session, and clean up stale caches on activate.",
+      "Design offline-first with an IndexedDB wrapper for structured data and a background-sync queue for deferred writes.",
+      "Treat advanced capabilities (push, share, file access) as progressive enhancements behind feature detection, with graceful fallbacks where unsupported.",
+      "Budget and measure Core Web Vitals, and serve responsive images and code-split bundles.",
+      "Request notification/persistent-storage permissions just-in-time with clear value, never on first load."
+    ],
+    "scaffolds": [
+      "Scaffold a PWA with a build-tool service worker, a complete manifest with generated icons, and an install-prompt plus update-available flow.",
+      "Generate an offline-first data layer using IndexedDB plus a background-sync write queue.",
+      "Add a performance-budget check to the build pipeline.",
+      "Create per-route runtime caching strategies with cache versioning and cleanup."
+    ]
+  },
+  {
+    "slug": "kotlin-multiplatform-shared",
+    "name": "Kotlin Multiplatform & Compose Multiplatform",
+    "description": "Shared business logic (and optionally UI) across Android, iOS, desktop, and web with Kotlin Multiplatform.",
+    "githubTopics": [
+      "kotlin-multiplatform",
+      "compose-multiplatform",
+      "kmp",
+      "kotlin",
+      "multiplatform"
+    ],
+    "searchQueries": [
+      "topic:kotlin-multiplatform stars:>1000",
+      "topic:compose-multiplatform stars:>500",
+      "topic:kmp stars:>500"
+    ],
+    "exampleRepos": [
+      "Kotlin/kotlinx.coroutines",
+      "InsertKoinIO/koin",
+      "cashapp/sqldelight"
+    ],
+    "conventions": [
+      "Maximize shared common code (models, networking, repositories, use cases) and keep platform-specific implementations behind expect/actual declarations.",
+      "Use multiplatform-ready libraries for networking, serialization, persistence, and concurrency instead of JVM-only dependencies in shared code.",
+      "Expose a clean, suspend/flow-based API to consumers; on iOS wrap suspend functions for Swift-friendly async rather than leaking coroutine internals.",
+      "Decide UI strategy explicitly: share UI with Compose Multiplatform, or keep native UI per platform and share only logic; do not half-do both.",
+      "Inject dependencies with a multiplatform DI framework and keep the shared module free of platform framework imports.",
+      "Structure as a multi-module build with a version catalog, and run shared tests in common test plus platform-specific instrumentation.",
+      "Package the shared module as a framework for iOS consumers and a Gradle dependency for Android."
+    ],
+    "scaffolds": [
+      "Scaffold a project with shared common code (networking, serialization, persistence), Android and iOS targets, and DI.",
+      "Generate expect/actual platform abstractions for storage, networking, and platform info with implementations per target.",
+      "Set up a shared-UI module or native consumers plus a framework export for iOS.",
+      "Add common-module unit tests and a CI matrix building Android, iOS, and desktop targets."
+    ]
+  },
+  {
+    "slug": "backend-apis",
+    "name": "Backend APIs (REST / GraphQL / gRPC)",
+    "description": "Steers toward well-versioned, contract-first HTTP/RPC service APIs with consistent error handling, pagination, and auth.",
+    "githubTopics": [
+      "rest-api",
+      "graphql",
+      "grpc",
+      "api",
+      "openapi",
+      "fastapi",
+      "web-framework",
+      "json-api"
+    ],
+    "searchQueries": [
+      "topic:rest-api language:typescript stars:>2000",
+      "topic:graphql language:go stars:>3000",
+      "topic:grpc stars:>5000",
+      "topic:openapi language:python stars:>1500",
+      "topic:api topic:framework stars:>10000"
+    ],
+    "exampleRepos": [
+      "fastapi/fastapi",
+      "expressjs/express",
+      "gin-gonic/gin",
+      "grpc/grpc",
+      "hasura/graphql-engine",
+      "connectrpc/connect-go",
+      "apollographql/router"
+    ],
+    "conventions": [
+      "Design contract-first: define the OpenAPI/Protobuf/GraphQL schema before writing handlers, and generate types/clients from it so the contract is the single source of truth.",
+      "Version the public API explicitly and never make breaking changes within a published version; deprecate with a sunset window instead.",
+      "Return structured, machine-readable errors with a stable code, human message, and correlation id; map domain errors to correct status codes rather than a generic 500.",
+      "Use cursor-based pagination for large collections instead of offset/limit to keep results stable under concurrent writes, and cap page size with a documented maximum.",
+      "Validate and sanitize all inbound payloads at the boundary against the schema, rejecting unknown fields where appropriate, and never trust client-supplied ids for authorization.",
+      "Make mutating endpoints idempotent where possible (idempotency keys for create, natural replace semantics) so retries from clients and gateways are safe.",
+      "Enforce authentication and authorization as middleware/interceptors, prefer short-lived bearer tokens with scope or role checks, and apply rate limiting per principal.",
+      "Keep handlers thin: push business logic into a service layer and keep transport adapters separate so the same domain logic is reusable across protocols."
+    ],
+    "scaffolds": [
+      "Scaffold an OpenAPI-first REST service: spec file, generated server stubs and typed client, request validation, and a standardized error envelope.",
+      "Scaffold a gRPC service from a proto: code-gen wiring, interceptors for auth/logging/metrics, health and reflection services, and a REST gateway.",
+      "Scaffold a GraphQL API: schema, resolver skeletons with batching to avoid N+1, query depth/complexity limits, and persisted queries.",
+      "Generate a versioning plus deprecation checklist task that diffs a new schema against the published one and flags breaking changes."
+    ]
+  },
+  {
+    "slug": "databases-data-modeling",
+    "name": "Databases & Data Modeling",
+    "description": "Steers toward sound relational/NoSQL schema design, safe migrations, query performance, and correct transaction/consistency handling.",
+    "githubTopics": [
+      "database",
+      "postgresql",
+      "mysql",
+      "orm",
+      "sql",
+      "nosql",
+      "database-migrations",
+      "query-builder"
+    ],
+    "searchQueries": [
+      "topic:database language:go stars:>3000",
+      "topic:orm language:typescript stars:>2000",
+      "topic:postgresql stars:>5000",
+      "topic:database-migrations stars:>1000",
+      "topic:sql language:rust stars:>2000"
+    ],
+    "exampleRepos": [
+      "postgres/postgres",
+      "prisma/prisma",
+      "go-gorm/gorm",
+      "sqlc-dev/sqlc",
+      "golang-migrate/migrate",
+      "flyway/flyway",
+      "cockroachdb/cockroach"
+    ],
+    "conventions": [
+      "Treat schema changes as versioned, ordered, forward-only migrations checked into source control; pair each with a tested rollback or an expand/contract plan, never edit applied migrations.",
+      "Do schema evolution in expand-then-contract phases (add nullable column/backfill/dual-write, switch reads, then drop) so deploys stay backward-compatible and zero-downtime.",
+      "Index to match real query predicates and sort orders; add composite and covering indexes deliberately, and verify with query plans rather than guessing, since unused indexes only slow writes.",
+      "Choose the narrowest correct column types and add constraints at the database layer so the data model enforces invariants, not just application code.",
+      "Pick the right transaction isolation level for the workload and keep transactions short; understand the anomalies your level allows and guard against lost updates with locks or optimistic version columns.",
+      "Always parameterize queries to prevent injection and improve plan reuse; never build SQL by string concatenation of user input.",
+      "Use connection pooling sized to the database's limits and avoid per-request connection churn; set sane statement timeouts so a slow query cannot exhaust the pool.",
+      "Avoid N+1 access patterns by batching/joining or using a loader; for high-read paths consider read replicas and accept the replication lag explicitly in the design."
+    ],
+    "scaffolds": [
+      "Scaffold a migration framework setup: ordered up/down migration files, a CI check that runs migrate-up on a throwaway DB, and a seed-data script.",
+      "Generate an expand/contract migration plan for a column rename or type change, including backfill batching and dual-write/read-switch steps.",
+      "Scaffold a typed data-access layer from SQL query files with parameterized queries.",
+      "Create an index-and-query audit task that runs query plans on the slowest queries and proposes indexes."
+    ]
+  },
+  {
+    "slug": "devops-iac",
+    "name": "DevOps & Infrastructure as Code",
+    "description": "Steers toward declarative, reviewable, idempotent infrastructure with state safety, modularity, and least-privilege provisioning.",
+    "githubTopics": [
+      "infrastructure-as-code",
+      "devops",
+      "terraform",
+      "ansible",
+      "provisioning",
+      "configuration-management",
+      "iac"
+    ],
+    "searchQueries": [
+      "topic:infrastructure-as-code stars:>3000",
+      "topic:terraform language:hcl stars:>1500",
+      "topic:devops topic:automation stars:>2000",
+      "topic:configuration-management stars:>2000",
+      "topic:iac language:go stars:>3000"
+    ],
+    "exampleRepos": [
+      "hashicorp/terraform",
+      "pulumi/pulumi",
+      "ansible/ansible"
+    ],
+    "conventions": [
+      "Declare infrastructure declaratively and keep it in version control; the repo is the source of truth and changes flow through pull requests with a plan/diff reviewed before apply.",
+      "Always review a dry-run plan before applying, and apply through automation rather than from individual laptops.",
+      "Store remote state with locking and encryption so concurrent applies cannot corrupt it; never commit state files or secrets, and treat state as sensitive.",
+      "Make operations idempotent and convergent so re-running produces no spurious changes; avoid imperative one-off scripts that drift from declared state.",
+      "Compose infrastructure from small, versioned, reusable modules with clear inputs/outputs; pin module and provider versions for reproducible builds.",
+      "Parameterize per-environment via variable files or workspaces rather than copy-pasting, keeping environments structurally identical to catch drift.",
+      "Provision with least privilege: scope service accounts/roles to exactly what a component needs, and inject secrets from a vault/secret manager at apply time, never hardcoded.",
+      "Detect and remediate drift continuously and tag all resources with owner, environment, and cost-center for governance."
+    ],
+    "scaffolds": [
+      "Scaffold an IaC project with a remote backend plus state locking, per-environment workspaces, and a reusable module layout.",
+      "Generate a CI pipeline that runs format/validate/lint and posts a plan diff on PRs, gating apply behind approval on the main branch.",
+      "Scaffold a configuration-management playbook plus inventory with check-mode support, roles, and idempotent tasks.",
+      "Create a drift-detection task that runs a scheduled plan and reports unmanaged or changed resources."
+    ]
+  },
+  {
+    "slug": "cloud-native-orchestration",
+    "name": "Cloud-Native & Container Orchestration",
+    "description": "Steers toward containerized, Kubernetes-native, twelve-factor workloads with healthchecks, resource limits, autoscaling, and GitOps delivery.",
+    "githubTopics": [
+      "kubernetes",
+      "cloud-native",
+      "containers",
+      "serverless",
+      "docker",
+      "helm",
+      "cncf",
+      "service-mesh"
+    ],
+    "searchQueries": [
+      "topic:kubernetes language:go stars:>5000",
+      "topic:cloud-native stars:>3000",
+      "topic:serverless stars:>2000",
+      "topic:service-mesh stars:>3000",
+      "topic:helm stars:>1000"
+    ],
+    "exampleRepos": [
+      "kubernetes/kubernetes",
+      "helm/helm",
+      "argoproj/argo-cd",
+      "knative/serving",
+      "envoyproxy/envoy",
+      "traefik/traefik",
+      "dapr/dapr"
+    ],
+    "conventions": [
+      "Build stateless, twelve-factor workloads: configuration via environment/secrets, no local disk for durable state, and graceful shutdown on termination signals so pods can be rescheduled freely.",
+      "Define liveness, readiness, and startup probes distinctly so the orchestrator restarts hung pods, withholds traffic until ready, and tolerates slow boots.",
+      "Set CPU/memory requests and limits on every container so the scheduler can bin-pack and so a runaway pod cannot starve neighbors; right-size from observed usage.",
+      "Use small, pinned, multi-stage container images running as a non-root user with a read-only root filesystem and dropped capabilities to shrink the attack surface.",
+      "Deliver via GitOps: a git repo is the desired state and a controller reconciles the cluster to it, making deploys auditable and rollbacks a git revert.",
+      "Externalize config and secrets into config/secret objects (or a secrets operator) and inject at runtime; never bake credentials into images.",
+      "Roll out progressively (rolling/blue-green/canary) with health-gated promotion and automatic rollback, and use disruption budgets to keep capacity during node drains.",
+      "Apply network policies, namespaces, and role-based access control for least-privilege isolation between workloads and the control plane."
+    ],
+    "scaffolds": [
+      "Scaffold a multi-stage container image (non-root, minimal base, pinned digests) plus an ignore file for a given language.",
+      "Generate a Kubernetes deployment set: workload with probes/limits, service, autoscaler, and a chart or overlay per environment.",
+      "Scaffold a GitOps repo layout wired to a reconciling controller.",
+      "Create a progressive-delivery manifest with health-gated promotion and rollback."
+    ]
+  },
+  {
+    "slug": "ci-cd-pipelines",
+    "name": "CI/CD Pipelines & Release Automation",
+    "description": "Steers toward fast, reproducible, secure pipelines: cached builds, gated tests, artifact provenance, and automated, reversible deploys.",
+    "githubTopics": [
+      "cicd",
+      "continuous-integration",
+      "continuous-delivery",
+      "github-actions",
+      "pipeline",
+      "build-automation",
+      "release-automation"
+    ],
+    "searchQueries": [
+      "topic:cicd stars:>2000",
+      "topic:continuous-integration language:go stars:>3000",
+      "topic:github-actions stars:>2000",
+      "topic:continuous-delivery stars:>3000",
+      "topic:pipeline topic:kubernetes stars:>2000"
+    ],
+    "exampleRepos": [
+      "actions/runner",
+      "argoproj/argo-cd",
+      "tektoncd/pipeline",
+      "goharbor/harbor"
+    ],
+    "conventions": [
+      "Make builds reproducible and hermetic: pin tool and dependency versions via lockfiles, and avoid pipeline steps that depend on hidden machine state so the same commit always yields the same artifact.",
+      "Fail fast and run independent stages in parallel; order cheap checks before expensive ones so feedback is quick.",
+      "Cache dependencies and build layers keyed by lockfile hash to cut pipeline time, but key caches correctly so stale caches never mask broken builds.",
+      "Build an artifact once and promote that same immutable artifact through environments by digest, rather than rebuilding per stage, to guarantee what was tested is what ships.",
+      "Gate merges on required status checks and keep the main branch always releasable; block on test, lint, and security-scan results.",
+      "Never hardcode secrets in pipeline files; inject from the platform's secret store with least-privilege, short-lived credentials and prefer federated identity over long-lived keys.",
+      "Scan in the pipeline (dependency, static analysis, container image, IaC) and generate provenance/SBOM so releases are auditable and supply-chain-verifiable.",
+      "Automate deploys with a clear rollback path (versioned releases, health checks, automatic revert on failure) so any deploy can be undone quickly."
+    ],
+    "scaffolds": [
+      "Scaffold a CI workflow with cached deps, parallel lint/test jobs, matrix builds, and required-check gating.",
+      "Generate a build-once/promote pipeline that pushes an immutable image and deploys the same digest across dev/staging/prod.",
+      "Scaffold federated-identity cloud auth in CI to replace long-lived access keys.",
+      "Create a release-automation task: semantic version bump, changelog generation, SBOM/provenance, and a tagged release."
+    ]
+  },
+  {
+    "slug": "observability-monitoring",
+    "name": "Observability & Monitoring",
+    "description": "Steers toward instrumented services with metrics, structured logs, and distributed traces tied to SLOs and actionable alerts.",
+    "githubTopics": [
+      "observability",
+      "monitoring",
+      "opentelemetry",
+      "metrics",
+      "logging",
+      "distributed-tracing",
+      "prometheus",
+      "tracing"
+    ],
+    "searchQueries": [
+      "topic:observability stars:>3000",
+      "topic:opentelemetry language:go stars:>2000",
+      "topic:monitoring topic:metrics stars:>5000",
+      "topic:distributed-tracing stars:>2000",
+      "topic:logging language:rust stars:>2000"
+    ],
+    "exampleRepos": [
+      "prometheus/prometheus",
+      "grafana/grafana",
+      "open-telemetry/opentelemetry-collector",
+      "jaegertracing/jaeger",
+      "fluent/fluentd",
+      "vectordotdev/vector"
+    ],
+    "conventions": [
+      "Instrument the three signals together: metrics for aggregate health, structured logs for events, and distributed traces for request flow, and correlate them via a shared trace/request id.",
+      "Use vendor-neutral instrumentation and semantic conventions so telemetry is portable and exporters/backends can be swapped without recoding.",
+      "Emit structured logs, not free-text, with consistent fields (timestamp, level, service, trace id) so they are queryable and machine-parseable.",
+      "Propagate trace context across service boundaries and message queues so a single request can be followed end-to-end through the whole system.",
+      "Define service-level indicators and objectives and alert on symptoms that affect users (latency, error rate, saturation) rather than on every raw metric, to keep alerts actionable.",
+      "Prefer low-cardinality metric labels; never put unbounded values into metric labels, as cardinality explosion can overwhelm the metrics backend.",
+      "Make telemetry safe and affordable: redact secrets and personal data from logs and span attributes, and sample traces on high-volume paths.",
+      "Build dashboards and alerts as version-controlled code and include runbook links in alerts so on-call responders have immediate context."
+    ],
+    "scaffolds": [
+      "Scaffold instrumentation for a service: SDK setup, auto-instrumentation, an exporter, and context propagation across HTTP/RPC.",
+      "Generate a structured-logging setup with correlation/trace-id injection and sensitive-data redaction.",
+      "Scaffold a metrics plus alerting bundle: instrumented counters/histograms, scrape config, and objective-based alert rules with runbook links.",
+      "Create dashboards-as-code for rate/errors/duration and utilization/saturation/errors methods."
+    ]
+  },
+  {
+    "slug": "message-queues-streaming",
+    "name": "Message Queues & Event Streaming",
+    "description": "Steers toward reliable async messaging: durable delivery, idempotent consumers, ordering/partitioning, and dead-letter handling.",
+    "githubTopics": [
+      "message-queue",
+      "event-driven",
+      "kafka",
+      "rabbitmq",
+      "pubsub",
+      "streaming",
+      "event-streaming",
+      "messaging"
+    ],
+    "searchQueries": [
+      "topic:message-queue stars:>2000",
+      "topic:kafka language:java stars:>3000",
+      "topic:event-driven stars:>2000",
+      "topic:pubsub language:go stars:>2000",
+      "topic:streaming topic:messaging stars:>3000"
+    ],
+    "exampleRepos": [
+      "apache/kafka",
+      "rabbitmq/rabbitmq-server",
+      "nats-io/nats-server",
+      "debezium/debezium"
+    ],
+    "conventions": [
+      "Make consumers idempotent: assume at-least-once delivery and deduplicate by message id or use idempotency keys, because exactly-once is hard and most brokers redeliver on failure.",
+      "Acknowledge messages only after successful processing (and commit offsets after, not before) so a crash mid-processing causes redelivery rather than silent loss.",
+      "Route messages that repeatedly fail to a dead-letter queue with a retry/backoff policy, so a single poison message cannot block the partition or stall the consumer group.",
+      "Preserve ordering only where required by using a partition/routing key; accept that strict global ordering limits parallelism and design for per-key ordering instead.",
+      "Version event schemas and evolve them compatibly; add fields rather than repurposing them so old consumers keep working during rollout.",
+      "Decouple producers and consumers via the broker and keep messages self-contained or use the claim-check pattern for large payloads.",
+      "Use the transactional-outbox or change-data-capture pattern to publish events atomically with the database write, avoiding dual-write inconsistency.",
+      "Monitor consumer lag, queue depth, and redelivery counts, and alert when consumers fall behind so backpressure is visible before it becomes an outage."
+    ],
+    "scaffolds": [
+      "Scaffold a producer/consumer pair with idempotent processing, manual ack/offset commit, and retry-with-backoff plus dead-letter routing.",
+      "Generate a transactional-outbox plus change-data-capture setup that publishes domain events atomically with DB writes.",
+      "Scaffold a schema-registry-backed event contract with compatible-evolution checks in CI.",
+      "Create a consumer-lag monitoring plus alerting task for a topic/queue."
+    ]
+  },
+  {
+    "slug": "caching-in-memory-stores",
+    "name": "Caching & In-Memory Stores",
+    "description": "Steers toward correct, safe caching: explicit invalidation, TTLs, stampede protection, and the right cache topology for the workload.",
+    "githubTopics": [
+      "caching",
+      "redis",
+      "cache",
+      "in-memory-database",
+      "memcached",
+      "key-value-store",
+      "valkey"
+    ],
+    "searchQueries": [
+      "topic:caching stars:>2000",
+      "topic:redis language:c stars:>5000",
+      "topic:cache language:go stars:>2000",
+      "topic:in-memory-database stars:>3000",
+      "topic:key-value-store language:rust stars:>2000"
+    ],
+    "exampleRepos": [
+      "redis/redis",
+      "valkey-io/valkey",
+      "memcached/memcached",
+      "etcd-io/etcd"
+    ],
+    "conventions": [
+      "Set an explicit TTL on every cache entry so stale data self-heals; never cache indefinitely without an invalidation or expiry strategy, as unbounded staleness is a correctness bug.",
+      "Pick an invalidation strategy deliberately (TTL expiry, write-through, or explicit delete-on-write) and design for it up front, since cache invalidation is genuinely hard.",
+      "Protect against cache stampede on hot keys: use request coalescing/single-flight, jittered TTLs, or early/background refresh so a key expiry does not flood the origin with identical recomputations.",
+      "Choose the topology to match the access pattern: cache-aside for read-heavy with tolerable misses, write-through/write-behind when reads must be fresh, and size the cache so the working set fits.",
+      "Treat the cache as a performance optimization, not a source of truth: the system must remain correct (just slower) if the cache is empty or unavailable, and must tolerate cache nodes failing.",
+      "Namespace and version cache keys so a deploy that changes the cached shape can invalidate cleanly without serving incompatible data.",
+      "Bound memory with an eviction policy appropriate to the workload, and monitor hit rate, evictions, and memory pressure to know whether the cache is actually helping.",
+      "Guard against thundering-herd misses and penetration of nonexistent keys by caching negative results briefly or using a bloom filter to shield the backing store."
+    ],
+    "scaffolds": [
+      "Scaffold a cache-aside helper with TTL plus jitter, single-flight stampede protection, and hit/miss/eviction metrics.",
+      "Generate a write-through/write-behind caching layer wired to a data-access repository.",
+      "Scaffold versioned, namespaced cache-key helpers tied to the deployed schema version.",
+      "Create a cache-health monitoring task reporting hit rate, eviction rate, and memory usage with alert thresholds."
+    ]
+  },
+  {
+    "slug": "classical-ml-data-science",
+    "name": "Classical ML & Data Science",
+    "description": "Tabular data analysis, feature engineering, and classical (non-deep) machine learning with the data-science stack.",
+    "githubTopics": [
+      "machine-learning",
+      "data-science",
+      "scikit-learn",
+      "pandas",
+      "gradient-boosting",
+      "feature-engineering"
+    ],
+    "searchQueries": [
+      "topic:scikit-learn language:python stars:>2000",
+      "topic:gradient-boosting language:python stars:>1000",
+      "topic:data-science topic:pandas stars:>3000",
+      "topic:machine-learning language:python stars:>5000"
+    ],
+    "exampleRepos": [
+      "scikit-learn/scikit-learn",
+      "pandas-dev/pandas",
+      "dmlc/xgboost",
+      "microsoft/LightGBM",
+      "catboost/catboost"
+    ],
+    "conventions": [
+      "Split data before any fitting and keep a held-out test set untouched; use cross-validation only on the train split to avoid leakage.",
+      "Wrap preprocessing and the estimator in a single pipeline so transforms are fit only on training folds and applied identically at inference.",
+      "Fit scalers, encoders, and imputers on training data only; never fit on the full dataset or on the test set.",
+      "Select metrics that match the problem and class balance rather than relying on accuracy alone.",
+      "Set and record seeds for reproducible splits, models, and resampling.",
+      "Prefer vectorized array operations over row loops; use categorical dtypes and chunking for large frames.",
+      "Tune hyperparameters with nested or grouped cross-validation when appropriate, and report variance across folds, not a single point estimate.",
+      "Check for and document data leakage, target leakage, and train/serve skew before trusting results."
+    ],
+    "scaffolds": [
+      "End-to-end tabular pipeline scaffold: load, split, transform, model, cross-validate, and persist an artifact.",
+      "Exploratory-analysis notebook template with profiling, missingness/outlier checks, and correlation/leakage diagnostics.",
+      "Hyperparameter search task with logged trials and a reproducibility seed block.",
+      "Model card plus evaluation report generator summarizing metrics, CV variance, and feature importances."
+    ]
+  },
+  {
+    "slug": "deep-learning-frameworks",
+    "name": "Deep Learning Frameworks & Training",
+    "description": "Building, training, and scaling neural networks with the major frameworks and high-level training loops.",
+    "githubTopics": [
+      "deep-learning",
+      "pytorch",
+      "neural-network",
+      "tensorflow",
+      "jax",
+      "distributed-training"
+    ],
+    "searchQueries": [
+      "topic:deep-learning topic:pytorch language:python stars:>3000",
+      "topic:jax language:python stars:>1000",
+      "topic:distributed-training stars:>1000",
+      "topic:neural-network language:python stars:>2000"
+    ],
+    "exampleRepos": [
+      "pytorch/pytorch",
+      "Lightning-AI/pytorch-lightning",
+      "google/jax",
+      "huggingface/accelerate",
+      "keras-team/keras",
+      "google-deepmind/optax"
+    ],
+    "conventions": [
+      "Seed all RNGs and set deterministic flags when reproducibility is required, accepting the performance trade-off.",
+      "Keep data loading off the critical path with prefetching, pinned memory, and enough workers; profile before assuming the accelerator is the bottleneck.",
+      "Use mixed precision and gradient accumulation to fit larger effective batch sizes, and scale learning rate with batch size.",
+      "Separate model definition, training loop, data module, and config so experiments are composable and resumable from checkpoints.",
+      "Always evaluate on a validation set each epoch, checkpoint the best model by the validation metric, and use early stopping to avoid overfitting.",
+      "Move tensors and models to the correct device explicitly and avoid host-device syncs inside hot loops.",
+      "Clip gradients and monitor for NaN/Inf losses; log learning rate, gradient norm, and throughput, not just loss.",
+      "Prefer established distributed strategies over hand-rolled multi-accelerator code, and verify single-device correctness first."
+    ],
+    "scaffolds": [
+      "Training scaffold with config, data module, checkpointing, and resume support.",
+      "Mixed-precision plus gradient-accumulation training loop template with metric logging hooks.",
+      "Distributed launch script with per-rank logging.",
+      "Experiment config plus sweep template wiring seeds, callbacks, and artifact paths."
+    ]
+  },
+  {
+    "slug": "nlp-llm-apps",
+    "name": "NLP & LLM Applications",
+    "description": "RAG, agents, prompt orchestration, and LLM-powered application development with retrieval and tool use.",
+    "githubTopics": [
+      "llm",
+      "rag",
+      "nlp",
+      "langchain",
+      "vector-database",
+      "llmops"
+    ],
+    "searchQueries": [
+      "topic:llm topic:rag language:python stars:>2000",
+      "topic:vector-database stars:>2000",
+      "topic:nlp topic:transformers language:python stars:>5000",
+      "topic:llm-agents stars:>1000"
+    ],
+    "exampleRepos": [
+      "langchain-ai/langchain",
+      "run-llama/llama_index",
+      "huggingface/transformers",
+      "chroma-core/chroma",
+      "qdrant/qdrant",
+      "explosion/spaCy",
+      "BerriAI/litellm"
+    ],
+    "conventions": [
+      "Treat prompts as versioned, reviewable artifacts; separate system/instruction/context/user roles and keep templates out of inline string concatenation.",
+      "In retrieval-augmented generation, chunk with semantic boundaries and overlap, store rich metadata for filtering, and evaluate retrieval separately from generation quality.",
+      "Ground answers in retrieved context and require citations; instruct the model to abstain when context is insufficient rather than hallucinate.",
+      "Constrain and validate model output with structured schemas (JSON/function calling) and parse defensively with retries on malformed output.",
+      "Set token budgets, timeouts, and cost/rate-limit handling; stream responses and cache deterministic calls where possible.",
+      "Never inject untrusted content directly as instructions; mitigate prompt injection by isolating retrieved/user data from system directives.",
+      "Build an evaluation harness with a fixed test set and automatic graders before tuning prompts.",
+      "Keep API keys out of code, abstract providers behind a single client, and log requests/responses for traceability without leaking sensitive data."
+    ],
+    "scaffolds": [
+      "Retrieval pipeline scaffold: ingest, chunk, embed, store, retrieve, and produce a grounded answer with citations.",
+      "Evaluation harness template with a golden dataset, judge prompts, and regression scoring.",
+      "Tool-calling agent skeleton with typed tool schemas, retry/guardrail wrapping, and tracing.",
+      "Structured-extraction task: schema definition plus validation and repair loop over model output."
+    ]
+  },
+  {
+    "slug": "computer-vision",
+    "name": "Computer Vision",
+    "description": "Image/video classification, detection, segmentation, and vision pipelines with deep and classical methods.",
+    "githubTopics": [
+      "computer-vision",
+      "object-detection",
+      "image-segmentation",
+      "opencv",
+      "image-classification",
+      "pose-estimation"
+    ],
+    "searchQueries": [
+      "topic:computer-vision topic:object-detection language:python stars:>2000",
+      "topic:image-segmentation language:python stars:>1500",
+      "topic:opencv language:python stars:>1000",
+      "topic:computer-vision stars:>3000"
+    ],
+    "exampleRepos": [
+      "opencv/opencv",
+      "ultralytics/ultralytics",
+      "open-mmlab/mmdetection",
+      "facebookresearch/detectron2",
+      "albumentations-team/albumentations",
+      "kornia/kornia"
+    ],
+    "conventions": [
+      "Apply data augmentation on the training set only and keep validation/test transforms deterministic.",
+      "Match normalization and input resolution to the pretrained backbone's expectations when fine-tuning.",
+      "Choose task-appropriate metrics (mAP/IoU for detection and segmentation, top-k accuracy for classification) and report per-class results.",
+      "Verify annotation correctness and coordinate conventions before training to avoid silent label errors.",
+      "Use transfer learning from pretrained weights for small datasets, and freeze/unfreeze layers progressively.",
+      "Handle class imbalance and small objects explicitly with appropriate losses, tiling, or weighted sampling.",
+      "Decouple decoding/post-processing from the model and tune confidence/overlap thresholds on validation data.",
+      "Profile the input pipeline since decode/resize/augment is often the throughput bottleneck, not the accelerator."
+    ],
+    "scaffolds": [
+      "Detection/segmentation training scaffold with dataset adapter, augmentation pipeline, and mAP/IoU evaluation.",
+      "Transfer-learning image-classification template with pretrained backbone and progressive unfreezing.",
+      "Inference plus visualization task that overlays boxes/masks and exports to an optimized runtime format.",
+      "Dataset conversion utility between common annotation formats with label-sanity checks."
+    ]
+  },
+  {
+    "slug": "scientific-computing",
+    "name": "Scientific Computing & Numerical Methods",
+    "description": "Numerical computing, simulation, optimization, and symbolic/statistical modeling for research and engineering.",
+    "githubTopics": [
+      "scientific-computing",
+      "numpy",
+      "scipy",
+      "numerical-methods",
+      "simulation",
+      "computational-science"
+    ],
+    "searchQueries": [
+      "topic:scientific-computing language:python stars:>1000",
+      "topic:numerical-methods stars:>500",
+      "topic:scipy language:python stars:>2000",
+      "topic:simulation topic:computational-physics stars:>500"
+    ],
+    "exampleRepos": [
+      "numpy/numpy",
+      "scipy/scipy",
+      "sympy/sympy",
+      "cupy/cupy",
+      "google/jax",
+      "FEniCS/dolfinx"
+    ],
+    "conventions": [
+      "Vectorize with array operations and broadcasting; reserve explicit loops for cases that cannot be expressed in array form, and consider JIT compilation for those.",
+      "Be explicit about dtypes and precision and understand floating-point error accumulation and conditioning in numerical algorithms.",
+      "Prefer well-tested library solvers over hand-rolled numerics, and check convergence/residuals rather than assuming success.",
+      "Use stable formulations and check matrix conditioning before inverting.",
+      "Validate numerical code against analytical solutions, conservation laws, or convergence-order studies, not just that it runs.",
+      "Track and propagate units and physical constants explicitly; keep dimensional consistency in formulas.",
+      "Set tolerances, max iterations, and seeds explicitly for iterative and stochastic methods so results are reproducible.",
+      "Profile and report complexity/memory; exploit sparsity and structure instead of dense general routines."
+    ],
+    "scaffolds": [
+      "Numerical experiment scaffold with a solver, convergence/order-of-accuracy study, and plots.",
+      "Vectorized-vs-loop benchmark template comparing array and JIT implementations.",
+      "Simulation skeleton with a configurable solver, boundary conditions, and validation against a known solution.",
+      "Optimization task template with gradient checks and convergence diagnostics."
+    ]
+  },
+  {
+    "slug": "bioinformatics-genomics",
+    "name": "Bioinformatics & Genomics",
+    "description": "Sequence analysis, genomics/omics pipelines, and reproducible biological data workflows.",
+    "githubTopics": [
+      "bioinformatics",
+      "genomics",
+      "sequencing",
+      "computational-biology",
+      "single-cell",
+      "nextflow"
+    ],
+    "searchQueries": [
+      "topic:bioinformatics language:python stars:>500",
+      "topic:genomics topic:sequencing stars:>300",
+      "topic:nextflow stars:>500",
+      "topic:single-cell language:python stars:>500"
+    ],
+    "exampleRepos": [
+      "biopython/biopython",
+      "scverse/scanpy",
+      "nf-core/rnaseq",
+      "samtools/samtools",
+      "pysam-developers/pysam",
+      "snakemake/snakemake"
+    ],
+    "conventions": [
+      "Use standard file formats and their indexed forms and validate them rather than parsing ad hoc.",
+      "Pin tool versions and reference genome/annotation builds; record them so analyses are reproducible and comparable across runs.",
+      "Build pipelines with workflow managers and containers for portability and provenance.",
+      "Apply appropriate QC and filtering at each stage before downstream analysis.",
+      "Correct for multiple testing in differential/association analyses and report adjusted p-values and effect sizes.",
+      "Be explicit about coordinate systems (0-based vs 1-based, half-open intervals) and strand conventions to avoid off-by-one errors.",
+      "Stream and chunk large genomic files instead of loading them fully into memory, and use the indexed access APIs.",
+      "Document the reference, parameters, and software environment for every step to support reproducible science."
+    ],
+    "scaffolds": [
+      "Workflow-manager pipeline scaffold with containerized steps, config, and per-stage QC reports.",
+      "Sequence-analysis task with format validation and indexed access.",
+      "Single-cell analysis template covering QC, normalization, clustering, and marker genes.",
+      "Variant-calling/annotation workflow skeleton with reference pinning and filtering thresholds."
+    ]
+  },
+  {
+    "slug": "data-engineering-pipelines",
+    "name": "Data Engineering & Pipelines",
+    "description": "Batch/stream ETL/ELT, orchestration, and large-scale data processing with reliable, tested pipelines.",
+    "githubTopics": [
+      "data-engineering",
+      "etl",
+      "data-pipeline",
+      "apache-spark",
+      "airflow",
+      "data-orchestration"
+    ],
+    "searchQueries": [
+      "topic:data-engineering stars:>1000",
+      "topic:etl topic:data-pipeline stars:>800",
+      "topic:workflow-orchestration language:python stars:>2000",
+      "topic:apache-spark stars:>1000"
+    ],
+    "exampleRepos": [
+      "apache/airflow",
+      "dagster-io/dagster",
+      "apache/spark",
+      "dbt-labs/dbt-core",
+      "duckdb/duckdb",
+      "apache/arrow",
+      "great-expectations/great_expectations"
+    ],
+    "conventions": [
+      "Make pipeline steps idempotent and safe to retry; design for at-least-once delivery and deduplicate downstream.",
+      "Prefer declarative, observable orchestration with explicit dependencies, retries, backfills, and SLAs over cron-driven scripts.",
+      "Validate data quality at boundaries with schema/contract and expectation checks, and fail fast on contract violations.",
+      "Use columnar formats and partitioning/predicate pushdown for analytical workloads; avoid row-by-row processing at scale.",
+      "Separate compute from storage and parameterize environments so the same pipeline runs across dev/staging/prod.",
+      "Capture lineage and metadata, and make jobs deterministic given the same inputs and parameters for reproducible reruns.",
+      "Handle late, missing, and malformed data explicitly with dead-letter paths and watermarks for streaming.",
+      "Test transformations with unit tests on logic and integration tests on representative samples, not only in production."
+    ],
+    "scaffolds": [
+      "Orchestrated ETL/ELT scaffold with idempotent tasks, retries, and backfill support.",
+      "Transformation project template with staging/mart models, tests, and documentation.",
+      "Batch processing job reading and writing partitioned columnar data with schema checks.",
+      "Data-quality gate task wiring expectation/schema contracts into the pipeline."
+    ]
+  },
+  {
+    "slug": "mlops-model-serving",
+    "name": "MLOps, Experiment Tracking & Serving",
+    "description": "Experiment tracking, model registry, deployment/serving, and monitoring for production ML systems.",
+    "githubTopics": [
+      "mlops",
+      "model-serving",
+      "experiment-tracking",
+      "model-registry",
+      "machine-learning-operations",
+      "feature-store"
+    ],
+    "searchQueries": [
+      "topic:mlops stars:>1000",
+      "topic:model-serving stars:>800",
+      "topic:experiment-tracking language:python stars:>1000",
+      "topic:feature-store stars:>500"
+    ],
+    "exampleRepos": [
+      "mlflow/mlflow",
+      "kserve/kserve",
+      "bentoml/BentoML",
+      "feast-dev/feast",
+      "iterative/dvc",
+      "kubeflow/kubeflow",
+      "evidentlyai/evidently"
+    ],
+    "conventions": [
+      "Track every experiment's params, metrics, code version, data version, and environment so any run is reproducible and comparable.",
+      "Version data and artifacts (not just code) and register models with stage/lifecycle metadata in a model registry.",
+      "Package models with their preprocessing and dependencies behind a stable inference contract to prevent train/serve skew.",
+      "Automate the path from training to deployment with CI/CD, and gate promotion on evaluation metrics and tests rather than manual copying.",
+      "Monitor production models for data drift, prediction drift, latency, and quality, with alerting and a rollback/canary strategy.",
+      "Keep feature computation consistent between training and serving, ideally via a shared feature pipeline or feature store.",
+      "Make deployments reproducible and rollback-able with pinned images, infrastructure-as-code, and immutable artifacts.",
+      "Define latency/throughput/availability objectives and load-test serving before launch; scale with batching/autoscaling as needed."
+    ],
+    "scaffolds": [
+      "Experiment-tracking plus model-registry scaffold logging params, metrics, and signed artifacts.",
+      "Model serving template with input schema validation and a health/metrics endpoint.",
+      "CI/CD pipeline for ML: train, evaluate, gate, register, deploy with versioned artifacts.",
+      "Drift/quality monitoring task producing reports and alert thresholds for a deployed model."
+    ]
+  },
+  {
+    "slug": "game-development",
+    "name": "Game Development",
+    "description": "Building games and interactive experiences with engines, ECS architectures, and tight game loops.",
+    "githubTopics": [
+      "game-development",
+      "gamedev",
+      "game-engine",
+      "game",
+      "ecs",
+      "godot",
+      "bevy",
+      "2d-game"
+    ],
+    "searchQueries": [
+      "topic:game-engine language:rust stars:>2000",
+      "topic:game-development language:cpp stars:>3000",
+      "topic:gamedev stars:>1500",
+      "topic:ecs stars:>1000",
+      "topic:godot stars:>1000",
+      "topic:game-engine language:csharp stars:>2000"
+    ],
+    "exampleRepos": [
+      "bevyengine/bevy",
+      "godotengine/godot",
+      "FlaxEngine/FlaxEngine",
+      "libgdx/libgdx",
+      "love2d/love",
+      "not-fl3/macroquad"
+    ],
+    "conventions": [
+      "Keep the game loop deterministic by decoupling the fixed-timestep simulation/physics update from the variable-rate render loop, and interpolate render state between simulation ticks.",
+      "Multiply per-frame movement, timers, and physics by delta time so behavior is frame-rate independent across machines.",
+      "Prefer data-oriented design and Entity-Component-System layouts over deep inheritance hierarchies to keep hot data cache-friendly and systems composable.",
+      "Pool and reuse frequently spawned objects instead of allocating per frame to avoid GC pauses and allocator churn in the hot path.",
+      "Separate game logic from rendering and input so the simulation can run headless for tests, deterministic replays, and dedicated servers.",
+      "Drive content (levels, tuning values, spawn tables) from data/assets rather than hardcoding, so designers iterate without recompiling.",
+      "For networked games use server-authoritative simulation with client-side prediction and reconciliation; never trust client-reported state.",
+      "Budget per-frame work to the target frame time and profile with a frame profiler rather than guessing at bottlenecks."
+    ],
+    "scaffolds": [
+      "Scaffold an ECS-based game skeleton with fixed-timestep update loop, render interpolation, and an input abstraction layer.",
+      "Generate a 2D platformer starter: tilemap loader, collision/resolution, sprite animation state machine, and camera follow.",
+      "Set up a client/server netcode template with snapshot interpolation, client prediction, and server reconciliation.",
+      "Create an asset/content pipeline task: import textures and audio, generate atlases, and emit a runtime manifest."
+    ]
+  },
+  {
+    "slug": "3d-graphics-modeling",
+    "name": "3D Graphics & Modeling",
+    "description": "Mesh processing, geometry, scene/asset pipelines, content-creation tooling, and 3D content formats.",
+    "githubTopics": [
+      "3d",
+      "3d-graphics",
+      "mesh",
+      "computational-geometry",
+      "gltf",
+      "geometry-processing",
+      "computer-graphics",
+      "point-cloud",
+      "mesh-processing"
+    ],
+    "searchQueries": [
+      "topic:3d language:cpp stars:>2000",
+      "topic:mesh-processing stars:>1000",
+      "topic:gltf stars:>500",
+      "topic:computational-geometry language:cpp stars:>1500",
+      "topic:point-cloud stars:>2000",
+      "topic:computer-graphics stars:>3000"
+    ],
+    "exampleRepos": [
+      "assimp/assimp",
+      "KhronosGroup/glTF",
+      "PointCloudLibrary/pcl",
+      "libigl/libigl",
+      "CGAL/cgal",
+      "isl-org/Open3D",
+      "AcademySoftwareFoundation/openexr"
+    ],
+    "conventions": [
+      "Adopt a single, explicit coordinate-system and handedness convention (axis up, winding order, units) at import time and convert all assets into it.",
+      "Prefer indexed triangle meshes with shared vertex buffers over duplicated vertices to cut memory and improve vertex-cache reuse.",
+      "Validate and repair imported geometry (non-manifold edges, degenerate triangles, inverted normals, duplicate vertices) before downstream processing.",
+      "Use established interchange formats for runtime delivery and scene composition instead of bespoke binary blobs to stay tool-interoperable.",
+      "Compute normals and tangents consistently so lighting matches across content-creation tools and engines.",
+      "Build spatial acceleration structures (BVH, k-d tree, octree) for ray queries, nearest-neighbor, and collision rather than brute-force scans.",
+      "Keep transforms hierarchical with cached local-to-world matrices and recompute lazily on dirty flags to avoid redundant matrix math.",
+      "Stream and level-of-detail large assets (mesh decimation, mipmaps, texture compression) so memory and bandwidth scale with what is on screen."
+    ],
+    "scaffolds": [
+      "Scaffold a glTF import/export round-trip tool with material, animation, and node-hierarchy preservation plus a validation pass.",
+      "Generate a mesh-processing pipeline: load, weld vertices, recompute normals/tangents, decimate to target LODs, and export.",
+      "Build a spatial-index module with ray-cast and nearest-neighbor queries and a small benchmark harness.",
+      "Create a procedural-geometry generator emitting validated indexed meshes."
+    ]
+  },
+  {
+    "slug": "real-time-rendering",
+    "name": "Real-Time Rendering & GPU",
+    "description": "GPU rendering, shaders, and graphics APIs (Vulkan, Metal, DX12, WebGPU) for interactive frame rates.",
+    "githubTopics": [
+      "vulkan",
+      "rendering",
+      "renderer",
+      "shaders",
+      "graphics-programming",
+      "webgpu",
+      "opengl",
+      "ray-tracing",
+      "pbr"
+    ],
+    "searchQueries": [
+      "topic:vulkan language:cpp stars:>2000",
+      "topic:renderer language:rust stars:>1500",
+      "topic:webgpu stars:>1000",
+      "topic:shaders stars:>2000",
+      "topic:ray-tracing language:cpp stars:>1500",
+      "topic:graphics-programming stars:>3000"
+    ],
+    "exampleRepos": [
+      "gfx-rs/wgpu",
+      "KhronosGroup/Vulkan-Samples",
+      "ocornut/imgui",
+      "google/filament",
+      "bkaradzic/bgfx",
+      "GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator"
+    ],
+    "conventions": [
+      "Minimize CPU-GPU synchronization and draw-call count: batch by material/pipeline state, use instancing, and prefer indirect/multi-draw over per-object submits.",
+      "Use explicit double/triple buffering of per-frame resources so the CPU never stalls waiting on the GPU to finish a prior frame.",
+      "Manage GPU memory with a dedicated allocator and sub-allocate from large heaps; avoid per-frame buffer/image creation and destruction.",
+      "Make resource state transitions and synchronization explicit and minimal in modern APIs; over-barriering serializes the GPU.",
+      "Author shaders against a shared lighting/material convention (linear-space color, energy-conserving PBR) and apply gamma/tonemapping only at output.",
+      "Precompile and cache pipeline state objects and shader modules; building them at draw time causes hitches.",
+      "Profile on the GPU with timestamp queries and vendor tools and optimize the actual bottleneck (fill rate vs vertex vs bandwidth).",
+      "Prefer a render-graph abstraction to declare passes and resource dependencies, enabling automatic barrier and transient-memory management."
+    ],
+    "scaffolds": [
+      "Scaffold a cross-platform render loop: swapchain setup, per-frame uniform ring buffer, and a triangle-to-textured-mesh progression.",
+      "Generate a forward+ or deferred PBR pipeline skeleton with HDR render targets, tonemapping, and a debug overlay.",
+      "Build a minimal render-graph module that declares passes and resources and auto-inserts barriers/transitions.",
+      "Create a shader hot-reload plus validation task that recompiles on change and surfaces compile errors inline."
+    ]
+  },
+  {
+    "slug": "embedded-iot",
+    "name": "Embedded & IoT",
+    "description": "Firmware for microcontrollers and constrained devices, RTOS tasks, and IoT connectivity.",
+    "githubTopics": [
+      "embedded",
+      "iot",
+      "microcontroller",
+      "firmware",
+      "rtos",
+      "esp32",
+      "embedded-systems",
+      "stm32",
+      "arduino"
+    ],
+    "searchQueries": [
+      "topic:embedded language:rust stars:>1500",
+      "topic:rtos language:c stars:>2000",
+      "topic:esp32 stars:>2000",
+      "topic:firmware stars:>1500",
+      "topic:embedded-systems language:c stars:>1000",
+      "topic:iot stars:>3000"
+    ],
+    "exampleRepos": [
+      "zephyrproject-rtos/zephyr",
+      "espressif/esp-idf",
+      "FreeRTOS/FreeRTOS",
+      "rust-embedded/embedded-hal",
+      "platformio/platformio-core",
+      "RIOT-OS/RIOT"
+    ],
+    "conventions": [
+      "Avoid dynamic heap allocation in firmware hot paths and interrupt handlers; prefer static allocation, fixed-size pools, and bounded buffers to keep memory deterministic.",
+      "Keep interrupt service routines short: do the minimum, set a flag or push to a queue, and defer real work to a task or main loop.",
+      "Use a hardware-abstraction layer so application logic is portable across MCUs and testable on a host without the chip present.",
+      "Treat peripheral and shared state accessed from interrupts as volatile and guard against races with critical sections or lock-free single-producer queues.",
+      "Budget RAM/flash explicitly and monitor stack high-water marks; stack overflow on MCUs is silent and corrupting without a watchdog/guard.",
+      "Enable and feed a hardware watchdog, and design for safe recovery/reset on hang rather than assuming the firmware never wedges.",
+      "Manage power deliberately: use sleep/low-power modes, wake on interrupt, and minimize radio/peripheral duty cycle for battery-powered IoT nodes.",
+      "Secure IoT connectivity with TLS, provisioned per-device credentials, and signed over-the-air updates with rollback."
+    ],
+    "scaffolds": [
+      "Scaffold a bare-metal firmware project with a HAL abstraction, panic handler, and a host-side mock for unit tests.",
+      "Generate an RTOS task skeleton: task priorities, a queue between an interrupt and a worker task, and a fed watchdog.",
+      "Build an IoT device template: network provisioning, telemetry over a TLS transport, and signed OTA update with rollback.",
+      "Create a peripheral driver template with a register-map abstraction, async non-blocking API, and a loopback/integration test."
+    ]
+  },
+  {
+    "slug": "robotics",
+    "name": "Robotics",
+    "description": "Robot middleware, motion planning, perception, control, and ROS-based system integration.",
+    "githubTopics": [
+      "robotics",
+      "ros",
+      "ros2",
+      "slam",
+      "motion-planning",
+      "robot",
+      "autonomous-vehicles",
+      "control-systems",
+      "kinematics"
+    ],
+    "searchQueries": [
+      "topic:ros2 stars:>1000",
+      "topic:robotics language:cpp stars:>2000",
+      "topic:slam stars:>2000",
+      "topic:motion-planning stars:>1000",
+      "topic:autonomous-vehicles stars:>3000",
+      "topic:robotics language:python stars:>2000"
+    ],
+    "exampleRepos": [
+      "ros2/ros2",
+      "ros-navigation/navigation2",
+      "moveit/moveit2",
+      "ompl/ompl",
+      "borglab/gtsam",
+      "introlab/rtabmap",
+      "PX4/PX4-Autopilot"
+    ],
+    "conventions": [
+      "Define and respect a consistent transform tree (frames, parent/child, timestamps) so sensor data, planning, and actuation share one spatial reference.",
+      "Timestamp every measurement at the source and fuse using the data's own time, not arrival time, to handle latency and out-of-order sensor streams.",
+      "Separate perception, planning, and control into composable nodes/modules with well-defined message interfaces so subsystems are independently testable.",
+      "Run control loops at a fixed, guaranteed rate with bounded latency; never block a real-time control path on I/O, logging, or planning.",
+      "Model and account for sensor and process noise explicitly with covariances in the estimator rather than treating measurements as exact.",
+      "Always implement safety layers: emergency stop, watchdogs, joint/velocity/acceleration limits, and collision checks that can override autonomy.",
+      "Validate behavior in a physics simulator with realistic dynamics and sensor models before deploying to hardware.",
+      "Record and replay data so failures are reproducible offline and algorithms are evaluated against fixed datasets."
+    ],
+    "scaffolds": [
+      "Scaffold a robotics package: node with parameters, a publisher/subscriber pair, a managed lifecycle node, and a launch file plus a sim test.",
+      "Generate a motion-planning pipeline: collision environment, planner selection, and trajectory execution with limits.",
+      "Build a sensor-fusion estimator template consuming inertial plus odometry/positioning with covariance handling and a replay harness.",
+      "Create a SLAM/navigation bring-up: map building, localization, costmaps, and a path-follower with an emergency-stop override."
+    ]
+  },
+  {
+    "slug": "audio-dsp",
+    "name": "Audio & DSP",
+    "description": "Real-time audio engines, signal processing, synthesis, and music/audio application development.",
+    "githubTopics": [
+      "audio",
+      "dsp",
+      "digital-signal-processing",
+      "audio-processing",
+      "synthesizer",
+      "music",
+      "spectrogram",
+      "real-time-audio"
+    ],
+    "searchQueries": [
+      "topic:dsp language:cpp stars:>1000",
+      "topic:audio language:cpp stars:>2000",
+      "topic:audio-processing stars:>1000",
+      "topic:synthesizer stars:>800",
+      "topic:digital-signal-processing stars:>1000"
+    ],
+    "exampleRepos": [
+      "juce-framework/JUCE",
+      "thestk/stk",
+      "libsndfile/libsndfile",
+      "RustAudio/cpal",
+      "grame-cncm/faust",
+      "mackron/miniaudio"
+    ],
+    "conventions": [
+      "Treat the audio callback as a hard real-time context: never allocate, lock, do I/O, or block in it, since an underrun causes audible glitches.",
+      "Communicate between the audio thread and the UI/control threads with lock-free ring buffers or atomic message passing, not mutexes.",
+      "Process in blocks/frames sized to the buffer and keep DSP state (filters, delay lines, phase) explicit and reset cleanly on parameter changes.",
+      "Be precise about sample rate, channel count, and sample format, and resample correctly when bridging mismatched rates.",
+      "Avoid denormals and clamp/limit output to prevent NaNs and clipping; ramp gain and parameter changes to avoid zipper noise and clicks.",
+      "Keep latency budgeted and deterministic; report and account for processing latency in the signal chain.",
+      "Separate the DSP core from any host/plugin wrapper so the algorithm is unit-testable offline against reference signals.",
+      "Validate filters and transforms against analytical responses or reference implementations rather than by ear alone."
+    ],
+    "scaffolds": [
+      "Scaffold a real-time audio app with a lock-free callback, a ring-buffer bridge to the UI thread, and block-based processing.",
+      "Generate a DSP module template (filter/effect) with explicit state, parameter smoothing, and an offline test against reference signals.",
+      "Build an audio plugin skeleton exposing parameters and a testable DSP core separated from the host wrapper.",
+      "Create an analysis task: FFT/spectrogram computation with windowing and correct frequency-axis scaling."
+    ]
+  },
+  {
+    "slug": "cli-developer-tooling",
+    "name": "CLI & Developer Tooling",
+    "description": "Ergonomic command-line tools, code generators, linters, and developer productivity utilities.",
+    "githubTopics": [
+      "cli",
+      "command-line",
+      "developer-tools",
+      "terminal",
+      "tui",
+      "code-generation",
+      "linter"
+    ],
+    "searchQueries": [
+      "topic:cli language:go stars:>3000",
+      "topic:cli language:rust stars:>3000",
+      "topic:tui stars:>2000",
+      "topic:developer-tools stars:>3000",
+      "topic:command-line stars:>2000"
+    ],
+    "exampleRepos": [
+      "spf13/cobra",
+      "clap-rs/clap",
+      "charmbracelet/bubbletea",
+      "sharkdp/fd",
+      "BurntSushi/ripgrep",
+      "tiangolo/typer"
+    ],
+    "conventions": [
+      "Follow established CLI conventions: a clear command/subcommand structure, both short and long flags, sensible defaults, and a non-interactive mode for scripting.",
+      "Write human-readable output to stdout and diagnostics/errors to stderr, and offer a machine-readable (JSON) output mode for piping and automation.",
+      "Return meaningful, documented exit codes so the tool composes correctly in scripts and pipelines.",
+      "Make the tool predictable in pipes: detect TTY versus non-TTY, disable color and progress bars when output is not a terminal, and respect NO_COLOR.",
+      "Provide thorough --help and shell completions, validate arguments up front, and fail with actionable error messages.",
+      "Read configuration with a clear precedence (flags over environment over config file over defaults) and never require interactivity for core operations.",
+      "Keep operations idempotent and dry-runnable where they mutate state, and confirm destructive actions or require an explicit flag.",
+      "Distribute as a single self-contained binary or well-pinned package, and keep startup fast since CLIs are invoked frequently."
+    ],
+    "scaffolds": [
+      "Scaffold a CLI with subcommands, flag parsing, config-file plus environment precedence, and shell completions.",
+      "Generate a TUI application skeleton with a model-update-view loop and keyboard navigation.",
+      "Build a code-generator command that renders templates from a schema with a dry-run and diff mode.",
+      "Create a release setup that cross-compiles single-binary artifacts and publishes them with checksums."
+    ]
+  },
+  {
+    "slug": "systems-programming",
+    "name": "Systems Programming",
+    "description": "Low-level systems software: memory management, concurrency, OS interfaces, and high-performance native code.",
+    "githubTopics": [
+      "systems-programming",
+      "rust",
+      "cpp",
+      "operating-system",
+      "concurrency",
+      "memory-safety",
+      "low-level",
+      "zig"
+    ],
+    "searchQueries": [
+      "topic:systems-programming language:rust stars:>2000",
+      "topic:operating-system language:c stars:>3000",
+      "topic:concurrency language:cpp stars:>1500",
+      "topic:low-level stars:>2000",
+      "topic:zig stars:>2000"
+    ],
+    "exampleRepos": [
+      "torvalds/linux",
+      "rust-lang/rust",
+      "ziglang/zig",
+      "redox-os/redox",
+      "tokio-rs/tokio",
+      "facebook/folly"
+    ],
+    "conventions": [
+      "Make ownership and lifetime of every resource explicit; prefer RAII/ownership types so memory, file descriptors, and locks are released deterministically.",
+      "Guard all shared mutable state with the right synchronization primitive and document the locking order to prevent deadlocks; prefer message passing or lock-free structures on hot paths.",
+      "Avoid undefined behavior: respect aliasing and alignment rules, never read uninitialized memory, and check for integer overflow at boundaries.",
+      "Handle every error path explicitly and treat allocation, syscalls, and I/O as fallible; never ignore return codes from system calls.",
+      "Minimize allocations in hot paths, design data structures for cache locality, and measure with a profiler before optimizing.",
+      "Confine unsafe/low-level code to small, audited, well-documented modules behind safe abstractions, and fuzz/sanitize them.",
+      "Use platform abstractions for OS differences rather than scattering conditionals, and check syscall portability assumptions.",
+      "Run sanitizers (address, thread, undefined-behavior) and fuzzers in CI to catch memory and concurrency bugs early."
+    ],
+    "scaffolds": [
+      "Scaffold a systems project with an ownership-based resource wrapper, error handling, and sanitizer-enabled CI.",
+      "Generate a lock-free or bounded concurrent queue with a single-producer/single-consumer fast path and stress tests.",
+      "Build a thread-pool / async-runtime task scheduler skeleton with bounded queues and backpressure.",
+      "Create a fuzzing harness around a parser or unsafe module wired into CI."
+    ]
+  },
+  {
+    "slug": "application-security",
+    "name": "Application Security & AppSec",
+    "description": "Secure coding, vulnerability prevention, secrets management, and security testing across the SDLC.",
+    "githubTopics": [
+      "security",
+      "appsec",
+      "security-tools",
+      "vulnerability",
+      "sast",
+      "owasp",
+      "secure-coding",
+      "static-analysis"
+    ],
+    "searchQueries": [
+      "topic:security language:go stars:>3000",
+      "topic:sast stars:>1500",
+      "topic:vulnerability-scanner stars:>2000",
+      "topic:appsec stars:>1000",
+      "topic:secret-scanning stars:>1500"
+    ],
+    "exampleRepos": [
+      "OWASP/CheatSheetSeries",
+      "semgrep/semgrep",
+      "aquasecurity/trivy",
+      "trufflesecurity/trufflehog",
+      "zaproxy/zaproxy",
+      "gitleaks/gitleaks"
+    ],
+    "conventions": [
+      "Validate and sanitize all input at trust boundaries and encode output for its context to prevent injection and cross-site scripting; use parameterized queries and safe templating rather than string concatenation.",
+      "Never hardcode secrets; load them from a secret manager or environment at runtime, rotate them, and scan the repo and history for leaked credentials.",
+      "Apply least privilege everywhere (database, cloud IAM, file permissions, tokens) and default to deny, granting only the access a component needs.",
+      "Use vetted, current cryptographic libraries and standard algorithms; never roll your own crypto, hash passwords with a slow salted KDF, and keep dependencies patched.",
+      "Enforce authentication and authorization on every request server-side; never trust client-side checks, and verify object-level access to prevent insecure direct object references.",
+      "Keep dependencies updated and scan them (software composition analysis) plus run static and dynamic analysis in CI to catch known and new vulnerabilities early.",
+      "Fail securely: do not leak stack traces, secrets, or internal details in errors, and log security-relevant events without logging sensitive data.",
+      "Threat-model new features against a checklist (such as the OWASP Top 10) and add regression tests for fixed vulnerabilities."
+    ],
+    "scaffolds": [
+      "Scaffold a security CI pipeline with static analysis, dependency/SCA scanning, secret scanning, and container image scanning.",
+      "Generate an input-validation and output-encoding layer for a web endpoint with safe defaults.",
+      "Build a secrets-management setup loading credentials from a vault/secret store with rotation hooks.",
+      "Create a security regression test suite mapping fixed vulnerabilities to reproducing test cases."
+    ]
+  },
+  {
+    "slug": "identity-auth",
+    "name": "Identity, Authentication & Authorization",
+    "description": "Login, session management, OAuth2/OIDC, and fine-grained authorization in applications.",
+    "githubTopics": [
+      "authentication",
+      "authorization",
+      "oauth2",
+      "oidc",
+      "jwt",
+      "sso",
+      "identity",
+      "rbac"
+    ],
+    "searchQueries": [
+      "topic:authentication language:typescript stars:>2000",
+      "topic:oauth2 stars:>2000",
+      "topic:authorization stars:>1500",
+      "topic:identity stars:>2000",
+      "topic:sso stars:>1000"
+    ],
+    "exampleRepos": [
+      "keycloak/keycloak",
+      "ory/hydra",
+      "nextauthjs/next-auth",
+      "panva/node-oidc-provider",
+      "openfga/openfga",
+      "casbin/casbin"
+    ],
+    "conventions": [
+      "Prefer standard protocols (OAuth2, OpenID Connect, SAML) and a vetted identity provider over building authentication from scratch.",
+      "Hash passwords with a slow, salted, memory-hard algorithm; never store or log plaintext credentials, and support multi-factor authentication.",
+      "Issue short-lived access tokens with refresh tokens, validate token signature, issuer, audience, and expiry on every request, and support revocation.",
+      "Store session and refresh tokens securely (httpOnly, secure, same-site cookies for browsers) and protect state-changing requests against cross-site request forgery.",
+      "Separate authentication (who you are) from authorization (what you can do); enforce authorization server-side with a clear model (role- or relationship-based).",
+      "Apply least privilege and check object-level permissions on every access to prevent privilege escalation and insecure direct object references.",
+      "Use the authorization-code flow with PKCE for public clients and never expose client secrets in front-end code.",
+      "Rate-limit and monitor authentication endpoints, lock out or step up on suspicious activity, and log auth events for audit without logging secrets."
+    ],
+    "scaffolds": [
+      "Scaffold an OIDC/OAuth2 login flow with authorization-code plus PKCE, token validation, and secure session cookies.",
+      "Generate a role- or relationship-based authorization layer with policy definitions and middleware enforcement.",
+      "Build a multi-factor and password-reset flow with secure token issuance and rate limiting.",
+      "Create a token-validation middleware checking signature, issuer, audience, expiry, and revocation."
+    ]
+  },
+  {
+    "slug": "testing-qa-automation",
+    "name": "Testing & QA Automation",
+    "description": "Unit, integration, end-to-end, and property-based testing plus test infrastructure and coverage.",
+    "githubTopics": [
+      "testing",
+      "test-automation",
+      "end-to-end-testing",
+      "unit-testing",
+      "e2e",
+      "property-based-testing",
+      "test-framework"
+    ],
+    "searchQueries": [
+      "topic:testing language:typescript stars:>3000",
+      "topic:end-to-end-testing stars:>2000",
+      "topic:test-automation stars:>2000",
+      "topic:property-based-testing stars:>800",
+      "topic:test-framework stars:>2000"
+    ],
+    "exampleRepos": [
+      "microsoft/playwright",
+      "vitest-dev/vitest",
+      "pytest-dev/pytest",
+      "cypress-io/cypress",
+      "hypothesis/hypothesis",
+      "stretchr/testify"
+    ],
+    "conventions": [
+      "Follow the test pyramid: many fast, isolated unit tests, fewer integration tests, and a small number of end-to-end tests for critical user journeys.",
+      "Make tests deterministic and independent: no shared mutable state, no ordering dependencies, and control time, randomness, and external services with fakes/clocks.",
+      "Test behavior and public contracts rather than implementation details so tests survive refactors; assert on observable outcomes, not internals.",
+      "Keep tests fast and parallelizable, and eliminate flakiness by waiting on conditions instead of fixed sleeps and by isolating network and filesystem.",
+      "Use realistic test data and factories/builders, and prefer real or in-memory dependencies over heavy mocks where feasible to catch integration bugs.",
+      "Cover edge cases and invariants with property-based and boundary testing, not just happy-path examples, and add a regression test for every fixed bug.",
+      "Treat coverage as a guide, not a goal; prioritize meaningful assertions and critical paths over chasing a coverage percentage.",
+      "Run the suite in CI on every change, fail the build on test failures, and quarantine and fix flaky tests rather than retrying blindly."
+    ],
+    "scaffolds": [
+      "Scaffold a test harness with unit, integration, and end-to-end layers, fixtures/factories, and CI wiring.",
+      "Generate an end-to-end test suite for a critical user journey with condition-based waits and parallel execution.",
+      "Build a property-based test template defining invariants and generators for a core module.",
+      "Create a contract/integration test setup with in-memory or containerized dependencies and seeded data."
+    ]
+  },
+  {
+    "slug": "functional-programming",
+    "name": "Functional Programming",
+    "description": "Pure functional and typed-functional codebases emphasizing immutability, composition, and effect management.",
+    "githubTopics": [
+      "functional-programming",
+      "haskell",
+      "scala",
+      "clojure",
+      "elixir",
+      "fp",
+      "immutable",
+      "monad"
+    ],
+    "searchQueries": [
+      "topic:functional-programming language:haskell stars:>1000",
+      "topic:functional-programming language:scala stars:>1500",
+      "topic:clojure stars:>2000",
+      "topic:elixir stars:>2000",
+      "topic:fp language:typescript stars:>2000"
+    ],
+    "exampleRepos": [
+      "fantasyland/fantasy-land",
+      "gcanti/fp-ts",
+      "scala/scala",
+      "clojure/clojure",
+      "elixir-lang/elixir",
+      "ramda/ramda"
+    ],
+    "conventions": [
+      "Prefer pure functions free of side effects and immutable data structures so behavior is referentially transparent and easy to reason about.",
+      "Push side effects to the edges of the system and keep the core logic pure; model effects explicitly with the language's effect types rather than scattering hidden I/O.",
+      "Make illegal states unrepresentable with rich, precise types (sum/product types) and exhaustively handle every case.",
+      "Compose small, total functions into larger behavior, and prefer transformation pipelines over mutation and imperative loops.",
+      "Use higher-order functions, recursion, and lazy evaluation idiomatically, but guard against space leaks and unbounded recursion (use tail calls/accumulators).",
+      "Model errors and absence with explicit types (Option/Either/Result) instead of exceptions or nulls, and handle them at the boundary.",
+      "Keep functions referentially transparent so they are trivially unit-testable and parallelizable, and lean on property-based testing for laws.",
+      "Respect the type-class/algebra laws (functor, monad, monoid) when implementing instances so abstractions behave predictably."
+    ],
+    "scaffolds": [
+      "Scaffold a project layout separating a pure core from an effectful boundary with explicit effect types.",
+      "Generate an algebraic-data-type model with exhaustive pattern matching and total functions.",
+      "Build a transformation pipeline with composed pure functions and property-based law tests.",
+      "Create a typed error-handling layer using result/option types threaded through the call chain."
+    ]
+  },
+  {
+    "slug": "blockchain-smart-contracts",
+    "name": "Blockchain & Smart Contracts",
+    "description": "On-chain smart contracts, decentralized apps, and Web3 integrations with a security-first posture.",
+    "githubTopics": [
+      "blockchain",
+      "ethereum",
+      "smart-contracts",
+      "solidity",
+      "web3",
+      "defi",
+      "solana",
+      "evm"
+    ],
+    "searchQueries": [
+      "topic:smart-contracts language:solidity stars:>1500",
+      "topic:ethereum stars:>3000",
+      "topic:web3 stars:>3000",
+      "topic:solidity stars:>2000",
+      "topic:defi stars:>1000"
+    ],
+    "exampleRepos": [
+      "OpenZeppelin/openzeppelin-contracts",
+      "foundry-rs/foundry",
+      "ethereum/solidity",
+      "wagmi-dev/viem",
+      "safe-global/safe-smart-account",
+      "paritytech/substrate"
+    ],
+    "conventions": [
+      "Follow the checks-effects-interactions pattern and reentrancy guards so external calls cannot re-enter and drain contract state.",
+      "Reuse audited, battle-tested contract libraries for tokens, access control, and upgrades instead of reimplementing primitives.",
+      "Validate all inputs and arithmetic, rely on built-in overflow checks, and never trust externally supplied addresses or call data for authorization.",
+      "Minimize and explicitly manage on-chain state and gas; mark visibility and mutability precisely and avoid unbounded loops over user-controlled data.",
+      "Make contracts deterministic and avoid dangerous randomness/oracle assumptions; use proven oracle and price-feed patterns rather than spot values.",
+      "Design upgradeability deliberately (proxy patterns) with strict access control and timelocks, since deployed code is immutable and bugs are unrecoverable without a plan.",
+      "Test exhaustively with unit, fuzz, and invariant tests plus fork tests against mainnet state, and obtain an independent audit before mainnet deployment.",
+      "Keep private keys and deployment credentials in secure signers/hardware, never in code, and protect admin keys with multisig."
+    ],
+    "scaffolds": [
+      "Scaffold a smart-contract project with a build/test toolchain, audited base contracts, and fuzz/invariant tests.",
+      "Generate a token or access-control contract extending audited libraries with role-based permissions.",
+      "Build a typed front-end integration that connects a wallet, reads state, and sends transactions with error handling.",
+      "Create an upgradeable proxy setup with timelocked admin controls and a deployment script using a secure signer."
+    ]
+  },
+  {
+    "slug": "distributed-systems",
+    "name": "Distributed Systems & Consensus",
+    "description": "Replicated, fault-tolerant services with consensus, partitioning, and consistency trade-offs.",
+    "githubTopics": [
+      "distributed-systems",
+      "consensus",
+      "raft",
+      "replication",
+      "distributed-database",
+      "fault-tolerance",
+      "consistency"
+    ],
+    "searchQueries": [
+      "topic:distributed-systems language:go stars:>3000",
+      "topic:consensus stars:>1500",
+      "topic:raft stars:>2000",
+      "topic:distributed-database stars:>2000",
+      "topic:fault-tolerance stars:>1000"
+    ],
+    "exampleRepos": [
+      "etcd-io/etcd",
+      "hashicorp/raft",
+      "tikv/tikv",
+      "apache/zookeeper",
+      "scylladb/scylladb",
+      "temporalio/temporal"
+    ],
+    "conventions": [
+      "Design for partial failure: assume any node, link, or disk can fail at any time, and make every operation retryable and idempotent so retries are safe.",
+      "Choose consistency deliberately along the CAP/PACELC trade-off and document the guarantees (linearizable, sequential, eventual) each operation provides.",
+      "Use a proven consensus algorithm (Raft/Paxos) or an existing coordination service for leader election and replicated state rather than inventing one.",
+      "Never assume synchronized clocks for correctness; use logical clocks, version vectors, or hybrid logical clocks for ordering and conflict resolution.",
+      "Bound and handle failure with timeouts, retries with jittered backoff, circuit breakers, and backpressure so a slow dependency cannot cascade into an outage.",
+      "Make replication and partitioning explicit: pick a partition/sharding key, plan rebalancing, and account for replication lag in read paths.",
+      "Test under failure with deterministic simulation, fault injection, and chaos testing, and verify safety/liveness properties rather than only happy-path behavior.",
+      "Keep operations observable end-to-end with distributed tracing and per-node metrics so split-brain, lag, and hotspots are detectable."
+    ],
+    "scaffolds": [
+      "Scaffold a replicated service with a consensus/coordination layer for leader election and a replicated log.",
+      "Generate an idempotent RPC layer with retries, jittered backoff, deadlines, and circuit breaking.",
+      "Build a sharding/partitioning module with a routing key, rebalancing plan, and replica placement.",
+      "Create a fault-injection and deterministic-simulation test harness verifying safety and liveness."
+    ]
+  },
+  {
+    "slug": "search-information-retrieval",
+    "name": "Search & Information Retrieval",
+    "description": "Full-text and semantic search, relevance ranking, indexing, and retrieval systems.",
+    "githubTopics": [
+      "search",
+      "full-text-search",
+      "elasticsearch",
+      "information-retrieval",
+      "vector-search",
+      "search-engine",
+      "ranking"
+    ],
+    "searchQueries": [
+      "topic:search-engine stars:>2000",
+      "topic:full-text-search stars:>1500",
+      "topic:information-retrieval stars:>1000",
+      "topic:vector-search stars:>1500",
+      "topic:search language:rust stars:>2000"
+    ],
+    "exampleRepos": [
+      "elastic/elasticsearch",
+      "apache/lucene",
+      "meilisearch/meilisearch",
+      "quickwit-oss/tantivy",
+      "opensearch-project/OpenSearch",
+      "typesense/typesense"
+    ],
+    "conventions": [
+      "Design the analysis pipeline deliberately (tokenization, lowercasing, stemming, stop-words, synonyms) and apply the same analyzer at index and query time.",
+      "Model the index schema explicitly: choose field types, what is indexed versus stored, and analyzers per field rather than defaulting everything.",
+      "Evaluate relevance with labeled judgments and offline metrics (precision/recall, NDCG, MRR) before and after ranking changes, not by spot-checking.",
+      "Combine lexical and semantic retrieval (hybrid search) and re-rank candidates, since neither keyword nor vector search alone is best for all queries.",
+      "Tune ranking with field boosts, recency, and learned/business signals, and keep ranking logic versioned and testable.",
+      "Make indexing incremental and idempotent, handle updates/deletes, and plan reindexing with zero-downtime alias swaps.",
+      "Bound query cost: paginate efficiently (search-after over deep offset), cap aggregations, and add timeouts so expensive queries cannot overload the cluster.",
+      "Handle typos, partial matches, and faceting/filtering as first-class features, and monitor query latency and zero-result rates."
+    ],
+    "scaffolds": [
+      "Scaffold a search index with an explicit schema, analyzer configuration, and an idempotent incremental indexer.",
+      "Generate a hybrid (lexical plus vector) retrieval pipeline with a re-ranking stage.",
+      "Build a relevance-evaluation harness with labeled judgments and offline ranking metrics.",
+      "Create a faceted-search API with filtering, pagination via search-after, and query timeouts."
+    ]
+  },
+  {
+    "slug": "payments-billing",
+    "name": "Payments & Billing",
+    "description": "Payment processing, subscriptions, invoicing, and financial integrations with correctness and idempotency.",
+    "githubTopics": [
+      "payments",
+      "stripe",
+      "billing",
+      "subscriptions",
+      "payment-gateway",
+      "invoicing",
+      "ecommerce"
+    ],
+    "searchQueries": [
+      "topic:payments stars:>1500",
+      "topic:stripe stars:>1000",
+      "topic:billing stars:>800",
+      "topic:subscriptions stars:>500",
+      "topic:payment-gateway stars:>1000"
+    ],
+    "exampleRepos": [
+      "stripe/stripe-node",
+      "killbill/killbill",
+      "medusajs/medusa",
+      "getlago/lago",
+      "stripe/stripe-python",
+      "frappe/erpnext"
+    ],
+    "conventions": [
+      "Represent money as integer minor units (or a decimal type) with an explicit currency; never use floating point for monetary amounts.",
+      "Make every payment operation idempotent with idempotency keys so client/network retries cannot double-charge.",
+      "Treat the payment provider's webhooks as the source of truth for state transitions, verify webhook signatures, and process them idempotently and out of order.",
+      "Never store raw card data; tokenize through the provider and keep the integration out of PCI scope by using hosted fields/checkout.",
+      "Reconcile your ledger against the provider regularly and record an immutable, append-only audit trail of every financial event.",
+      "Handle the full lifecycle explicitly: authorization, capture, partial/refund, chargeback, retries, and failed renewals with dunning.",
+      "Compute tax, currency conversion, and proration deliberately and from authoritative sources rather than ad hoc math.",
+      "Secure keys and webhooks, rate-limit, and fail safe: on uncertainty, do not grant entitlements until payment is confirmed."
+    ],
+    "scaffolds": [
+      "Scaffold a checkout flow using hosted/tokenized payment fields with idempotency keys and confirmation handling.",
+      "Generate a signature-verified, idempotent webhook handler that drives entitlement state transitions.",
+      "Build a subscription/billing module with proration, dunning, and an append-only ledger.",
+      "Create a reconciliation job that compares the internal ledger against provider records and flags discrepancies."
+    ]
+  },
+  {
+    "slug": "compilers-language-tooling",
+    "name": "Compilers & Language Tooling",
+    "description": "Parsers, interpreters, compilers, language servers, and static-analysis tooling.",
+    "githubTopics": [
+      "compiler",
+      "interpreter",
+      "parser",
+      "language-server",
+      "programming-language",
+      "lexer",
+      "ast",
+      "lsp"
+    ],
+    "searchQueries": [
+      "topic:compiler language:rust stars:>2000",
+      "topic:interpreter stars:>1500",
+      "topic:language-server stars:>1500",
+      "topic:programming-language stars:>3000",
+      "topic:parser stars:>2000"
+    ],
+    "exampleRepos": [
+      "llvm/llvm-project",
+      "tree-sitter/tree-sitter",
+      "microsoft/TypeScript",
+      "antlr/antlr4",
+      "rust-lang/rust-analyzer",
+      "swc-project/swc"
+    ],
+    "conventions": [
+      "Separate the pipeline into clear phases (lexing, parsing, semantic analysis, optimization, code generation) with well-defined intermediate representations between them.",
+      "Produce precise, recoverable error diagnostics with source spans, and continue parsing after errors so tools can report many problems at once.",
+      "Preserve source location information through every phase so errors, formatting, and tooling map back to the original text accurately.",
+      "Make the AST/IR immutable or use explicit transformation passes, and keep each pass focused and independently testable.",
+      "Design for incrementality and resilience in language servers: reparse/recheck only what changed and tolerate partial/invalid input.",
+      "Define the grammar and semantics precisely and test against a comprehensive corpus including edge cases and known-tricky constructs.",
+      "Use generated lexers/parsers or proven parsing techniques deliberately, and document the language's formal grammar.",
+      "Snapshot-test transformations and golden-test generated output so changes to passes are reviewable and regressions are caught."
+    ],
+    "scaffolds": [
+      "Scaffold a compiler/interpreter pipeline with a lexer, parser, AST, and a tree-walking or bytecode evaluator.",
+      "Generate an error-diagnostic system with source spans, recovery, and multi-error reporting.",
+      "Build a language-server skeleton with incremental parsing, diagnostics, hover, and completion.",
+      "Create a transformation-pass framework with snapshot tests over the intermediate representation."
+    ]
+  },
+  {
+    "slug": "api-clients-sdks",
+    "name": "API Clients & SDKs",
+    "description": "Client libraries and SDKs that wrap remote APIs with ergonomic, resilient, well-typed interfaces.",
+    "githubTopics": [
+      "sdk",
+      "api-client",
+      "client-library",
+      "http-client",
+      "rest-client",
+      "api-wrapper"
+    ],
+    "searchQueries": [
+      "topic:sdk language:typescript stars:>1500",
+      "topic:api-client stars:>1500",
+      "topic:http-client stars:>2000",
+      "topic:client-library stars:>1000",
+      "topic:sdk language:go stars:>2000"
+    ],
+    "exampleRepos": [
+      "stripe/stripe-go",
+      "octokit/octokit.js",
+      "aws/aws-sdk-js-v3",
+      "googleapis/google-api-python-client",
+      "slackapi/python-slack-sdk",
+      "supabase/supabase-js"
+    ],
+    "conventions": [
+      "Expose a small, discoverable, strongly-typed surface that mirrors the API's resources, and generate types/clients from the API contract where possible.",
+      "Build in resilience: configurable timeouts, retries with exponential backoff and jitter on transient/5xx errors, and respect of rate-limit and retry-after headers.",
+      "Surface rich, typed errors that distinguish client (4xx), server (5xx), network, and validation failures, and include status, request id, and body.",
+      "Make the client safe for retries with idempotency keys on mutating calls and never retry non-idempotent operations blindly.",
+      "Support pagination ergonomically (auto-paginating iterators) and streaming for large responses instead of buffering everything in memory.",
+      "Handle authentication transparently with pluggable credential providers and automatic token refresh, and never log secrets or full tokens.",
+      "Keep the client side-effect-free and configurable (base URL, HTTP client injection) for testing, and ship recorded/mocked fixtures.",
+      "Version the SDK with semantic versioning, document every public method, and provide migration notes for breaking changes."
+    ],
+    "scaffolds": [
+      "Scaffold a typed API client generated from an API contract with resource modules and auth handling.",
+      "Generate a resilient HTTP layer with timeouts, retry/backoff, rate-limit handling, and typed errors.",
+      "Build an auto-paginating iterator and a streaming response helper for large payloads.",
+      "Create a recorded-fixture test suite that exercises the client against captured HTTP interactions."
+    ]
+  },
+  {
+    "slug": "data-visualization",
+    "name": "Data Visualization & Charting",
+    "description": "Interactive charts, dashboards, and data-driven graphics for the web and analytics tools.",
+    "githubTopics": [
+      "data-visualization",
+      "charts",
+      "d3",
+      "visualization",
+      "dataviz",
+      "plotting",
+      "dashboard"
+    ],
+    "searchQueries": [
+      "topic:data-visualization language:typescript stars:>3000",
+      "topic:charts stars:>3000",
+      "topic:d3 stars:>2000",
+      "topic:visualization language:python stars:>2000",
+      "topic:dataviz stars:>1500"
+    ],
+    "exampleRepos": [
+      "d3/d3",
+      "apache/echarts",
+      "plotly/plotly.js",
+      "observablehq/plot",
+      "vega/vega",
+      "matplotlib/matplotlib"
+    ],
+    "conventions": [
+      "Match the chart type to the data and the question (comparison, trend, distribution, part-to-whole, correlation) rather than defaulting to one form.",
+      "Keep encodings honest: start bar axes at zero, use perceptually-uniform color scales, avoid dual axes and 3D effects that distort comparison, and label units.",
+      "Maximize the data-to-ink ratio: remove chartjunk and redundant gridlines, and let the data, not decoration, carry the message.",
+      "Make charts accessible: sufficient color contrast, non-color-only encodings, readable labels, and text/table alternatives for screen readers.",
+      "Use scales and axes deliberately (linear/log/time/ordinal), format ticks and dates legibly, and handle missing or zero data explicitly.",
+      "Separate data transformation from rendering so the same pipeline can drive different views, and keep visual encodings declarative where possible.",
+      "Optimize for large datasets with aggregation, sampling, or canvas/WebGL rendering instead of thousands of DOM nodes, and virtualize where needed.",
+      "Design responsive, interactive charts (tooltips, zoom, filtering) that degrade gracefully and remain legible at all sizes."
+    ],
+    "scaffolds": [
+      "Scaffold a reusable chart component with declarative encodings, responsive sizing, and accessible labels/alt text.",
+      "Generate a dashboard layout composing multiple linked charts with shared filters and a data layer.",
+      "Build a large-dataset visualization using canvas/WebGL rendering with aggregation and level-of-detail.",
+      "Create an interactive exploration view with tooltips, zoom/pan, and cross-filtering."
+    ]
+  },
+  {
+    "slug": "content-management-headless-cms",
+    "name": "Content Management & Headless CMS",
+    "description": "Structured content modeling, headless/decoupled CMS, and content delivery for editorial workflows.",
+    "githubTopics": [
+      "cms",
+      "headless-cms",
+      "content-management",
+      "jamstack",
+      "static-site",
+      "content-modeling"
+    ],
+    "searchQueries": [
+      "topic:headless-cms stars:>2000",
+      "topic:cms language:typescript stars:>2000",
+      "topic:content-management stars:>1500",
+      "topic:static-site-generator stars:>3000",
+      "topic:cms language:php stars:>2000"
+    ],
+    "exampleRepos": [
+      "strapi/strapi",
+      "payloadcms/payload",
+      "directus/directus",
+      "sanity-io/sanity",
+      "tinacms/tinacms",
+      "getgrav/grav"
+    ],
+    "conventions": [
+      "Model content as structured, typed fields with reusable components and references, not as blobs of markup, so the same content can render across channels.",
+      "Decouple content from presentation: deliver content via API and keep rendering in the front end so one source serves web, mobile, and other channels.",
+      "Version and preview content with draft/published states and scheduled publishing, and give editors a safe preview before going live.",
+      "Treat the content schema as code: version it, migrate it deliberately, and validate content against it rather than allowing arbitrary shapes.",
+      "Optimize delivery with CDN caching and incremental/on-demand revalidation, invalidating only the content that changed on publish.",
+      "Manage media as first-class assets with transformations, responsive variants, and a digital-asset pipeline rather than raw uploads.",
+      "Enforce role-based editorial permissions and an audit trail, and localize content with a clear translation workflow.",
+      "Sanitize and constrain rich-text/portable-text output to prevent injection, and keep embeds and components allow-listed."
+    ],
+    "scaffolds": [
+      "Scaffold a headless-CMS content model with typed fields, reusable components, references, and localization.",
+      "Generate a content-delivery layer with CDN caching and on-publish revalidation/invalidation.",
+      "Build a draft/preview workflow with scheduled publishing and editorial roles.",
+      "Create a content-migration script that evolves the schema and backfills existing entries safely."
+    ]
+  }
+]

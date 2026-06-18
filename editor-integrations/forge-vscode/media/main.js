@@ -360,7 +360,14 @@
       mode: item.mode,
       model: item.model,
       text: item.text,
-      context: item.context || [],
+      // Strip UI-only fields (thumb/isImage) so we don't send the image twice;
+      // the server reads `image` (base64) for vision + `content` for text.
+      context: (item.context || []).map((c) => ({
+        path: c.path,
+        label: c.label,
+        content: c.content,
+        image: c.image,
+      })),
     };
     if (item.mode === "chat") {
       chatHistory.push({ role: "user", content: item.text });
@@ -593,8 +600,17 @@
     contextEl.innerHTML = "";
     contextItems.forEach((c, i) => {
       const chip = document.createElement("span");
-      chip.className = "chip";
-      chip.innerHTML = `<span>${escapeHtml(c.label || c.path)}</span>`;
+      chip.className = c.isImage ? "chip chip-img" : "chip";
+      if (c.isImage && c.thumb) {
+        const img = document.createElement("img");
+        img.className = "chip-thumb";
+        img.src = c.thumb; // data: URL — allowed by the webview CSP
+        img.alt = c.label || c.path;
+        chip.appendChild(img);
+      }
+      const label = document.createElement("span");
+      label.textContent = c.label || c.path;
+      chip.appendChild(label);
       const x = document.createElement("button");
       x.className = "x";
       x.textContent = "×";
@@ -607,6 +623,74 @@
       contextEl.appendChild(chip);
     });
   }
+
+  // ----- #5 drag-and-drop files & images into the chat -----
+  const isImageFile = (f) => !!f && /^image\//.test(f.type || "");
+  const readFile = (file, asText) =>
+    new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result || ""));
+      r.onerror = () => rej(r.error || new Error("read failed"));
+      asText ? r.readAsText(file) : r.readAsDataURL(file);
+    });
+
+  async function handleDroppedFiles(files) {
+    let addedImage = false;
+    for (const file of files) {
+      try {
+        if (isImageFile(file)) {
+          const dataUrl = await readFile(file, false);
+          const base64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
+          addContext([
+            { path: file.name, label: file.name, image: base64, thumb: dataUrl, isImage: true },
+          ]);
+          addedImage = true;
+        } else if (file.size > 512 * 1024) {
+          setStatus(`"${file.name}" is too large to attach as text (${Math.round(file.size / 1024)} KB).`);
+        } else {
+          const content = await readFile(file, true);
+          addContext([{ path: file.name, label: file.name, content }]);
+        }
+      } catch (e) {
+        setStatus(`Could not attach ${file.name}: ${(e && e.message) || e}`);
+      }
+    }
+    if (addedImage) maybeWarnVision();
+  }
+
+  // Route images to a vision-capable model: nudge to switch when the current
+  // pick clearly isn't multimodal (Auto + the server's own check handle the rest).
+  function maybeWarnVision() {
+    const m = (model || "").toLowerCase();
+    const looksVision = /llava|vision|bakllava|moondream|qwen2\.?5?-?vl|minicpm-v|gemma3/.test(m);
+    if (model && model !== "auto" && !looksVision) {
+      setStatus(
+        "🖼 Image attached — your model may not support vision. Pick a vision model (llava, llama3.2-vision) or use Auto."
+      );
+    }
+  }
+
+  (function setupDropZone() {
+    let depth = 0;
+    document.body.addEventListener("dragover", (e) => e.preventDefault());
+    document.body.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      depth++;
+      document.body.classList.add("dropping");
+    });
+    document.body.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      depth = Math.max(0, depth - 1);
+      if (!depth) document.body.classList.remove("dropping");
+    });
+    document.body.addEventListener("drop", (e) => {
+      e.preventDefault();
+      depth = 0;
+      document.body.classList.remove("dropping");
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length) handleDroppedFiles(Array.from(files));
+    });
+  })();
 
   // ----- models / status -----
   function setModels(models, def) {
@@ -780,6 +864,18 @@
     }
   });
 
+  // #6 login gate: show/hide the full-panel sign-in screen.
+  function renderGate(signedIn) {
+    const gate = $("#gate");
+    if (!gate) return;
+    gate.hidden = !!signedIn;
+  }
+  const gateSignIn = $("#gate-signin");
+  if (gateSignIn) gateSignIn.addEventListener("click", () => vscode.postMessage({ type: "signIn" }));
+  const gateSignInDev = $("#gate-signin-device");
+  if (gateSignInDev)
+    gateSignInDev.addEventListener("click", () => vscode.postMessage({ type: "signIn", device: true }));
+
   window.addEventListener("message", (event) => {
     const msg = event.data;
     switch (msg.type) {
@@ -791,6 +887,9 @@
       case "account":
         currentUser = msg.user || null;
         renderAccount();
+        break;
+      case "gate":
+        renderGate(!!msg.signedIn);
         break;
       case "models":
         setModels(msg.models, msg.default);
