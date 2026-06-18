@@ -87,9 +87,17 @@ channel; the webview renders a collapsible **Sub-agents lane** (one block per
 child, out of the main step stream) with each child step + a running/done state.
 Only the child's final answer still crosses back into the parent context.
 
-**Still deferred UI**: the **Plan card / Intent Preview** (the agent emitting a
-plan up front before executing — needs a planning pass before the loop). Pause/
-Resume is partially covered by per-step Deny + the existing Stop.
+**Plan card / Intent Preview — now real (follow-on wave).** Before the loop, the
+agent runs a short planning pass (`generate_plan` → a 2–6-step numbered plan),
+emitted as a `plan` event (Intent Preview). In **confirm** mode it's gated with
+**Run / Cancel** (Cancel → nothing executes, the plan is returned); auto/readonly
+show it without pausing (no added latency). Webview renders a Plan card; the
+decision reuses `/api/agent/approve`.
+
+**All three trust-UI items from the design are now shipped** — Autonomy Dial,
+Sub-agents lane, Plan card. Pause/Resume is covered by per-step Deny + the Plan
+gate + the existing Stop. No trust-UI items remain deferred; what's left is
+real-hardware validation (below).
 
 ---
 
