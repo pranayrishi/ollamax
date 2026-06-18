@@ -1,54 +1,148 @@
-/* VS Code theme-variable shim for the standalone app. The reused panel CSS
- * (main.css) was written for a VS Code webview and references --vscode-* custom
- * properties. Outside VS Code those are undefined, so we map them to Ollama-
- * Forge's dark "ink/ember" palette here. Covers exactly the variables main.css
- * uses. */
+/* Ollama-Forge app theme — research-grounded design tokens.
+ *
+ * Principles applied (sources in MEMORY/STREAMING report): Refactoring UI
+ * (hierarchy via size/weight/gray-ramp, grayscale-first + one accent), an
+ * 8px/4px spacing system + Gestalt proximity, a modular type scale with
+ * explicit line-heights, WCAG 2.x contrast (body ≥ 4.5:1, borders ≥ 3:1), and
+ * a Raycast/Linear surface ladder (canvas → surface → elevated) with hairline
+ * borders. The reused panel CSS (main.css) reads --vscode-* variables, so we
+ * define real tokens and MAP the --vscode-* shims onto them — no markup change. */
 :root {
   color-scheme: dark;
 
-  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --vscode-font-size: 13px;
-  --vscode-editor-font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* — Neutral ink ramp (contrast vs --ink-0 noted) — */
+  --ink-0:   #0b0d12; /* canvas / message area */
+  --ink-50:  #0e1117; /* surface: top bar, composer, user bubble */
+  --ink-100: #11151d; /* elevated: inputs, dropdown */
+  --ink-150: #161b25; /* hover */
+  --ink-200: #1d2330; /* pressed / selected */
+  --ink-300: #2a3140; /* strong hairline (~3:1) */
+  --ink-400: #3a4252; /* disabled border */
+  --ink-500: #6b7280; /* faint text (3.2:1) */
+  --ink-600: #9aa3b2; /* muted text — meta/captions (5.0:1) */
+  --ink-700: #c2c8d4; /* secondary body (9.4:1) */
+  --ink-900: #e8eaf0; /* primary text / answer (13.6:1) */
 
-  --vscode-foreground: #e6e8ee;
-  --vscode-descriptionForeground: #9aa1ad;
-  --vscode-errorForeground: #ff6b6b;
-  --vscode-focusBorder: #f59e0b;
-  --vscode-panel-border: #232733;
+  --border:        rgba(255, 255, 255, 0.08); /* default hairline */
+  --border-strong: rgba(255, 255, 255, 0.13); /* dividers, picker outline */
 
-  --vscode-editor-background: #0b0d12;
-  --vscode-sideBar-background: #0e1117;
-  --vscode-textCodeBlock-background: #11151d;
-  --vscode-textLink-foreground: #f59e0b;
+  /* — One accent (amber), used sparingly — */
+  --accent:        #f59e0b;
+  --accent-hover:  #fbbf24;
+  --accent-soft:   rgba(245, 158, 11, 0.14);
 
-  --vscode-button-background: #f59e0b;
-  --vscode-button-foreground: #0b0d12;
-  --vscode-button-hoverBackground: #fbbf24;
+  /* — Semantic status (only for status, never decoration) — */
+  --ok:   #3fb950;
+  --warn: #f0b429;
+  --err:  #ff6b6b;
 
-  --vscode-input-background: #11151d;
-  --vscode-input-foreground: #e6e8ee;
-  --vscode-input-border: #232733;
+  /* — 4px spacing scale — */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px;
+
+  /* — Type scale (size / line-height) — */
+  --text-caption: 11px; --lh-caption: 1.4;
+  --text-meta:    12px; --lh-meta:    1.4;
+  --text-ui:      13px; --lh-ui:      1.5;
+  --text-body:    15px; --lh-body:    1.6;
+  --text-title:   18px; --lh-title:   1.3;
+
+  /* — Radii — */
+  --r-1: 4px;  --r-2: 6px;  --r-3: 8px;  --r-4: 10px;  --r-pill: 9999px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* — Map the reused panel CSS's --vscode-* vars onto the tokens above — */
+  --vscode-font-family: var(--font-sans);
+  --vscode-font-size: var(--text-body);          /* bump chat body 13 → 15px */
+  --vscode-editor-font-family: var(--font-mono);
+
+  --vscode-foreground: var(--ink-900);
+  --vscode-descriptionForeground: var(--ink-600);
+  --vscode-errorForeground: var(--err);
+  --vscode-focusBorder: var(--accent);
+  --vscode-panel-border: var(--border-strong);
+
+  --vscode-editor-background: var(--ink-0);
+  --vscode-sideBar-background: var(--ink-50);
+  --vscode-textCodeBlock-background: var(--ink-100);
+  --vscode-textLink-foreground: var(--accent);
+
+  --vscode-button-background: var(--accent);
+  --vscode-button-foreground: var(--ink-0);
+  --vscode-button-hoverBackground: var(--accent-hover);
+
+  --vscode-input-background: var(--ink-100);
+  --vscode-input-foreground: var(--ink-900);
+  --vscode-input-border: var(--border-strong);
   --vscode-inputValidation-errorBackground: #3a1417;
 
-  --vscode-dropdown-background: #11151d;
-  --vscode-dropdown-foreground: #e6e8ee;
-  --vscode-dropdown-border: #232733;
+  --vscode-dropdown-background: var(--ink-100);
+  --vscode-dropdown-foreground: var(--ink-900);
+  --vscode-dropdown-border: var(--border-strong);
 
-  --vscode-badge-background: #232733;
-  --vscode-badge-foreground: #e6e8ee;
+  --vscode-badge-background: var(--ink-200);
+  --vscode-badge-foreground: var(--ink-900);
 
-  --vscode-toolbar-hoverBackground: #1b2130;
-  --vscode-editorWarning-foreground: #fbbf24;
-
-  --vscode-charts-green: #3fb950;
+  --vscode-toolbar-hoverBackground: var(--ink-150);
+  --vscode-editorWarning-foreground: var(--warn);
+  --vscode-charts-green: var(--ok);
   --vscode-charts-purple: #a371f7;
 }
 
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--vscode-editor-background);
-  color: var(--vscode-foreground);
-  font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
+  background: var(--ink-0);
+  color: var(--ink-900);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
 }
+
+/* App-level refinements layered on the reused panel CSS (hierarchy + spacing +
+ * proximity). These target the panel's existing ids/classes. */
+#topbar {
+  background: var(--ink-50);
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-2) var(--space-3);
+}
+#messages { padding: var(--space-4) var(--space-4); }
+#messages .msg { margin-bottom: var(--space-5); }          /* turns far apart */
+#messages .msg-meta {                                       /* role label, de-emphasized, tight to body */
+  font-size: var(--text-caption); font-weight: 600;
+  color: var(--ink-600); margin-bottom: var(--space-1);
+  letter-spacing: 0.02em;
+}
+#messages .body { font-size: var(--text-body); line-height: var(--lh-body); color: var(--ink-900); }
+#composer { background: var(--ink-50); border-top: 1px solid var(--border); padding: var(--space-3); }
+#input {
+  background: var(--ink-100); border: 1px solid var(--border-strong);
+  border-radius: var(--r-3); color: var(--ink-900); padding: var(--space-3);
+  font-size: var(--text-body); line-height: var(--lh-ui);
+}
+#input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+pre.code, code { font-family: var(--font-mono); font-size: var(--text-ui); }
+.statusline { font-size: var(--text-meta); color: var(--ink-600); font-variant-numeric: tabular-nums; }
+
+/* Mode tabs as a pill group (Raycast/VS Code) */
+.modes { gap: var(--space-1); }
+.mode { border-radius: var(--r-2); font-size: var(--text-ui); }
+.mode.active { background: var(--accent-soft); color: var(--accent); }
+
+/* #6: model pill row in the composer (quiet, near the act of sending) */
+.modelrow { display: flex; gap: var(--space-2); align-items: center; margin-bottom: var(--space-2); }
+.modelrow #model {
+  flex: 1; min-width: 0; background: var(--ink-100); color: var(--ink-700);
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+  padding: var(--space-1) var(--space-3); font-size: var(--text-ui);
+}
+.modelrow .iconbtn {
+  background: transparent; border: 1px solid var(--border);
+  border-radius: var(--r-2); color: var(--ink-600); padding: var(--space-1) var(--space-2);
+}
+.attachrow { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
+.attach { border-radius: var(--r-2); font-size: var(--text-ui); color: var(--ink-700); border: 1px solid var(--border); background: transparent; padding: var(--space-1) var(--space-3); }
+.attach:hover { background: var(--ink-150); }

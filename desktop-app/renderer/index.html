@@ -20,10 +20,6 @@
       <button class="mode" data-mode="agent" title="Tool-using research agent">Agent</button>
       <button class="mode" data-mode="build" title="Parallel multi-model build">Build</button>
     </div>
-    <div class="picker">
-      <select id="model" title="Installed Ollama model (auto-selected for your hardware)"></select>
-      <button id="refresh" class="iconbtn" title="Refresh installed Ollama models (after ollama pull)">⟳</button>
-    </div>
   </header>
 
   <div id="statusline" class="statusline">starting local engine…</div>
@@ -37,8 +33,15 @@
   <div id="context" class="context" hidden></div>
 
   <footer id="composer">
+    <!-- #6: the model/router picker now sits directly above the input (Cursor/
+         Windsurf pattern) — reunited with the act of sending. "Auto" stays default. -->
+    <div class="modelrow">
+      <select id="model" title="Model / router (Auto = pick the best installed model for this task)"></select>
+      <button id="refresh" class="iconbtn" title="Refresh installed Ollama models (after ollama pull)">⟳</button>
+    </div>
     <div class="attachrow">
-      <button class="attach" data-attach="pick" title="Attach files to give the model context">+ files</button>
+      <button class="attach" data-attach="pick" title="Attach files for context">+ files</button>
+      <button class="attach" data-attach="image" title="Attach an image (needs a vision-capable model)">+ image</button>
     </div>
     <div class="inputrow">
       <textarea id="input" rows="3" placeholder="Ask anything — runs locally on your hardware. ⏎ to send, ⇧⏎ for newline."></textarea>

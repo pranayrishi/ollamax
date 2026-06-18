@@ -9,7 +9,18 @@ use tracing::{debug, error};
 pub struct OllamaProvider {
     base_url: String,
     client: Client,
+    /// Separate client for STREAMING generations. It has NO whole-request
+    /// timeout: a healthy local generation can legitimately run for minutes on
+    /// slow hardware, and a total cap (the old 300s) killed long-but-progressing
+    /// streams mid-flight — the cause of the "read streaming chunk from Ollama"
+    /// error. Stalls are instead bounded per-chunk in `generate_streaming`.
+    stream_client: Client,
 }
+
+/// Max idle time between streamed chunks before we declare the stream stalled.
+/// Generous enough to cover a cold model load (first token), tight enough to
+/// catch a genuinely-hung Ollama or a model too large to ever load.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Debug, Serialize)]
 struct GenerateRequest {
@@ -26,6 +37,9 @@ struct GenerateRequest {
     /// We always send it because the server default (5m) bites every model switch.
     #[serde(skip_serializing_if = "Option::is_none")]
     keep_alive: Option<String>,
+    /// Base64 images for multimodal models (vision).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    images: Option<Vec<String>>,
     /// Ollama `format` parameter (v0.5+). Either the literal string `"json"`
     /// for free-form valid JSON, or a full JSON Schema document for
     /// schema-constrained decoding. We pass it through as raw JSON so
@@ -139,12 +153,20 @@ impl OllamaProvider {
     pub fn new(base_url: impl Into<String>) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(300))
+            .connect_timeout(Duration::from_secs(15))
             .build()
             .unwrap_or_else(|e| panic!("ollama-forge: could not build HTTP client (reqwest): {e}"));
+        let stream_client = Client::builder()
+            // No total timeout — streaming is bounded per-chunk, not overall.
+            .connect_timeout(Duration::from_secs(15))
+            .tcp_keepalive(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|e| panic!("ollama-forge: could not build streaming HTTP client: {e}"));
 
         Self {
             base_url: base_url.into(),
             client,
+            stream_client,
         }
     }
 
@@ -153,11 +175,18 @@ impl OllamaProvider {
     pub fn try_new(base_url: impl Into<String>) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(300))
+            .connect_timeout(Duration::from_secs(15))
             .build()
             .context("build reqwest client")?;
+        let stream_client = Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .tcp_keepalive(Duration::from_secs(30))
+            .build()
+            .context("build streaming reqwest client")?;
         Ok(Self {
             base_url: base_url.into(),
             client,
+            stream_client,
         })
     }
 
@@ -182,7 +211,7 @@ impl OllamaProvider {
         request.stream = true;
 
         let resp = self
-            .client
+            .stream_client
             .post(format!("{}/api/generate", self.base_url))
             .json(&request)
             .send()
@@ -203,11 +232,23 @@ impl OllamaProvider {
         let mut response = resp;
         let mut buf: Vec<u8> = Vec::with_capacity(4096);
         let mut total = 0usize;
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .context("read streaming chunk from Ollama")?
-        {
+        // Per-chunk IDLE timeout (not a whole-request cap): a slow-but-healthy
+        // stream keeps delivering bytes and runs as long as it needs; only a
+        // genuine stall trips this, with an actionable message instead of the
+        // old cryptic 300s failure.
+        loop {
+            let chunk = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, response.chunk()).await {
+                Ok(Ok(Some(c))) => c,
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) => return Err(e).context("read streaming chunk from Ollama"),
+                Err(_) => anyhow::bail!(
+                    "Ollama produced no output for {}s — model `{}` is likely too large for this \
+                     machine (still cold-loading) or Ollama hung. Pick a smaller model that fits \
+                     your VRAM (`forge models --fits-only`) or keep it warm and retry.",
+                    STREAM_IDLE_TIMEOUT.as_secs(),
+                    opts.model
+                ),
+            };
             buf.extend_from_slice(&chunk);
             // Drain complete lines from buf — Ollama emits one JSON object per line.
             while let Some(nl) = buf.iter().position(|b| *b == b'\n') {
@@ -341,7 +382,23 @@ impl OllamaProvider {
             }),
             context: None,
             keep_alive: opts.keep_alive.clone(),
+            images: opts.images.clone().filter(|v| !v.is_empty()),
             format: opts.format.clone(),
+        }
+    }
+
+    /// True if the model advertises the `vision` capability (Ollama `/api/show`
+    /// `capabilities`). Used to route image input to a multimodal model and to
+    /// warn when the selected model can't see images. Best-effort: false on any
+    /// error (so we fail closed and prompt the user to pick a vision model).
+    pub async fn supports_vision(&self, model: &str) -> bool {
+        match self.show(model).await {
+            Ok(doc) => doc
+                .get("capabilities")
+                .and_then(|c| c.as_array())
+                .map(|arr| arr.iter().any(|v| v.as_str() == Some("vision")))
+                .unwrap_or(false),
+            Err(_) => false,
         }
     }
 
@@ -530,6 +587,7 @@ impl LlmProvider for OllamaProvider {
             options: None,
             context: None,
             keep_alive: Some(keep_alive.to_string()),
+            images: None,
             format: None,
         };
         // Per-call timeout: a 70B cold-load can legitimately take 60-90s,
@@ -604,7 +662,28 @@ fn format_size(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_size;
+    use super::{format_size, OllamaProvider};
+    use crate::providers::GenerateOptions;
+
+    #[test]
+    fn generate_request_includes_images_for_vision() {
+        let opts = GenerateOptions {
+            prompt: "what is in this image?".into(),
+            images: Some(vec!["BASE64IMAGEDATA".into()]),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&OllamaProvider::build_generate_request(&opts)).unwrap();
+        assert!(json.contains("\"images\""));
+        assert!(json.contains("BASE64IMAGEDATA"));
+    }
+
+    #[test]
+    fn generate_request_omits_images_when_none() {
+        let json =
+            serde_json::to_string(&OllamaProvider::build_generate_request(&GenerateOptions::default()))
+                .unwrap();
+        assert!(!json.contains("images"), "images must be omitted when absent");
+    }
 
     #[test]
     fn format_size_uses_binary_units() {

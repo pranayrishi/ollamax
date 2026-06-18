@@ -39,6 +39,9 @@ pub struct GenerateOptions {
     /// e.g. "30m", "1h", "0" — passed straight to Ollama's `keep_alive`.
     /// `None` lets Ollama use its server-side default (5m as of v0.1.x).
     pub keep_alive: Option<String>,
+    /// Base64-encoded images for VISION input (Ollama `/api/generate` `images`).
+    /// Only honored by multimodal models — see `OllamaProvider::supports_vision`.
+    pub images: Option<Vec<String>>,
     /// Ollama `format` parameter (v0.5+).
     /// - `Some(json!("json"))` → free-form valid JSON
     /// - `Some(json!({...}))`  → strict JSON Schema (constrained decoding)
@@ -69,6 +72,7 @@ impl Default for GenerateOptions {
             keep_alive: Some("30m".to_string()),
             format: None,
             seed: None,
+            images: None,
         }
     }
 }

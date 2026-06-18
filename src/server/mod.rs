@@ -421,7 +421,12 @@ struct ChatMsg {
 struct ContextItem {
     #[serde(default)]
     path: String,
+    #[serde(default)]
     content: String,
+    /// #7 Vision: base64-encoded image bytes (no data: prefix). When present,
+    /// the turn is routed with images and needs a vision-capable model.
+    #[serde(default)]
+    image: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -791,6 +796,25 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
         return;
     }
 
+    // #7 Vision: collect any attached images (base64) and, if present, ensure
+    // the model can actually see — otherwise warn the user to switch.
+    let images: Vec<String> = req.context.iter().filter_map(|c| c.image.clone()).collect();
+    let mut vision_warning = None;
+    if !images.is_empty() {
+        let probe = OllamaProvider::new(&state.config.ollama_url);
+        if !probe.supports_vision(&model).await {
+            vision_warning = Some(json!({
+                "severity": "warning",
+                "rule": "vision_model_required",
+                "file": "",
+                "message": format!("`{model}` can't read images. Pick a vision model (e.g. one tagged `vision` in the model list) to analyze the attached image."),
+            }));
+        }
+    }
+    if let Some(vw) = vision_warning {
+        warnings.push(vw);
+    }
+
     let replay_mode = std::env::var_os("FORGE_REPLAY_LOG").is_some();
     let opts = GenerateOptions {
         model: model.clone(),
@@ -804,6 +828,7 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
             Some(req.temperature.unwrap_or(0.7))
         },
         seed: if replay_mode { Some(0) } else { None },
+        images: if images.is_empty() { None } else { Some(images) },
         ..Default::default()
     };
 
@@ -1572,6 +1597,7 @@ mod tests {
         let ctx = vec![ContextItem {
             path: "src/x.rs".into(),
             content: "fn x() {}".into(),
+            image: None,
         }];
         let p = build_chat_prompt(&msgs, None, &ctx);
         assert!(p.contains("Attached context"));
