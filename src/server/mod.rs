@@ -1090,6 +1090,21 @@ async fn run_agent_streamed(
         if !mem.is_empty() {
             suffix = format!("{suffix}\n\n{mem}");
         }
+        // #1c Skills-in-the-loop: auto-apply the single most relevant skill's
+        // guidance to this task (Hermes-class self-improving skills). The UI
+        // shows which skill was applied via the `skill_applied` event.
+        if let Some(sd) = dirs::config_dir().map(|d| d.join("ollama-forge").join("skills")) {
+            let eng = crate::skills::SkillsEngine::new(sd);
+            if eng.load_skills().await.is_ok() {
+                if let Some(skill) = eng.best_match(&question).await {
+                    suffix = format!(
+                        "{suffix}\n\n## Applied skill: {}\n{}",
+                        skill.name, skill.prompts.system
+                    );
+                    let _ = tx.send(json!({"type": "skill_applied", "name": skill.name}));
+                }
+            }
+        }
         let mut agent = Agent::new(
             provider,
             registry,
@@ -1101,7 +1116,7 @@ async fn run_agent_streamed(
                 system_suffix: suffix,
             },
         );
-        agent
+        let result = agent
             .run(&question, |step| {
                 let preview: String = step
                     .result_preview
@@ -1118,7 +1133,28 @@ async fn run_agent_streamed(
                     "preview": preview,
                 }));
             })
-            .await
+            .await;
+        // #1b Memory write-back: persist a session summary at stream end so the
+        // next session isn't a cold start (Hermes-class persistent memory).
+        // SecurityGuard-gated — never persist anything that scans as a secret.
+        // Stays entirely on the device (per-project JSONL).
+        if let Ok(trace) = &result {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let pair = [
+                ("user".to_string(), question.clone()),
+                ("assistant".to_string(), trace.answer.clone()),
+            ];
+            if let Some(entry) = crate::memory::summarize_session(&pair, ts) {
+                let guard = crate::security::SecurityGuard::new(true);
+                if guard.scan_content(&entry.text, None).await.is_empty() {
+                    let _ = crate::memory::MemoryStore::for_project(&cwd).remember(&entry);
+                }
+            }
+        }
+        result
     });
 
     let mut cancelled = false;

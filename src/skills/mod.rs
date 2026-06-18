@@ -173,6 +173,35 @@ impl SkillsEngine {
         }
     }
 
+    /// Pick the single loaded skill whose name+description best matches the
+    /// task, or None if nothing clears a small relevance bar. Lightweight token
+    /// overlap (same spirit as hub search) — enough to AUTO-APPLY one relevant
+    /// skill's guidance into the agent's system prompt (Hermes-class
+    /// "skills in the loop"). Call after `load_skills`.
+    pub async fn best_match(&self, query: &str) -> Option<Skill> {
+        fn toks(s: &str) -> Vec<String> {
+            s.to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|t| t.len() >= 4)
+                .map(|t| t.to_string())
+                .collect()
+        }
+        let q = toks(query);
+        if q.is_empty() {
+            return None;
+        }
+        let skills = self.skills.read().await;
+        let mut best: Option<(usize, Skill)> = None;
+        for s in skills.values() {
+            let hay = toks(&format!("{} {}", s.name, s.description));
+            let score = q.iter().filter(|t| hay.contains(*t)).count();
+            if score > 0 && best.as_ref().map_or(true, |(b, _)| score > *b) {
+                best = Some((score, s.clone()));
+            }
+        }
+        best.map(|(_, s)| s)
+    }
+
     pub async fn load_skills(&self) -> Result<Vec<Skill>> {
         let mut skills = Vec::new();
 
@@ -340,5 +369,29 @@ impl SkillsEngine {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn best_match_picks_relevant_skill() {
+        let dir = std::env::temp_dir().join(format!("forge-skillmatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("alpha.SKILL.md"),
+            "---\nname: alpha-skill\ndescription: Handles zqxwvtoken alpha workflows specially\n---\nbody",
+        )
+        .unwrap();
+        let eng = SkillsEngine::new(dir.clone());
+        eng.load_skills().await.unwrap();
+        let m = eng.best_match("please use the zqxwvtoken approach here").await;
+        assert_eq!(m.map(|s| s.name), Some("alpha-skill".to_string()));
+        // A query sharing no >=4-char token with any skill matches nothing.
+        assert!(eng.best_match("qqqzzz wwwyyy").await.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
