@@ -672,3 +672,10 @@ body.dropping::after {
 .approw button { padding: 4px 12px; border: none; border-radius: 5px; cursor: pointer; font-size: 12px; }
 .approw .primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 .approw .ghost { background: transparent; color: var(--vscode-errorForeground); border: 1px solid var(--vscode-errorForeground); }
+
+/* Sub-agents lane — delegated child agents, out of the main step stream. */
+.subagents { margin: 4px 0; }
+.subagent { margin: 4px 0; border-left: 2px solid var(--vscode-textLink-foreground); padding-left: 8px; }
+.subagent > summary { cursor: pointer; font-size: 12px; opacity: 0.9; }
+.subagent .sa-state { opacity: 0.6; font-size: 11px; }
+.subagent .sa-body { margin: 4px 0 4px 6px; }

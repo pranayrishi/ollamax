@@ -168,6 +168,14 @@
     steps.hidden = true;
     el.appendChild(steps);
 
+    // Sub-agents lane — delegated child agents render here, OUT of the main
+    // step stream. `subCurrent` tracks the open sub-agent's body container.
+    const subagents = document.createElement("div");
+    subagents.className = "subagents";
+    subagents.hidden = true;
+    el.appendChild(subagents);
+    let subCurrent = null;
+
     const progress = document.createElement("div");
     progress.className = "progress";
     progress.hidden = true;
@@ -347,6 +355,42 @@
         steps.appendChild(row);
         scrollDown();
       },
+      // ----- Sub-agents lane (delegated child agents) -----
+      addSubagentStart(task) {
+        subagents.hidden = false;
+        const det = document.createElement("details");
+        det.className = "subagent";
+        det.open = true;
+        const sum = document.createElement("summary");
+        sum.innerHTML = `🤖 <span class="sa-task">${escapeHtml(task || "sub-agent")}</span> <span class="sa-state">running…</span>`;
+        det.appendChild(sum);
+        const bodyc = document.createElement("div");
+        bodyc.className = "sa-body";
+        det.appendChild(bodyc);
+        subagents.appendChild(det);
+        subCurrent = { det, body: bodyc, sum };
+        scrollDown();
+      },
+      addSubagentStep(ev) {
+        if (!subCurrent) this.addSubagentStart("sub-agent");
+        const row = document.createElement("div");
+        row.className = "step " + (ev.ok ? "ok" : "fail");
+        row.innerHTML =
+          `<span class="sdot">${ev.ok ? "●" : "✕"}</span>` +
+          `<span class="badge">round ${ev.iteration}</span> ` +
+          `<span class="tool">${escapeHtml(ev.tool)}</span> ` +
+          `<span class="prev">${escapeHtml(ev.preview || "")}</span>`;
+        subCurrent.body.appendChild(row);
+        scrollDown();
+      },
+      addSubagentEnd(ev) {
+        if (subCurrent) {
+          const st = subCurrent.sum.querySelector(".sa-state");
+          if (st) st.textContent = ev && ev.ok === false ? "failed" : "done";
+          subCurrent.det.open = false;
+          subCurrent = null;
+        }
+      },
       addProgress(ev) {
         this.stopStatus();
         progress.hidden = false;
@@ -511,6 +555,15 @@
         break;
       case "approval_request":
         active.addApprovalPrompt(ev);
+        break;
+      case "subagent_start":
+        active.addSubagentStart(ev.task);
+        break;
+      case "subagent_step":
+        active.addSubagentStep(ev);
+        break;
+      case "subagent_end":
+        active.addSubagentEnd(ev);
         break;
       case "skill_applied":
         active.addSkill(ev.name);

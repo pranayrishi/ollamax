@@ -1310,12 +1310,15 @@ async fn run_agent_streamed(
             &cwd.join("graphify-out").join("graph.json"),
         );
         child_registry.register(Arc::new(crate::tools::files::FsReadTool::new(&cwd)));
-        registry.register(Arc::new(crate::tools::delegate::DelegateTool::new(
-            provider.clone(),
-            model.clone(),
-            num_ctx,
-            child_registry,
-        )));
+        registry.register(Arc::new(
+            crate::tools::delegate::DelegateTool::new(
+                provider.clone(),
+                model.clone(),
+                num_ctx,
+                child_registry,
+            )
+            .with_events(tx.clone()),
+        ));
         // #1d MCP tools: connect any allowlisted MCP servers and register their
         // remote tools (the open protocol Hermes is built on). Failures are
         // logged + skipped — a broken MCP server never breaks the agent.

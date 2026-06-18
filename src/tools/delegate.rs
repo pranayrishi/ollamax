@@ -25,6 +25,9 @@ pub struct DelegateTool {
     /// The toolset the CHILD gets — must exclude `delegate` to prevent unbounded
     /// recursion. Build it from the read/research tools only.
     child_tools: ToolRegistry,
+    /// Optional event sink (the SSE channel) so the child's steps stream to the
+    /// UI's dedicated Sub-agents lane instead of being discarded.
+    events: Option<tokio::sync::mpsc::UnboundedSender<Value>>,
 }
 
 impl DelegateTool {
@@ -40,7 +43,15 @@ impl DelegateTool {
             num_ctx,
             max_iterations: 6,
             child_tools,
+            events: None,
         }
+    }
+
+    /// Stream the child's lifecycle (`subagent_start`/`subagent_step`/
+    /// `subagent_end`) to this sink so the UI can render a Sub-agents lane.
+    pub fn with_events(mut self, tx: tokio::sync::mpsc::UnboundedSender<Value>) -> Self {
+        self.events = Some(tx);
+        self
     }
 }
 
@@ -73,20 +84,44 @@ impl Tool for DelegateTool {
                         .to_string(),
             },
         );
-        // The child's intermediate steps are intentionally discarded — only its
-        // final answer crosses back into the parent's context.
-        match child.run(task, |_step| {}).await {
-            Ok(trace) => Ok(ToolResult {
+        // Stream the child's lifecycle to the Sub-agents lane (only its final
+        // answer still crosses back into the parent's CONTEXT).
+        let label: String = task.chars().take(80).collect();
+        if let Some(ev) = &self.events {
+            let _ = ev.send(json!({ "type": "subagent_start", "task": label }));
+        }
+        let events = self.events.clone();
+        let result = child
+            .run(task, move |step| {
+                if let Some(ev) = &events {
+                    let preview: String =
+                        step.result_preview.replace('\n', " ").chars().take(200).collect();
+                    let _ = ev.send(json!({
+                        "type": "subagent_step",
+                        "iteration": step.iteration,
+                        "tool": step.tool,
+                        "ok": step.ok,
+                        "preview": preview,
+                    }));
+                }
+            })
+            .await;
+        let out = match result {
+            Ok(trace) => ToolResult {
                 tool: "delegate".into(),
                 ok: true,
                 content: truncate_for_model(&trace.answer),
-            }),
-            Err(e) => Ok(ToolResult {
+            },
+            Err(e) => ToolResult {
                 tool: "delegate".into(),
                 ok: false,
                 content: format!("sub-agent failed: {e}"),
-            }),
+            },
+        };
+        if let Some(ev) = &self.events {
+            let _ = ev.send(json!({ "type": "subagent_end", "ok": out.ok }));
         }
+        Ok(out)
     }
 }
 
