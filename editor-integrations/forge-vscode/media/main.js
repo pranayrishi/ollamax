@@ -49,6 +49,7 @@
   let contextItems = []; // {path, content, label}
   let active = null; // the assistant message currently streaming
   let activeMode = "chat"; // mode of the in-flight turn (may differ from toggle)
+  let lastAutonomy = "confirm"; // autonomy of the in-flight agent turn (gates the Plan card)
   /** queued items: {text, mode, model, context} */
   let queue = [];
   let pausedByCancel = false;
@@ -321,6 +322,43 @@
         steps.appendChild(row);
         scrollDown();
       },
+      // Intent Preview: the agent's proposed plan before it executes. In confirm
+      // mode it's gated with Run / Cancel; otherwise it's shown for transparency.
+      addPlan(text, gated) {
+        this.stopStatus();
+        steps.hidden = false;
+        const card = document.createElement("div");
+        card.className = "plan-card";
+        const head = document.createElement("div");
+        head.className = "plan-head";
+        head.textContent = "📋 Plan";
+        card.appendChild(head);
+        const bodyc = document.createElement("pre");
+        bodyc.className = "plan-body";
+        bodyc.textContent = text;
+        card.appendChild(bodyc);
+        if (gated) {
+          const actions = document.createElement("div");
+          actions.className = "approw";
+          const run = document.createElement("button");
+          run.className = "primary";
+          run.textContent = "Run plan";
+          const cancel = document.createElement("button");
+          cancel.className = "ghost";
+          cancel.textContent = "Cancel (I'll do it)";
+          const decide = (decision) => {
+            vscode.postMessage({ type: "approve", decision });
+            actions.textContent = decision ? "▶ running…" : "✕ cancelled";
+          };
+          run.addEventListener("click", () => decide(true));
+          cancel.addEventListener("click", () => decide(false));
+          actions.appendChild(run);
+          actions.appendChild(cancel);
+          card.appendChild(actions);
+        }
+        steps.appendChild(card);
+        scrollDown();
+      },
       // Autonomy Dial: the agent paused for approval before a consequential tool.
       // Render an Approve / Deny prompt; the decision is relayed to the agent.
       addApprovalPrompt(ev) {
@@ -437,6 +475,7 @@
     inputEl.value = "";
     const autonomyEl = $("#autonomy");
     const item = { text, mode, model, context: contextItems.slice(), autonomy: autonomyEl ? autonomyEl.value : "confirm" };
+    if (mode === "agent") lastAutonomy = item.autonomy;
     contextItems = []; // consumed by this message
     renderContext();
     if (streaming) {
@@ -552,6 +591,9 @@
         break;
       case "step":
         active.addStep(ev);
+        break;
+      case "plan":
+        active.addPlan(ev.text || "", lastAutonomy === "confirm");
         break;
       case "approval_request":
         active.addApprovalPrompt(ev);

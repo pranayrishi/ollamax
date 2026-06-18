@@ -1208,6 +1208,27 @@ struct ChannelApprovalPolicy {
 
 #[async_trait::async_trait]
 impl crate::agent::ApprovalPolicy for ChannelApprovalPolicy {
+    async fn approve_plan(&self, plan: &str) -> crate::agent::Approval {
+        use crate::agent::Approval;
+        // Always surface the plan (Intent Preview). Only "confirm" pauses for the
+        // user's Run/Cancel; auto/readonly show it and proceed.
+        let _ = self.tx.send(json!({ "type": "plan", "text": plan }));
+        if self.mode != "confirm" {
+            return Approval::Allow;
+        }
+        let mut rx = self.rx.lock().await;
+        match tokio::time::timeout(std::time::Duration::from_secs(300), rx.recv()).await {
+            Ok(Some(decision)) => {
+                if decision {
+                    Approval::Allow
+                } else {
+                    Approval::Deny
+                }
+            }
+            _ => Approval::Deny,
+        }
+    }
+
     async fn approve(&self, tool: &str, args: &Value) -> crate::agent::Approval {
         use crate::agent::Approval;
         match self.mode.as_str() {
@@ -1278,6 +1299,8 @@ async fn run_agent_streamed(
     // Autonomy Dial: the agent's approval gate sends approval_request events on
     // `tx` and awaits decisions from /api/agent/approve via this channel.
     let appr_rx = state.register_approval(&id).await;
+    // Intent Preview only PAUSES in confirm mode (still shown in others).
+    let plan_enabled = autonomy == "confirm";
     let approval: Arc<dyn crate::agent::ApprovalPolicy> = Arc::new(ChannelApprovalPolicy {
         mode: autonomy,
         tx: tx.clone(),
@@ -1366,7 +1389,8 @@ async fn run_agent_streamed(
                 system_suffix: suffix,
             },
         )
-        .with_approval(approval);
+        .with_approval(approval)
+        .with_planning(plan_enabled);
         let result = agent
             .run(&question, |step| {
                 let preview: String = step

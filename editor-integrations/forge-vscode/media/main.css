@@ -679,3 +679,10 @@ body.dropping::after {
 .subagent > summary { cursor: pointer; font-size: 12px; opacity: 0.9; }
 .subagent .sa-state { opacity: 0.6; font-size: 11px; }
 .subagent .sa-body { margin: 4px 0 4px 6px; }
+
+/* Plan card (Intent Preview) — shown before the agent executes. */
+.plan-card { margin: 6px 0; padding: 8px 10px; border-radius: 6px;
+  background: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.1));
+  border-left: 2px solid var(--vscode-focusBorder, #4493f8); }
+.plan-head { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+.plan-body { margin: 0 0 6px; white-space: pre-wrap; word-break: break-word; font-size: 12px; }

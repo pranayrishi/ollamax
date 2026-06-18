@@ -47,6 +47,9 @@ pub struct Agent {
     /// Optional approval gate consulted before a *consequential* tool runs
     /// (the Autonomy Dial). `None` = approve everything (default behavior).
     approval: Option<Arc<dyn ApprovalPolicy>>,
+    /// When true (and an approval policy is set), run an Intent-Preview planning
+    /// pass before the loop and gate it through `approve_plan`.
+    plan: bool,
 }
 
 /// Decision returned by an [`ApprovalPolicy`].
@@ -62,6 +65,11 @@ pub enum Approval {
 #[async_trait::async_trait]
 pub trait ApprovalPolicy: Send + Sync {
     async fn approve(&self, tool: &str, args: &Value) -> Approval;
+    /// Consulted once, before the loop, with the agent's proposed plan (Intent
+    /// Preview). Default allows — only a UI that wants a plan gate overrides it.
+    async fn approve_plan(&self, _plan: &str) -> Approval {
+        Approval::Allow
+    }
 }
 
 /// Tools that mutate the workspace or execute code — these are gated by the
@@ -128,6 +136,7 @@ impl Agent {
             system_suffix: config.system_suffix,
             cached_digest: String::new(),
             approval: None,
+            plan: false,
         }
     }
 
@@ -136,6 +145,35 @@ impl Agent {
     pub fn with_approval(mut self, policy: Arc<dyn ApprovalPolicy>) -> Self {
         self.approval = Some(policy);
         self
+    }
+
+    /// Enable the Intent Preview: a quick planning pass before the loop, gated
+    /// through the approval policy's `approve_plan`. No-op without an approval.
+    pub fn with_planning(mut self, on: bool) -> Self {
+        self.plan = on;
+        self
+    }
+
+    /// One short model call to produce a numbered plan for `task`. Best-effort:
+    /// returns empty on failure so planning never blocks the run.
+    async fn generate_plan(&self, task: &str) -> String {
+        let opts = GenerateOptions {
+            model: self.model.clone(),
+            prompt: format!(
+                "Task: {task}\n\nList the concrete steps you will take, as a short numbered \
+                 list (2-6 steps). Plain text only — no preamble, no code."
+            ),
+            system: Some("You are planning before acting. Be concise and concrete.".to_string()),
+            temperature: Some(0.2),
+            num_ctx: Some(self.num_ctx),
+            stream: false,
+            keep_alive: Some(self.keep_alive.clone()),
+            ..Default::default()
+        };
+        match self.provider.generate(opts).await {
+            Ok(r) => r.content.trim().to_string(),
+            Err(_) => String::new(),
+        }
     }
 
     /// Run the agent loop. `on_step` is called for each tool invocation so
@@ -177,6 +215,20 @@ impl Agent {
             answer: String::new(),
             iteration_capped: false,
         };
+
+        // Intent Preview: propose a plan up front and let the user gate it.
+        if self.plan {
+            if let Some(policy) = &self.approval {
+                let plan = self.generate_plan(task).await;
+                if !plan.is_empty() && policy.approve_plan(&plan).await == Approval::Deny {
+                    info!("agent: plan declined by user before execution");
+                    trace.answer = format!(
+                        "Plan declined — nothing was executed. The proposed plan was:\n\n{plan}"
+                    );
+                    return Ok(trace);
+                }
+            }
+        }
 
         let max = self.max_iterations;
         for iteration in 1..=max {
