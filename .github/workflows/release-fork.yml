@@ -1,0 +1,103 @@
+name: release-fork
+
+# Builds the Code-OSS FORK app (VS Code-based, with the forge-vscode extension as
+# a built-in + the bundled forge engine) and publishes it to the public releases
+# repo. This is the real "VS Code format" app — distinct from the Electron
+# desktop-app (release-app.yml). Trigger: push a `fork-v*` tag, or run manually.
+#
+# STARTING macOS arm64 ONLY to de-risk: the VS Code build is heavy (~15 GB disk,
+# wants an 8 GB Node heap, 20-40 min) and may need iteration / a larger runner.
+# Published under a DISTINCT name (ForgeCode-*) so it does NOT clobber the
+# working Electron download while we validate it.
+#
+# Requires the RELEASES_REPO_TOKEN secret (cross-repo publish), same as release-app.yml.
+
+on:
+  push:
+    tags: ["fork-v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  RELEASES_REPO: pranayrishi/ollamax-releases
+
+jobs:
+  fork-macos:
+    name: fork (macos-arm64)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (for the bundled forge engine)
+        uses: dtolnay/rust-toolchain@stable
+
+      # The VS Code checkout pins Node via .nvmrc (1.95.3 -> 20.18.0). node-gyp
+      # needs Python 3.11 (3.12 dropped distutils).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.18.0"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m pip install --quiet setuptools || true
+
+      - name: Show free disk (the fork build is large)
+        run: df -h /
+
+      - name: Build the Code-OSS fork (clone + rebrand + bundle + gulp)
+        env:
+          RUN_REAL: "1"
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          npm_config_python: python3.11
+        run: bash desktop/scripts/bootstrap.sh
+
+      - name: Locate the built .app
+        id: app
+        run: |
+          set -euo pipefail
+          APP="$(find "$PWD/desktop" -maxdepth 2 -name '*.app' -type d | head -1)"
+          [ -n "$APP" ] || { echo "no .app produced"; find "$PWD/desktop" -maxdepth 2 -type d | head -50; exit 1; }
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "found app: $APP"
+
+      - name: Ad-hoc codesign (unsigned, Gatekeeper right-click-Open)
+        run: |
+          codesign --force --deep --sign - "${{ steps.app.outputs.app }}" || true
+          codesign --verify --deep --verbose=1 "${{ steps.app.outputs.app }}" || true
+
+      - name: Package .dmg
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          hdiutil create -volname "ForgeCode" -srcfolder "${{ steps.app.outputs.app }}" \
+            -ov -format UDZO dist/ForgeCode-macos-arm64.dmg
+          ( cd dist && shasum -a 256 ForgeCode-macos-arm64.dmg > ForgeCode-macos-arm64.dmg.sha256 )
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fork-macos-arm64
+          path: dist/*
+          if-no-files-found: warn
+
+      - name: Publish to the releases repo (distinct name; coexists with Electron app)
+        if: startsWith(github.ref, 'refs/tags/fork-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.RELEASES_REPO }}
+          token: ${{ secrets.RELEASES_REPO_TOKEN }}
+          tag_name: v0.1.0
+          name: Ollama-Forge v0.1.0
+          body: |
+            ForgeCode — the VS Code-based (Code-OSS fork) build with the forge AI
+            experience as a built-in. UNSIGNED: macOS first launch → right-click →
+            Open. Ollama required. Published alongside the Electron app while the
+            fork build is validated.
+          files: |
+            dist/ForgeCode-macos-arm64.dmg
+            dist/ForgeCode-macos-arm64.dmg.sha256
+          fail_on_unmatched_files: false
