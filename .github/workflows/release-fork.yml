@@ -22,9 +22,6 @@ permissions:
 
 env:
   RELEASES_REPO: pranayrishi/ollamax-releases
-  # Authenticate vscode's postinstall downloads (@vscode/ripgrep etc.) so they
-  # don't hit GitHub's unauthenticated API rate limit (403). 5000/hr vs 60/hr.
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   fork-macos:
@@ -53,6 +50,9 @@ jobs:
       - name: Build the Code-OSS fork (clone + rebrand + bundle + gulp)
         env:
           RUN_REAL: "1"
+          # Authenticate vscode's postinstall downloads (@vscode/ripgrep) to dodge
+          # GitHub's unauthenticated 403 rate limit. secrets are valid at step level.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           npm_config_python: python3.11
@@ -126,6 +126,9 @@ jobs:
       - name: Build the Code-OSS fork
         env:
           RUN_REAL: "1"
+          # Authenticate vscode's postinstall downloads (@vscode/ripgrep) to dodge
+          # GitHub's unauthenticated 403 rate limit. secrets are valid at step level.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           npm_config_python: python
@@ -177,6 +180,9 @@ jobs:
         shell: bash
         env:
           RUN_REAL: "1"
+          # Authenticate vscode's postinstall downloads (@vscode/ripgrep) to dodge
+          # GitHub's unauthenticated 403 rate limit. secrets are valid at step level.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           npm_config_python: python
