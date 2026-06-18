@@ -83,17 +83,22 @@ jobs:
           pattern: app-*
           path: dist
           merge-multiple: true
+      # Publish onto the BASE version release (strip the `app-` prefix) so the app
+      # installers live alongside everything else on a single "latest" release —
+      # keeps the website's releases/latest/download/<asset> URLs working.
+      - id: ver
+        run: echo "tag=${GITHUB_REF_NAME#app-}" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.RELEASES_REPO }}
           token: ${{ secrets.RELEASES_REPO_TOKEN }}
-          tag_name: ${{ github.ref_name }}
-          name: Ollama-Forge App ${{ github.ref_name }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Ollama-Forge ${{ steps.ver.outputs.tag }}
           body: |
-            Standalone desktop app (UNSIGNED, ad-hoc-signed, Sattva-style).
-            First launch on macOS: right-click the app → Open → Open (it isn't
-            code-signed yet). Verify against the matching .sha256. Bundles the
-            forge engine + Ollama is required (https://ollama.com/download).
+            Standalone desktop app (UNSIGNED, ad-hoc-signed, Sattva-style) +
+            CLI bundles. macOS first launch: right-click the app → Open → Open
+            (not code-signed yet). Verify against the matching .sha256. Bundles
+            the forge engine; Ollama required (https://ollama.com/download).
           files: |
             dist/*
           fail_on_unmatched_files: false
