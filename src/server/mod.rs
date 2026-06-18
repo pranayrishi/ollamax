@@ -132,8 +132,54 @@ pub async fn serve_listener(listener: TcpListener, config: Config) -> Result<()>
     serve(listener, state).await
 }
 
+/// Epoch seconds (used by the scheduler tick + handlers).
+fn now_ts() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Run one non-streaming agent pass for a scheduled task (no client socket).
+async fn run_agent_oneshot(state: &Arc<ServerState>, prompt: &str) -> String {
+    let provider = Arc::new(OllamaProvider::new(&state.config.ollama_url));
+    let registry = ToolRegistry::with_defaults();
+    let mut agent = Agent::new(
+        provider,
+        registry,
+        AgentConfig {
+            model: state.config.default_model.clone(),
+            num_ctx: 8192,
+            keep_alive: "5m".to_string(),
+            max_iterations: crate::agent::DEFAULT_MAX_ITERATIONS,
+            system_suffix: String::new(),
+        },
+    );
+    match agent.run(prompt, |_s| {}).await {
+        Ok(trace) => trace.answer,
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+/// #1h Background scheduler: every 30s, run any due scheduled tasks on-device.
+fn spawn_scheduler_tick(state: Arc<ServerState>) {
+    tokio::spawn(async move {
+        let sched = crate::scheduler::Scheduler::for_config();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let now = now_ts();
+            for task in sched.due(now) {
+                info!("scheduler: running task {} ({})", task.id, task.prompt);
+                let result = run_agent_oneshot(&state, &task.prompt).await;
+                let _ = sched.mark_ran(&task.id, now_ts(), Some(result));
+            }
+        }
+    });
+}
+
 async fn serve(listener: TcpListener, state: Arc<ServerState>) -> Result<()> {
     info!("forge serve accepting connections");
+    spawn_scheduler_tick(state.clone());
     loop {
         let (stream, _peer) = match listener.accept().await {
             Ok(pair) => pair,
@@ -371,6 +417,9 @@ async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<S
         ("GET", "/api/model_info") => {
             handle_model_info(w, state, query_param(&head.path, "name")).await
         }
+        ("GET", "/api/schedule") => handle_schedule_list(w).await,
+        ("POST", "/api/schedule") => handle_schedule_add(w, &body).await,
+        ("POST", "/api/schedule/remove") => handle_schedule_remove(w, &body).await,
         ("GET", "/api/hub/categories") => handle_hub_categories(w).await,
         ("GET", "/api/hub/search") => {
             handle_hub_search(w, query_param(&head.path, "q")).await
@@ -622,6 +671,52 @@ async fn handle_cancel(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) 
             let _ = write_json(w, 400, &json!({"error": e.to_string()})).await;
         }
     }
+}
+
+// --- #1h On-device NL scheduler (Hermes-class cron). Tasks persist locally; the
+// background tick in serve() runs the due ones. -------------------------------
+async fn handle_schedule_list(w: OwnedWriteHalf) {
+    let tasks = crate::scheduler::Scheduler::for_config().list();
+    let _ = write_json(w, 200, &json!({ "tasks": tasks })).await;
+}
+
+async fn handle_schedule_add(w: OwnedWriteHalf, body: &str) {
+    #[derive(serde::Deserialize)]
+    struct Req {
+        prompt: String,
+        schedule: String,
+    }
+    let req: Req = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = write_json(w, 400, &json!({ "error": e.to_string() })).await;
+            return;
+        }
+    };
+    match crate::scheduler::Scheduler::for_config().add(&req.prompt, &req.schedule, now_ts()) {
+        Ok(task) => {
+            let _ = write_json(w, 200, &json!({ "task": task })).await;
+        }
+        Err(e) => {
+            let _ = write_json(w, 400, &json!({ "error": e.to_string() })).await;
+        }
+    }
+}
+
+async fn handle_schedule_remove(w: OwnedWriteHalf, body: &str) {
+    #[derive(serde::Deserialize)]
+    struct Req {
+        id: String,
+    }
+    let req: Req = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = write_json(w, 400, &json!({ "error": e.to_string() })).await;
+            return;
+        }
+    };
+    let removed = crate::scheduler::Scheduler::for_config().remove(&req.id).unwrap_or(false);
+    let _ = write_json(w, 200, &json!({ "removed": removed })).await;
 }
 
 // --- #7 Central Hub catalog, served LOCALLY (auto-loads with no account server)

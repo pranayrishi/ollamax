@@ -14,6 +14,7 @@ pub mod providers;
 pub mod replay;
 pub mod router;
 pub mod rules;
+pub mod scheduler;
 pub mod security;
 pub mod server;
 pub mod skills;
