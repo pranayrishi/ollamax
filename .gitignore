@@ -37,3 +37,6 @@ coverage/
 *.crt
 credentials.json
 secrets.yaml
+
+# Local Code-OSS fork checkout (built locally; never commit the multi-GB clone)
+desktop/code-oss/
