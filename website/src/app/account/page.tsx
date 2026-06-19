@@ -19,7 +19,6 @@ export default async function AccountPage({
   const user = session?.user;
   const providers = user?.providers ?? [];
   const hasGitHub = providers.includes("github");
-  const hasGoogle = providers.includes("google");
 
   return (
     <>
@@ -72,7 +71,7 @@ export default async function AccountPage({
                 Linked sign-in methods
               </h2>
               <ProviderRow name="GitHub" linked={hasGitHub} linkHref="/api/link/start?provider=github" />
-              <ProviderRow name="Google" linked={hasGoogle} linkHref="/api/link/start?provider=google" />
+              {/* FUTURE: Google sign-in disabled for now (see src/auth.ts) — hidden from users. */}
               <p className="mt-3 text-xs text-zinc-500">
                 Link both to use one account everywhere. <strong>GitHub-only features</strong> (e.g.
                 supporting maintainers by starring) need a linked GitHub account — you&rsquo;ll be

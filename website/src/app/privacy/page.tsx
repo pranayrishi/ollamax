@@ -34,7 +34,7 @@ export default function PrivacyPage() {
             <h2 className="text-xl font-semibold text-zinc-100">What our backend stores</h2>
             <p className="mt-2 text-zinc-400">Account identity:</p>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-zinc-400">
-              <li>Your GitHub and/or Google account id (the stable key)</li>
+              <li>Your GitHub account id (the stable key)</li>
               <li>Name, avatar URL, and email (email only if granted/verified)</li>
               <li>Which providers you&rsquo;ve linked, and sign-in timestamps</li>
             </ul>
@@ -79,8 +79,8 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-semibold text-zinc-100">Sign-in &amp; tokens</h2>
             <p className="mt-2 leading-relaxed text-zinc-400">
-              Sign in with GitHub or Google (no passwords). The desktop app stores its session token in
-              your OS keychain. We never see your GitHub/Google client secret or raw provider token —
+              Sign in with GitHub (no passwords). The desktop app stores its session token in
+              your OS keychain. We never see your GitHub client secret or raw provider token —
               the app exchanges a PKCE-protected code for our own short-lived token. The elevated
               GitHub permission used for the optional &ldquo;support maintainers&rdquo; starring is
               requested only at that moment and the resulting token is never stored.

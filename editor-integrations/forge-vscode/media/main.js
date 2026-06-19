@@ -1004,14 +1004,10 @@
       const btn = document.createElement("button");
       btn.className = "acct-signin";
       btn.textContent = "Sign in with GitHub";
-      btn.addEventListener("click", () => vscode.postMessage({ type: "signIn" }));
+      // Use the device-code flow (reliable across deployments; the loopback flow
+      // depends on the account server's redirect handling).
+      btn.addEventListener("click", () => vscode.postMessage({ type: "signIn", device: true }));
       accountEl.appendChild(btn);
-      const dev = document.createElement("button");
-      dev.className = "acct-link";
-      dev.textContent = "device code";
-      dev.title = "Sign in with a device code (no loopback needed)";
-      dev.addEventListener("click", () => vscode.postMessage({ type: "signIn", device: true }));
-      accountEl.appendChild(dev);
     }
   }
 
@@ -1081,7 +1077,9 @@
     gate.hidden = !!signedIn;
   }
   const gateSignIn = $("#gate-signin");
-  if (gateSignIn) gateSignIn.addEventListener("click", () => vscode.postMessage({ type: "signIn" }));
+  // Primary sign-in uses the device-code flow (reliable across deployments;
+  // the loopback flow needs the account server's redirect handling).
+  if (gateSignIn) gateSignIn.addEventListener("click", () => vscode.postMessage({ type: "signIn", device: true }));
   const gateSignInDev = $("#gate-signin-device");
   if (gateSignInDev)
     gateSignInDev.addEventListener("click", () => vscode.postMessage({ type: "signIn", device: true }));

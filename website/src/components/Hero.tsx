@@ -1,13 +1,14 @@
-import { signInGitHub, signInGoogle } from "@/app/actions";
+import { signInGitHub } from "@/app/actions";
 import { GitHubMark } from "./GitHubMark";
-import { GoogleMark } from "./GoogleMark";
+// FUTURE: Google sign-in disabled for now — see src/auth.ts.
+// import { GoogleMark } from "./GoogleMark";
 import { SignupCounter } from "./SignupCounter";
 
 const badges = [
   "Local-first",
   "Bring your own models",
   "Open source (MIT)",
-  "GitHub or Google sign-in",
+  "GitHub sign-in",
 ];
 
 export function Hero() {
@@ -44,16 +45,7 @@ export function Hero() {
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-ink-600 bg-ink-800 px-6 py-3 font-semibold text-zinc-100 hover:border-ember-500 sm:w-auto"
             >
               <GitHubMark className="h-5 w-5" />
-              GitHub
-            </button>
-          </form>
-          <form action={signInGoogle} className="w-full sm:w-auto">
-            <button
-              type="submit"
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-ink-600 bg-ink-800 px-6 py-3 font-semibold text-zinc-100 hover:border-ember-500 sm:w-auto"
-            >
-              <GoogleMark className="h-5 w-5" />
-              Google
+              Sign in with GitHub
             </button>
           </form>
         </div>

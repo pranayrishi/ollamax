@@ -645,8 +645,8 @@ class ChatViewProvider {
       <h1>Sign in to Ollamax</h1>
       <p class="gate-sub">An Ollamax account is required to use the app. Your code and
         prompts stay on your device — only anonymous usage metadata syncs to your dashboard.</p>
-      <button id="gate-signin" class="primary">Sign in with GitHub or Google</button>
-      <button id="gate-signin-device" class="linkbtn">Use a device code instead</button>
+      <button id="gate-signin" class="primary">Sign in with GitHub</button>
+      <button id="gate-signin-device" class="linkbtn" hidden>Use a device code instead</button>
       <p id="gate-error" class="gate-error" hidden></p>
     </div>
   </div>

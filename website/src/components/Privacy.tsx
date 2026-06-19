@@ -22,7 +22,7 @@ export function Privacy() {
           <div className="rounded-2xl border border-ink-700 bg-ink-900/70 p-6">
             <h3 className="mb-3 font-semibold text-zinc-100">What we store</h3>
             <ul className="space-y-2 text-sm text-zinc-400">
-              <li>· Your GitHub/Google identity (id, name, avatar, email if granted)</li>
+              <li>· Your GitHub identity (id, name, avatar, email if granted)</li>
               <li>· <strong>Usage metadata</strong>: counts of messages/builds, which model/provider, token counts, and language by file extension</li>
               <li>· <strong>Never</strong>: prompt text, code, file contents, file paths, or repo names</li>
               <li>· You can turn telemetry off and delete your data anytime</li>

@@ -10,7 +10,10 @@
 // server-only — never in any client bundle.
 import NextAuth from "next-auth";
 import GitHub from "next-auth/providers/github";
-import Google from "next-auth/providers/google";
+// FUTURE: Google sign-in is intentionally disabled for now (kept out of sight so
+// users don't pick it + hit errors). To re-enable: uncomment this import + the
+// Google provider below, and set AUTH_GOOGLE_ID / AUTH_GOOGLE_SECRET in Vercel.
+// import Google from "next-auth/providers/google";
 import { resolveUserForIdentity, getLinkedProviders } from "@/lib/db";
 import { githubPrimaryVerifiedEmail } from "@/lib/oauth";
 import { audit } from "@/lib/audit";
@@ -22,9 +25,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // only on opt-in — see Round 5).
       authorization: { params: { scope: "read:user user:email" } },
     }),
-    Google({
-      authorization: { params: { scope: "openid email profile" } },
-    }),
+    // FUTURE: Google provider disabled for now (see import note above). Restore:
+    // Google({ authorization: { params: { scope: "openid email profile" } } }),
   ],
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
   callbacks: {

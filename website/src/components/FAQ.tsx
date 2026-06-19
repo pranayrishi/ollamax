@@ -19,8 +19,8 @@ const faqs = [
     a: "We collect anonymous usage metadata — counts of messages/builds, which model and provider, token counts, and language inferred from file extensions — to power your personal usage dashboard on the website. It contains no content. There's a telemetry toggle in the app; turn it off and nothing is sent. You can export or delete your data anytime.",
   },
   {
-    q: "Can I sign in with Google instead of GitHub?",
-    a: "Yes — sign in with GitHub or Google, and you can link both to one account. GitHub-specific features (like supporting maintainers by starring their repos) need a linked GitHub account; you'll be prompted to link it the first time you use them.",
+    q: "How do I sign in?",
+    a: "Sign in with GitHub — that's your single account across the website and the desktop app. (Other sign-in options may come later.)",
   },
   {
     q: "Is it really one account across web and desktop?",
