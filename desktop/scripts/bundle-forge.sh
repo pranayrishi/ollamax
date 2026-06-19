@@ -54,6 +54,25 @@ mkdir -p "${DEST}/bin"
 cp "${REPO_ROOT}/target/release/${BIN}" "${DEST}/bin/${BIN}"
 chmod +x "${DEST}/bin/${BIN}"
 
+# 2b. Bundle whisper.cpp + a ggml model so Voice navigation works zero-config.
+#     Built/staged ahead of time under desktop/vendor/whisper (gitignored, large).
+#     voice.js (_resolveWhisper) prefers <ext>/bin/whisper-cli + ggml-base.en.bin
+#     when forge.whisperPath/whisperModel are unset. All on-device; audio never
+#     leaves the machine. Skipped gracefully if the vendor dir isn't present.
+WHISPER_VENDOR="${REPO_ROOT}/desktop/vendor/whisper"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) WBIN="whisper-cli.exe" ;;
+  *)                    WBIN="whisper-cli" ;;
+esac
+if [[ -f "${WHISPER_VENDOR}/${WBIN}" && -f "${WHISPER_VENDOR}/ggml-base.en.bin" ]]; then
+  cp "${WHISPER_VENDOR}/${WBIN}" "${DEST}/bin/${WBIN}"
+  chmod +x "${DEST}/bin/${WBIN}"
+  cp "${WHISPER_VENDOR}/ggml-base.en.bin" "${DEST}/bin/ggml-base.en.bin"
+  echo "  voice  : bundled ${WBIN} + ggml-base.en.bin (zero-config STT)"
+else
+  echo "  voice  : whisper vendor assets missing at ${WHISPER_VENDOR} — Voice will prompt for setup"
+fi
+
 # 3. Bake in-box defaults via contributes.configurationDefaults (the SUPPORTED
 #    mechanism — product.json has no defaultSettingsOverrides key). forge.serverPath
 #    stays "" so backend.js prefers the bundled bin; set FORGE_ACCOUNT_SERVER to a

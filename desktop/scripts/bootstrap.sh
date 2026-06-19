@@ -108,5 +108,22 @@ else
   echo "WARN: could not stage engine post-build (APP_EXT='${APP_EXT}')"
 fi
 
+# Same belt-and-suspenders for the Voice feature: ensure whisper.cpp + the ggml
+# model land INSIDE the built app's extension so Voice works zero-config.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) WBIN="whisper-cli.exe" ;;
+  *) WBIN="whisper-cli" ;;
+esac
+WHISPER_VENDOR="${REPO_ROOT}/desktop/vendor/whisper"
+if [[ -n "${APP_EXT}" && -f "${WHISPER_VENDOR}/${WBIN}" && -f "${WHISPER_VENDOR}/ggml-base.en.bin" ]]; then
+  mkdir -p "${APP_EXT}/bin"
+  cp "${WHISPER_VENDOR}/${WBIN}" "${APP_EXT}/bin/${WBIN}"
+  chmod +x "${APP_EXT}/bin/${WBIN}" || true
+  cp "${WHISPER_VENDOR}/ggml-base.en.bin" "${APP_EXT}/bin/ggml-base.en.bin"
+  echo "post-build: staged voice (whisper-cli + ggml-base.en.bin) into ${APP_EXT}/bin"
+else
+  echo "note: voice assets not staged post-build (vendor or APP_EXT missing) — Voice will prompt for setup"
+fi
+
 echo "Done. The built app tree is a SIBLING of ${FORK_DIR} (e.g. ../VSCode-darwin-arm64)."
 echo "Wrap it into a .dmg/.exe/.deb per OS (see desktop/scripts/sign-*.sh and README)."

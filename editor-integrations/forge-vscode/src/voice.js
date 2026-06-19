@@ -117,11 +117,28 @@ class VoiceNavigator {
     this._setState("idle");
   }
 
+  /**
+   * Resolve the whisper.cpp binary + model. Prefer explicit settings; otherwise
+   * fall back to the copies BUNDLED inside this extension at <ext>/bin, so the
+   * desktop app's Voice feature works with zero configuration. Everything stays
+   * on-device — audio never leaves the machine.
+   * @returns {{ bin: string, model: string }}
+   */
+  _resolveWhisper() {
+    const cfg = vscode.workspace.getConfiguration("forge");
+    let bin = cfg.get("whisperPath", "whisper-cli");
+    let model = cfg.get("whisperModel", "");
+    const binName = process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli";
+    const bundledBin = path.join(this.context.extensionPath, "bin", binName);
+    const bundledModel = path.join(this.context.extensionPath, "bin", "ggml-base.en.bin");
+    if ((!bin || bin === "whisper-cli") && fs.existsSync(bundledBin)) bin = bundledBin;
+    if (!model && fs.existsSync(bundledModel)) model = bundledModel;
+    return { bin: bin || "whisper-cli", model };
+  }
+
   /** Run a LOCAL whisper.cpp CLI over the captured WAV. */
   async _transcribe(wavBase64) {
-    const cfg = vscode.workspace.getConfiguration("forge");
-    const bin = cfg.get("whisperPath", "whisper-cli");
-    const model = cfg.get("whisperModel", "");
+    const { bin, model } = this._resolveWhisper();
     if (!model) {
       throw new Error(
         "Local STT not configured. Set forge.whisperModel to a ggml model (e.g. ggml-base.en.bin) and forge.whisperPath to your whisper.cpp binary. Audio stays on-device."

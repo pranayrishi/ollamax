@@ -40,3 +40,6 @@ secrets.yaml
 
 # Local Code-OSS fork checkout (built locally; never commit the multi-GB clone)
 desktop/code-oss/
+
+# Bundled voice assets (whisper.cpp binary + ggml model) — built/downloaded locally
+desktop/vendor/
