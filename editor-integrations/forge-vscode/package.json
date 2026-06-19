@@ -2,7 +2,7 @@
 	"name": "forge-vscode",
 	"displayName": "Ollamax",
 	"description": "Local-first AI for Ollamax \u2014 Chat (Ask, read-only) and an autonomous Agent (tools, memory, skills, file edits), all on your own hardware via local Ollama. No cloud, no API keys, no telemetry.",
-	"version": "0.1.5",
+	"version": "0.1.6",
 	"publisher": "ollama-forge",
 	"license": "MIT",
 	"repository": {
@@ -170,7 +170,7 @@
 				},
 				"forge.accountServer": {
 					"type": "string",
-					"default": "",
+					"default": "https://ollamax.vercel.app",
 					"description": "Base URL of the Ollamax account server for sign-in, the Hub, and the usage dashboard (e.g. https://your-app.vercel.app, or http://localhost:3000 for local dev). Leave blank to disable account features. Never used for inference; your code never goes here."
 				},
 				"forge.telemetry": {
