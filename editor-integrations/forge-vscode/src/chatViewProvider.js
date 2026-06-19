@@ -3,6 +3,8 @@
 
 const vscode = require("vscode");
 const path = require("path");
+const fs = require("fs");
+const os = require("os");
 const { languageFromExt } = require("./telemetry");
 
 // Infer language from the first attached file's EXTENSION only (metadata).
@@ -103,6 +105,9 @@ class ChatViewProvider {
       case "approve":
         await this._approve(!!msg.decision);
         break;
+      case "previewEdit":
+        await this._previewEdit(msg.tool, msg.args);
+        break;
       case "refresh":
         await this._sendStatusAndModels();
         break;
@@ -154,6 +159,105 @@ class ChatViewProvider {
   }
 
   /** Relay the user's Autonomy-Dial decision to the waiting agent run. */
+  // #1 Agentic file edit with SAFE diff/preview. Called when the agent's approval
+  // request is for fs_write/fs_edit: path-guard, show the change as a real VS Code
+  // diff + a modal BEFORE anything is written, then relay the decision to the
+  // agent run (the sandboxed fs tool does the actual write on Approve).
+  async _previewEdit(tool, args) {
+    const folders = vscode.workspace.workspaceFolders;
+    const root = folders && folders[0] ? folders[0].uri.fsPath : null;
+    if (!root) {
+      await this._approve(false);
+      vscode.window.showWarningMessage("Open a folder before letting the Agent edit files.");
+      return;
+    }
+    const rel = String((args && args.path) || "");
+    // Path-traversal guard (defense-in-depth; the engine sandbox also guards).
+    const abs = path.resolve(root, rel);
+    const inside = abs === root || abs.startsWith(root + path.sep);
+    if (!rel || path.isAbsolute(rel) || !inside) {
+      await this._approve(false);
+      vscode.window.showWarningMessage(`Ollamax blocked an unsafe file path from the Agent: ${rel || "(empty)"}`);
+      return;
+    }
+
+    let current = "";
+    let isNew = true;
+    try {
+      current = fs.readFileSync(abs, "utf8");
+      isNew = false;
+    } catch {
+      /* new file */
+    }
+
+    let proposed;
+    if (tool === "fs_edit") {
+      const oldS = String((args && args.old_string) || "");
+      const newS = String((args && args.new_string) || "");
+      const occurrences = oldS ? current.split(oldS).length - 1 : 0;
+      if (occurrences !== 1) {
+        await this._approve(false);
+        vscode.window.showWarningMessage(
+          `Ollamax edit not applied: target text ${occurrences === 0 ? "not found" : "not unique"} in ${rel}.`
+        );
+        return;
+      }
+      proposed = current.replace(oldS, newS);
+    } else {
+      proposed = String((args && args.content) || "");
+    }
+
+    // Diff: live file (or an empty temp for new files) vs the proposed content.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ollamax-diff-"));
+    const proposedTmp = path.join(tmp, "proposed__" + (path.basename(rel) || "file"));
+    fs.writeFileSync(proposedTmp, proposed);
+    let leftUri;
+    if (isNew) {
+      const emptyTmp = path.join(tmp, "empty__" + (path.basename(rel) || "file"));
+      fs.writeFileSync(emptyTmp, "");
+      leftUri = vscode.Uri.file(emptyTmp);
+    } else {
+      leftUri = vscode.Uri.file(abs);
+    }
+    try {
+      await vscode.commands.executeCommand(
+        "vscode.diff",
+        leftUri,
+        vscode.Uri.file(proposedTmp),
+        `Ollamax ${isNew ? "create" : "edit"}: ${rel}`,
+        { preview: true }
+      );
+    } catch {
+      /* diff is best-effort; the modal still gates */
+    }
+
+    const choice = await vscode.window.showInformationMessage(
+      `Apply Ollamax's ${isNew ? "new file" : "change"} to ${rel}?`,
+      {
+        modal: true,
+        detail: "Review the diff that just opened. Applying writes the file; undo with ⌘Z or VS Code Local History.",
+      },
+      "Apply",
+      "Discard"
+    );
+    setTimeout(() => {
+      try {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      } catch {}
+    }, 20000);
+
+    const apply = choice === "Apply";
+    await this._approve(apply); // relay to the engine; the fs tool writes on Allow
+    if (apply) {
+      setTimeout(async () => {
+        try {
+          const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
+          await vscode.window.showTextDocument(doc, { preview: false });
+        } catch {}
+      }, 400);
+    }
+  }
+
   async _approve(decision) {
     if (!this.currentAgentId) return;
     try {

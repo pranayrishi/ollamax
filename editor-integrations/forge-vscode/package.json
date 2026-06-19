@@ -2,7 +2,7 @@
 	"name": "forge-vscode",
 	"displayName": "Ollamax",
 	"description": "Local-first AI for Ollamax \u2014 Chat (Ask, read-only) and an autonomous Agent (tools, memory, skills, file edits), all on your own hardware via local Ollama. No cloud, no API keys, no telemetry.",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"publisher": "ollama-forge",
 	"license": "MIT",
 	"repository": {

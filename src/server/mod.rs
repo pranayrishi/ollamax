@@ -1350,9 +1350,18 @@ async fn run_agent_streamed(
         {
             crate::mcp::register_mcp_tools(&mut registry, &mcp_cfg).await;
         }
-        // Part B: prepend on-device memory relevant to this question (token-
-        // budgeted) so the session isn't a cold start. Stays on the device.
-        let mut suffix = rules_suffix;
+        // #1 Agentic file editing: tell the agent to actually WRITE code into the
+        // workspace via fs_write/fs_edit (not just print it in chat). Each such
+        // call is gated by the Autonomy Dial + shown as a diff/preview before it
+        // touches a file (the extension's previewEdit flow).
+        let mut suffix = format!(
+            "{rules_suffix}\n\n## Editing files\nWhen the user asks you to create or \
+             change code/files, USE the `fs_write` (new/overwrite) and `fs_edit` \
+             (precise edit) tools to write them into the workspace — give a relative \
+             path and the full file content. Do NOT just print code in your answer \
+             when the intent is to build something. The user reviews each change as a \
+             diff before it is applied."
+        );
         let mem = crate::memory::MemoryStore::for_project(&cwd).render_for_context(&question, 400);
         if !mem.is_empty() {
             // Surface recalled memory to the Agent UI (Memory drawer) before

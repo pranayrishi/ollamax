@@ -596,7 +596,17 @@
         active.addPlan(ev.text || "", lastAutonomy === "confirm");
         break;
       case "approval_request":
-        active.addApprovalPrompt(ev);
+        // #1 File edits get a real diff/preview + modal in the editor (host-driven);
+        // other consequential tools (shell) keep the inline Approve/Deny.
+        if (ev.tool === "fs_write" || ev.tool === "fs_edit") {
+          vscode.postMessage({ type: "previewEdit", tool: ev.tool, args: ev.args });
+          active.showNote(
+            "📝 Proposed change to " + ((ev.args && ev.args.path) || "a file") +
+              " — review the diff that opened, then Apply / Discard."
+          );
+        } else {
+          active.addApprovalPrompt(ev);
+        }
         break;
       case "subagent_start":
         active.addSubagentStart(ev.task);
