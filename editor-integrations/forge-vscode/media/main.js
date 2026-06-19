@@ -1,5 +1,5 @@
 // @ts-check
-/* Webview UI for the Ollama-Forge chat panel. Runs in the sandboxed webview;
+/* Webview UI for the Ollamax chat panel. Runs in the sandboxed webview;
  * it never touches the network (CSP `connect-src 'none'`). All I/O goes through
  * postMessage to the extension host, which talks to `forge serve`.
  *

@@ -2,7 +2,7 @@
 #
 # desktop/scripts/bootstrap.sh
 #
-# Stand up a Code-OSS fork that ships the Ollama-Forge chat panel (forge-vscode)
+# Stand up a Code-OSS fork that ships the Ollamax chat panel (forge-vscode)
 # as a built-in plus the bundled `forge` engine. Every command below was checked
 # against microsoft/vscode source + VSCodium (see VSCODE_REPLATFORM_REPORT).
 #
@@ -20,7 +20,7 @@ FORK_DIR="${FORK_DIR:-$(cd "$(dirname "$0")/.." && pwd)/code-oss}"
 # >= 1.85 so it satisfies the extension's engines.vscode "^1.85.0").
 VSCODE_TAG="${VSCODE_TAG:-1.95.3}"
 
-echo "ForgeCode desktop bootstrap"
+echo "Ollamax desktop bootstrap"
 echo "  repo root : ${REPO_ROOT}"
 echo "  fork dir  : ${FORK_DIR}"
 echo "  vscode    : tag ${VSCODE_TAG}"

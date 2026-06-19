@@ -1,8 +1,8 @@
 {
 	"name": "forge-vscode",
-	"displayName": "Ollama-Forge",
-	"description": "Local-first AI for Ollama-Forge \u2014 Chat (Ask, read-only) and an autonomous Agent (tools, memory, skills, file edits), all on your own hardware via local Ollama. No cloud, no API keys, no telemetry.",
-	"version": "0.1.1",
+	"displayName": "Ollamax",
+	"description": "Local-first AI for Ollamax \u2014 Chat (Ask, read-only) and an autonomous Agent (tools, memory, skills, file edits), all on your own hardware via local Ollama. No cloud, no API keys, no telemetry.",
+	"version": "0.1.2",
 	"publisher": "ollama-forge",
 	"license": "MIT",
 	"repository": {
@@ -33,12 +33,12 @@
 			"activitybar": [
 				{
 					"id": "forge-sidebar",
-					"title": "Ollama-Forge",
+					"title": "Ollamax",
 					"icon": "media/forge.svg"
 				},
 				{
 					"id": "forge-hub",
-					"title": "Forge Hub",
+					"title": "Ollamax Hub",
 					"icon": "media/hub-icon.svg"
 				}
 			]
@@ -62,41 +62,41 @@
 		"commands": [
 			{
 				"command": "forge.focusChat",
-				"title": "Ollama-Forge: Focus Chat Panel"
+				"title": "Ollamax: Focus Chat Panel"
 			},
 			{
 				"command": "forge.newChat",
-				"title": "Ollama-Forge: New Chat",
+				"title": "Ollamax: New Chat",
 				"icon": "$(add)"
 			},
 			{
 				"command": "forge.restartServer",
-				"title": "Ollama-Forge: Restart Backend Server",
+				"title": "Ollamax: Restart Backend Server",
 				"icon": "$(debug-restart)"
 			},
 			{
 				"command": "forge.attachSelection",
-				"title": "Ollama-Forge: Add Selection to Chat"
+				"title": "Ollamax: Add Selection to Chat"
 			},
 			{
 				"command": "forge.attachFile",
-				"title": "Ollama-Forge: Add Active File to Chat"
+				"title": "Ollamax: Add Active File to Chat"
 			},
 			{
 				"command": "forge.signIn",
-				"title": "Ollama-Forge: Sign in with GitHub"
+				"title": "Ollamax: Sign in with GitHub"
 			},
 			{
 				"command": "forge.signInDevice",
-				"title": "Ollama-Forge: Sign in with GitHub (device code)"
+				"title": "Ollamax: Sign in with GitHub (device code)"
 			},
 			{
 				"command": "forge.signOut",
-				"title": "Ollama-Forge: Sign out"
+				"title": "Ollamax: Sign out"
 			},
 			{
 				"command": "forge.voiceNavigate",
-				"title": "Ollama-Forge: Voice \u2014 navigate to code by speaking"
+				"title": "Ollamax: Voice \u2014 navigate to code by speaking"
 			}
 		],
 		"menus": {
@@ -139,7 +139,7 @@
 			}
 		],
 		"configuration": {
-			"title": "Ollama-Forge",
+			"title": "Ollamax",
 			"properties": {
 				"forge.serverPath": {
 					"type": "string",
@@ -164,7 +164,7 @@
 				"forge.accountServer": {
 					"type": "string",
 					"default": "",
-					"description": "Base URL of the Ollama-Forge account server for sign-in, the Hub, and the usage dashboard (e.g. https://your-app.vercel.app, or http://localhost:3000 for local dev). Leave blank to disable account features. Never used for inference; your code never goes here."
+					"description": "Base URL of the Ollamax account server for sign-in, the Hub, and the usage dashboard (e.g. https://your-app.vercel.app, or http://localhost:3000 for local dev). Leave blank to disable account features. Never used for inference; your code never goes here."
 				},
 				"forge.telemetry": {
 					"type": "boolean",

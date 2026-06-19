@@ -9,7 +9,7 @@
 $ErrorActionPreference = "Stop"
 
 $appDir    = $env:APP_DIR;    if (-not $appDir)    { $appDir    = "..\VSCode-win32-x64" }
-$installer = $env:INSTALLER;  if (-not $installer) { $installer = "dist\ForgeCodeSetup.exe" }
+$installer = $env:INSTALLER;  if (-not $installer) { $installer = "dist\OllamaxSetup.exe" }
 
 if ($env:RUN_REAL -ne "1") {
   Write-Host "STATUS: gated. Build the fork app tree, then re-run with RUN_REAL=1 + a cert."
@@ -24,7 +24,7 @@ New-Item -ItemType Directory -Force -Path "dist" | Out-Null
 #    `winget install JRSoftware.InnoSetup`. The .iss is in the vscode checkout.
 $iss = Join-Path (Split-Path $PSScriptRoot -Parent) "code-oss\build\win32\code.iss"
 if (Test-Path $iss) {
-  & iscc /O"dist" /F"ForgeCodeSetup" $iss
+  & iscc /O"dist" /F"OllamaxSetup" $iss
 } elseif (-not (Test-Path $installer)) {
   throw "No installer at $installer and no Inno Setup script at $iss — produce the installer first."
 }

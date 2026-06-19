@@ -40,7 +40,7 @@ FIRST-RUN.md).
 ## What "done" looks like
 
 A user downloads one installer (`.dmg` / `.deb` / `.AppImage` / Windows setup),
-opens **ForgeCode**, and the AI chat panel is already docked on the right. The
+opens **Ollamax**, and the AI chat panel is already docked on the right. The
 app bundles the `forge` binary; on first run it detects Ollama and offers to
 install it / pull a model. No terminal, no extension install, no API keys.
 
@@ -49,13 +49,13 @@ install it / pull a model. No terminal, no extension install, no API keys.
 The repo currently carries three names: `ollamax` (Cargo `repository`),
 `ollama-forge` (crate/README), `Ollama-Optimizer` (local dir). **Recommendation:
 standardize the project on `ollama-forge` and name the desktop app
-`ForgeCode`.** All scaffold files use `ForgeCode` as a placeholder —
+`Ollamax`.** All scaffold files use `Ollamax` as a placeholder —
 search-and-replace once you confirm.
 
 ## Architecture: how the pieces ship together
 
 ```
-ForgeCode.app (Code-OSS fork)
+Ollamax.app (Code-OSS fork)
 ├── (rebranded Code-OSS shell: product.json, icons, about strings)
 ├── resources/app/extensions/forge-vscode/   ← Phase 2 extension, as a built-in
 └── resources/app/bin/forge                   ← Phase 1 Rust binary (forge serve)

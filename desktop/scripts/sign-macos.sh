@@ -15,8 +15,8 @@ set -euo pipefail
 
 # Derive the .app from the actual gulp output (sibling of the checkout), arch-aware.
 ARCH="$([[ "$(uname -m)" == arm64 ]] && echo arm64 || echo x64)"
-APP="${APP_PATH:-$(cd "$(dirname "$0")/.." && pwd)/../VSCode-darwin-${ARCH}/ForgeCode.app}"
-DMG="${DMG_PATH:-dist/ForgeCode-macos-${ARCH}.dmg}"
+APP="${APP_PATH:-$(cd "$(dirname "$0")/.." && pwd)/../VSCode-darwin-${ARCH}/Ollamax.app}"
+DMG="${DMG_PATH:-dist/Ollamax-macos-${ARCH}.dmg}"
 ENTITLEMENTS="$(cd "$(dirname "$0")/.." && pwd)/assets/entitlements.mac.plist"
 
 if [[ "${RUN_REAL:-0}" != "1" ]]; then
@@ -67,5 +67,5 @@ xcrun notarytool submit /tmp/forge.zip \
 xcrun stapler staple "$APP"
 
 # 5. Build the .dmg.
-hdiutil create -volname "ForgeCode" -srcfolder "$APP" -ov -format UDZO "$DMG"
+hdiutil create -volname "Ollamax" -srcfolder "$APP" -ov -format UDZO "$DMG"
 echo "signed + notarized: $DMG"

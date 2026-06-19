@@ -80,7 +80,7 @@ class ChatViewProvider {
     try {
       await this.backend.restart();
       await this._sendStatusAndModels();
-      vscode.window.showInformationMessage("Ollama-Forge backend restarted.");
+      vscode.window.showInformationMessage("Ollamax backend restarted.");
     } catch (e) {
       this.post({ type: "backendError", message: String(e && e.message) });
     }
@@ -219,12 +219,12 @@ class ChatViewProvider {
       // #6: opening the gate the moment sign-in succeeds.
       this.post({ type: "gate", signedIn: !!user, user: user || null });
       if (user) {
-        vscode.window.showInformationMessage(`Ollama-Forge: signed in as @${user.login}.`);
+        vscode.window.showInformationMessage(`Ollamax: signed in as @${user.login}.`);
       }
     } catch (e) {
       const msg = String(e && e.message);
       this.post({ type: "account", user: null });
-      vscode.window.showErrorMessage(`Ollama-Forge sign-in failed: ${msg}`);
+      vscode.window.showErrorMessage(`Ollamax sign-in failed: ${msg}`);
     }
   }
 
@@ -274,7 +274,7 @@ class ChatViewProvider {
     // app can't be driven without an account session even if the UI is bypassed.
     if (await this._gateBlocks()) {
       this.post({ type: "gate", signedIn: false });
-      this.post({ type: "backendError", message: "Sign in with your Ollama-Forge account to use the app." });
+      this.post({ type: "backendError", message: "Sign in with your Ollamax account to use the app." });
       return;
     }
     try {
@@ -376,7 +376,7 @@ class ChatViewProvider {
   async attachActiveFile() {
     const ed = vscode.window.activeTextEditor;
     if (!ed) {
-      vscode.window.showWarningMessage("Ollama-Forge: no active editor to attach.");
+      vscode.window.showWarningMessage("Ollamax: no active editor to attach.");
       return;
     }
     const item = this._fileItem(ed.document.uri, ed.document.getText());
@@ -387,7 +387,7 @@ class ChatViewProvider {
   async attachSelection() {
     const ed = vscode.window.activeTextEditor;
     if (!ed || ed.selection.isEmpty) {
-      vscode.window.showWarningMessage("Ollama-Forge: no selection to attach.");
+      vscode.window.showWarningMessage("Ollamax: no selection to attach.");
       return;
     }
     const text = ed.document.getText(ed.selection);
@@ -499,15 +499,15 @@ class ChatViewProvider {
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="${cssUri}" rel="stylesheet" />
-  <title>Ollama-Forge</title>
+  <title>Ollamax</title>
 </head>
 <body>
   <!-- #6 login gate: covers the whole panel until the user signs in. -->
   <div id="gate" class="gate" hidden>
     <div class="gate-card">
       <div class="gate-logo">⚒</div>
-      <h1>Sign in to Ollama-Forge</h1>
-      <p class="gate-sub">An Ollama-Forge account is required to use the app. Your code and
+      <h1>Sign in to Ollamax</h1>
+      <p class="gate-sub">An Ollamax account is required to use the app. Your code and
         prompts stay on your device — only anonymous usage metadata syncs to your dashboard.</p>
       <button id="gate-signin" class="primary">Sign in with GitHub or Google</button>
       <button id="gate-signin-device" class="linkbtn">Use a device code instead</button>

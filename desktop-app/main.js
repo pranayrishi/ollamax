@@ -1,4 +1,4 @@
-// Ollama-Forge desktop app — Electron main process.
+// Ollamax desktop app — Electron main process.
 //
 // The app is a thin SHELL around the existing engine. On launch it spawns the
 // bundled `forge` binary as `forge serve --port 0` (a HIDDEN local HTTP+SSE
@@ -101,7 +101,7 @@ function createWindow() {
     height: 760,
     minWidth: 720,
     minHeight: 480,
-    title: "Ollama-Forge",
+    title: "Ollamax",
     backgroundColor: "#0b0d12",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -382,7 +382,7 @@ app.whenReady().then(async () => {
     await startForgeServe();
   } catch (e) {
     logFile(`startup error: ${e.message}`);
-    dialog.showErrorBox("Ollama-Forge", `Could not start the local engine:\n${e.message}`);
+    dialog.showErrorBox("Ollamax", `Could not start the local engine:\n${e.message}`);
   }
   createWindow();
   app.on("activate", () => {

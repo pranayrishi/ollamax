@@ -1,9 +1,9 @@
 {
   "name": "ollama-forge-app",
-  "productName": "Ollama-Forge",
+  "productName": "Ollamax",
   "version": "0.1.0",
   "description": "Local-first AI coding — a standalone desktop app. Chat, agent, and parallel build on your own hardware via local Ollama.",
-  "author": "Ollama-Forge",
+  "author": "Ollamax",
   "license": "MIT",
   "homepage": "https://github.com/pranayrishi/ollamax-releases",
   "main": "main.js",
@@ -28,8 +28,8 @@
   },
   "//note": "node-pty (the terminal backend) is a NATIVE module that needs a per-platform toolchain (it broke CI on macOS distutils + Windows VS detection). It is intentionally NOT a build dependency yet — the app ships without it and the terminal panel degrades gracefully (ide.js shows an install hint). To enable the terminal locally: `npm install node-pty` then `npm run dist`. Re-adding it to the release needs the native build sorted per-OS.",
   "build": {
-    "appId": "com.ollamaforge.app",
-    "productName": "Ollama-Forge",
+    "appId": "com.ollamax.app",
+    "productName": "Ollamax",
     "files": [
       "main.js",
       "preload.js",
@@ -47,7 +47,7 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "artifactName": "Ollama-Forge-macos-${arch}.${ext}",
+      "artifactName": "Ollamax-macos-${arch}.${ext}",
       "target": [
         { "target": "dmg", "arch": ["arm64"] },
         { "target": "zip", "arch": ["arm64"] }
@@ -59,7 +59,7 @@
       "entitlementsInherit": "assets/entitlements.mac.plist"
     },
     "win": {
-      "artifactName": "Ollama-Forge-windows-${arch}.${ext}",
+      "artifactName": "Ollamax-windows-${arch}.${ext}",
       "target": [
         { "target": "nsis", "arch": ["x64"] },
         { "target": "portable", "arch": ["x64"] }
@@ -67,8 +67,8 @@
       "icon": "assets/icon.ico"
     },
     "linux": {
-      "artifactName": "Ollama-Forge-linux-${arch}.${ext}",
-      "maintainer": "Ollama-Forge <74742835+pranayrishi@users.noreply.github.com>",
+      "artifactName": "Ollamax-linux-${arch}.${ext}",
+      "maintainer": "Ollamax <74742835+pranayrishi@users.noreply.github.com>",
       "target": [
         { "target": "AppImage", "arch": ["x64"] },
         { "target": "deb", "arch": ["x64"] }

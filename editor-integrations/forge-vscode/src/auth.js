@@ -269,7 +269,7 @@ class ForgeAuth {
     // The user must type the code they see below, proving THEY initiated this.
     await vscode.env.openExternal(vscode.Uri.parse(start.verification_uri));
     await vscode.window.showInformationMessage(
-      `Ollama-Forge sign-in: type this code in the browser to finish:\n\n${start.user_code}`,
+      `Ollamax sign-in: type this code in the browser to finish:\n\n${start.user_code}`,
       { modal: true }
     );
 
@@ -410,7 +410,7 @@ class ForgeAuth {
           });
           res.end(
             "<html><body style='font-family:system-ui;background:#0e0e16;color:#e5e7eb;text-align:center;padding-top:18vh'>" +
-              "<h2>✓ Signed in to Ollama-Forge</h2><p>You can close this tab and return to your editor.</p></body></html>"
+              "<h2>✓ Signed in to Ollamax</h2><p>You can close this tab and return to your editor.</p></body></html>"
           );
           if (!code) {
             rejectCode(new Error("no code in callback"));

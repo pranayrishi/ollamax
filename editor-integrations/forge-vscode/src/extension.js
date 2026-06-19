@@ -1,7 +1,7 @@
 // @ts-check
 "use strict";
 
-// Ollama-Forge VSCode extension entry point.
+// Ollamax VSCode extension entry point.
 //
 // Pure JavaScript on purpose: it has no build step and no npm dependencies
 // (the `vscode` module is provided by the host at runtime), so it runs
@@ -18,9 +18,9 @@ const { VoiceNavigator } = require("./voice");
 
 /** @param {vscode.ExtensionContext} context */
 function activate(context) {
-  const output = vscode.window.createOutputChannel("Ollama-Forge");
+  const output = vscode.window.createOutputChannel("Ollamax");
   const log = (m) => output.appendLine(m);
-  log("Ollama-Forge extension activating");
+  log("Ollamax extension activating");
 
   const backend = new ForgeBackend(log);
   const auth = new ForgeAuth(context, log);
@@ -35,7 +35,7 @@ function activate(context) {
     context.globalState.update("forge.telemetryDisclosed", true);
     vscode.window
       .showInformationMessage(
-        "Ollama-Forge collects anonymous usage metadata (counts only — never your code or prompts) to power your web dashboard. You can turn it off anytime.",
+        "Ollamax collects anonymous usage metadata (counts only — never your code or prompts) to power your web dashboard. You can turn it off anytime.",
         "Keep on",
         "Turn off"
       )

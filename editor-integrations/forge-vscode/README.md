@@ -1,6 +1,6 @@
-# Ollama-Forge — VSCode Extension (Cursor-style chat panel)
+# Ollamax — VSCode Extension (Cursor-style chat panel)
 
-A side-docked AI chat panel for [Ollama-Forge](../../README.md). Chat, run the
+A side-docked AI chat panel for [Ollamax](../../README.md). Chat, run the
 tool-using research **Agent**, and kick off a parallel **Build** — all against
 your **local** Ollama daemon. No cloud, no API keys, no telemetry.
 
@@ -36,7 +36,7 @@ over a local HTTP/SSE API; it never does inference itself and never bypasses
      code --extensionDevelopmentPath="$(pwd)/editor-integrations/forge-vscode"
      ```
 3. In the dev window, set the path to your built binary if `forge` isn't on your
-   PATH: **Settings → Ollama-Forge → Server Path** →
+   PATH: **Settings → Ollamax → Server Path** →
    `/abs/path/to/Ollama-Optimizer/target/release/forge`.
 4. Click the **anvil icon** in the Activity Bar → the **Chat** panel opens.
    - To get the Cursor/Windsurf right-side feel, **drag the panel to the
@@ -91,7 +91,7 @@ power your **web usage dashboard**. It **never** sends prompts, code, file
 contents, file paths, or repo names — `src/telemetry.js` builds a strict
 allowlisted payload and the backend rejects anything content-shaped. Control it:
 
-- **Settings → Ollama-Forge → Telemetry** (`forge.telemetry`, default on) — off
+- **Settings → Ollamax → Telemetry** (`forge.telemetry`, default on) — off
   sends nothing. A one-time notice on first run lets you turn it off immediately.
 - View / export / delete your data at `<accountServer>/dashboard`.
 
