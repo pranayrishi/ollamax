@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { DownloadGrid } from "@/components/DownloadGrid";
+import { DesktopAppDownload } from "@/components/DesktopAppDownload";
 import { CopyCommand } from "@/components/CopyCommand";
 import { FirstLaunchGuide } from "@/components/FirstLaunchGuide";
 
@@ -19,29 +20,20 @@ export default function DownloadPage() {
       <main id="main" className="mx-auto max-w-3xl px-4 py-16">
         <h1 className="text-3xl font-bold tracking-tight text-zinc-50">Download Ollamax</h1>
         <p className="mt-3 text-zinc-400">
-          Free and open source. The fastest way in is the one-line installer below — it installs the{" "}
-          <code>forge</code> engine + the chat/agent panel, and{" "}
-          <strong className="text-zinc-200">avoids the macOS &ldquo;unidentified developer&rdquo; /
-          Windows SmartScreen warning</strong> entirely.
+          Free and open source. Get the <strong className="text-zinc-200">Ollamax desktop app</strong>{" "}
+          below — engine, on-device voice, and sign-in built in — or use the same experience inside
+          your own editor with the one-line installer.
         </p>
 
-        {/* Prominent: anyone grabbing the app/bundle directly will hit a one-time prompt. */}
-        <a
-          href="#first-launch"
-          className="mt-6 flex items-center gap-3 rounded-xl border border-ember-500/40 bg-ember-500/[0.06] px-4 py-3 text-sm text-zinc-200 transition hover:border-ember-500"
-        >
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-ember-500/15 text-ember-300">↓</span>
-          <span>
-            <strong className="text-zinc-100">Downloading the app directly?</strong> It&rsquo;s not
-            signed yet, so there&rsquo;s one <strong className="text-zinc-100">one-time</strong> step to
-            open it. <span className="text-ember-300 underline underline-offset-2">See First launch →</span>
-          </span>
-        </a>
+        {/* PRIMARY: the standalone desktop app */}
+        <div className="mt-8">
+          <DesktopAppDownload />
+        </div>
 
-        {/* PRIMARY: the one-liner */}
-        <section className="mt-8 rounded-2xl border border-ember-500/40 bg-ink-900/60 p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-ember-400">
-            Recommended · one-line install
+        {/* SECONDARY: use it in your own editor (no security warning). */}
+        <section id="one-line" className="mt-8 scroll-mt-24 rounded-2xl border border-ink-700 bg-ink-900/40 p-6">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-zinc-400">
+            Or · use it in your own editor (no warning)
           </h2>
           <div className="mt-4 space-y-4">
             <CopyCommand label="macOS / Linux" command={`curl -fsSL ${SH_URL} | sh`} />

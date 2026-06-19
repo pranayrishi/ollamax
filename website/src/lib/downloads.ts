@@ -39,3 +39,15 @@ export function checksumUrl(asset: string): string {
   return `${assetUrl(asset)}.sha256`;
 }
 export const allReleasesUrl = `${RELEASES_REPO}/releases/latest`;
+
+// The STANDALONE desktop app (the Code-OSS fork) — the recommended way to get
+// Ollamax: a full app with the engine, voice, and login built in. Distinct from
+// the CLI + editor-extension bundles above. `published` reflects what's actually
+// on the latest release (macOS Apple Silicon ships now; other platforms follow).
+export type DesktopApp = Bundle;
+export const DESKTOP_APPS: DesktopApp[] = [
+  { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · .dmg", asset: "Ollamax-macos-arm64.dmg", published: true },
+  { os: "macos", arch: "x64", label: "macOS — Intel", note: "x86_64 · .dmg", asset: "Ollamax-macos-x64.dmg", published: false },
+  { os: "windows", arch: "x64", label: "Windows — x64", note: ".zip", asset: "Ollamax-windows-x64.zip", published: false },
+  { os: "linux", arch: "x64", label: "Linux — x64", note: ".tar.gz", asset: "Ollamax-linux-x64.tar.gz", published: false },
+];
