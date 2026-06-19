@@ -4,7 +4,7 @@ import { Footer } from "@/components/Footer";
 
 export const metadata: Metadata = {
   title: "Privacy",
-  description: "What Ollama-Forge collects, what it never touches, and how to control it.",
+  description: "What Ollamax collects, what it never touches, and how to control it.",
 };
 
 export default function PrivacyPage() {
@@ -67,7 +67,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-semibold text-zinc-100">Your controls</h2>
             <ul className="mt-3 list-disc space-y-1 pl-5 text-zinc-400">
-              <li><strong>Telemetry toggle</strong> in the app (Settings → Ollama-Forge → Telemetry). Off = nothing is sent.</li>
+              <li><strong>Telemetry toggle</strong> in the app (Settings → Ollamax → Telemetry). Off = nothing is sent.</li>
               <li><strong>Pause</strong> collection and <strong>delete</strong> all your usage data from the web dashboard.</li>
               <li><strong>Export</strong> your usage metadata as JSON.</li>
               <li>Account deletion removes your identity and all linked data.{" "}

@@ -6,6 +6,8 @@ import { SectionHeading } from "./SectionHeading";
 const rows: { feature: string; forge: boolean | string; cloud: boolean | string }[] = [
   { feature: "Runs fully offline (local models)", forge: true, cloud: false },
   { feature: "Your code stays on your machine", forge: true, cloud: "Sent to provider" },
+  { feature: "Agent edits files behind a diff you approve", forge: true, cloud: "Varies" },
+  { feature: "On-device voice navigation (audio stays local)", forge: true, cloud: false },
   { feature: "Hardware-aware model selection", forge: true, cloud: "n/a" },
   { feature: "Built-in secret scanner before send", forge: true, cloud: false },
   { feature: "Reproducible local replay/audit log", forge: true, cloud: false },
@@ -29,7 +31,7 @@ export function Comparison() {
             <tr>
               <th scope="col" className="px-5 py-4 font-medium">Capability</th>
               <th scope="col" className="px-5 py-4 text-center font-semibold text-ember-400">
-                Ollama-Forge
+                Ollamax
               </th>
               <th scope="col" className="px-5 py-4 text-center font-medium text-zinc-400">
                 Typical cloud-only assistant

@@ -16,7 +16,7 @@ export async function Nav() {
       <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3" aria-label="Main">
         <Link href="/" className="flex items-center gap-2 font-semibold text-zinc-100">
           <span className="grid h-7 w-7 place-items-center rounded-lg bg-ember-500 text-ink-950">⚒</span>
-          Ollama-Forge
+          Ollamax
         </Link>
 
         <div className="hidden items-center gap-6 text-sm text-zinc-400 md:flex">

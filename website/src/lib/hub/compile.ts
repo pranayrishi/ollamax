@@ -60,7 +60,7 @@ export async function compilePackage(slug: string): Promise<CompiledPackage | nu
 function renderRules(name: string, conventions: string[]): string {
   let md = `# ${name} — domain best-practice rules\n\n`;
   md +=
-    `_Activated from the Ollama-Forge Hub. Transparent steering: these are generic, ` +
+    `_Activated from the Ollamax Hub. Transparent steering: these are generic, ` +
     `license-safe conventions — not copied source code. Edit or delete this file to remove them._\n\n`;
   for (const c of conventions) md += `- ${c}\n`;
   return md;
@@ -73,7 +73,7 @@ function skillRecipe(slug: string, name: string, topics: string[], scaffold: str
     name: `hub-${slug}-${i}`,
     description: `${name}: ${scaffold}`,
     version: "1.0.0",
-    author: "Ollama-Forge Hub",
+    author: "Ollamax Hub",
     tags: [slug, "hub", ...topics.slice(0, 4)],
     prompts: {
       system:

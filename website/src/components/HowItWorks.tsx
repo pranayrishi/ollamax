@@ -3,18 +3,18 @@ import { SectionHeading } from "./SectionHeading";
 const steps = [
   {
     n: "1",
-    title: "Install Ollama + the app",
-    body: "Download the desktop app and have a local Ollama running. The app detects your hardware and recommends a model that fits.",
+    title: "Install Ollama + Ollamax",
+    body: "Download the app and have a local Ollama running. Ollamax detects your hardware and recommends a model that actually fits your machine.",
   },
   {
     n: "2",
-    title: "Sign in with GitHub (optional)",
-    body: "One GitHub identity across the app and this site. Sign-in is for your account — it never gates local use, and your code never touches our servers.",
+    title: "Sign in with GitHub",
+    body: "One quick sign-in links your account across the app and this site. It's only your identity — your code, prompts, and files never touch our servers.",
   },
   {
     n: "3",
-    title: "Build, chat, and ship — locally",
-    body: "Open the side panel, pick a model, and work. Inference runs on your machine via Ollama; nothing is proxied through us.",
+    title: "Chat, edit, and navigate by voice",
+    body: "Open the side panel, pick a model, and work. Ask questions, let the agent edit files (you approve each diff), or jump around your code by voice — all running locally via Ollama.",
   },
 ];
 

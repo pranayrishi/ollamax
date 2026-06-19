@@ -10,7 +10,7 @@ export function Footer() {
         <div className="sm:col-span-2 md:col-span-2">
           <div className="flex items-center gap-2 font-semibold text-zinc-100">
             <span className="grid h-7 w-7 place-items-center rounded-lg bg-ember-500 text-ink-950">⚒</span>
-            Ollama-Forge
+            Ollamax
           </div>
           <p className="mt-3 max-w-xs text-sm text-zinc-500">
             Local-first AI coding on your own hardware. Your code stays on your machine.
@@ -39,7 +39,7 @@ export function Footer() {
 
       <div className="border-t border-ink-700/60">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-6 text-sm text-zinc-500 sm:flex-row">
-          <p>© {new Date().getFullYear()} Ollama-Forge · MIT licensed</p>
+          <p>© {new Date().getFullYear()} Ollamax · MIT licensed</p>
           <a href={repo} className="flex items-center gap-2 hover:text-zinc-100">
             <GitHubMark className="h-4 w-4" />
             GitHub

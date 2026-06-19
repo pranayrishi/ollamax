@@ -9,11 +9,11 @@ export function CTA() {
         <div className="relative overflow-hidden rounded-3xl border border-ink-700 bg-ink-900 p-8 text-center sm:p-12">
           <div className="glow pointer-events-none absolute inset-x-0 top-0 h-40" aria-hidden="true" />
           <h2 className="text-3xl font-bold tracking-tight text-zinc-50 sm:text-4xl">
-            Download Ollama-Forge
+            Download Ollamax
           </h2>
           <p className="mx-auto mt-3 max-w-xl text-zinc-400">
-            Free and open source. Requires a local Ollama daemon. Sign in with GitHub to link your
-            account — optional, and never required for local use.
+            Free and open source. Requires a local Ollama daemon. Sign in once with GitHub to get
+            started — your code, prompts, and files still never leave your machine.
           </p>
 
           <div className="mx-auto mt-8 max-w-2xl">

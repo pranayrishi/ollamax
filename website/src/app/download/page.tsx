@@ -16,7 +16,7 @@ export default function DownloadPage() {
     <>
       <Nav />
       <main id="main" className="mx-auto max-w-3xl px-4 py-16">
-        <h1 className="text-3xl font-bold tracking-tight text-zinc-50">Download Ollama-Forge</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-zinc-50">Download Ollamax</h1>
         <p className="mt-3 text-zinc-400">
           Free and open source. The fastest way in is the one-line installer below — it installs the{" "}
           <code>forge</code> engine + the VS Code chat/agent/build panel, and{" "}

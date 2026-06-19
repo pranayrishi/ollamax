@@ -6,15 +6,15 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Ollama-Forge — Local-first AI coding, your models, your machine",
-    template: "%s · Ollama-Forge",
+    default: "Ollamax — Local-first AI coding on your own hardware",
+    template: "%s · Ollamax",
   },
   description:
-    "A local-first AI coding app built on Ollama. Chat, a tool-using research agent, and parallel multi-model builds — running on your own hardware. Bring your own models. Open source.",
+    "Ollamax is a local-first AI coding app. Chat, an autonomous agent that edits files safely, and on-device voice navigation — all running on your machine through local Ollama. No cloud, no API keys, no telemetry of your code. Open source (MIT).",
   openGraph: {
-    title: "Ollama-Forge",
+    title: "Ollamax — Local-first AI coding",
     description:
-      "Local-first AI coding on your own hardware. Your code stays on your machine.",
+      "Chat, an autonomous coding agent, and on-device voice — running on your own hardware. Your code never leaves your machine.",
     type: "website",
     url: siteUrl,
   },

@@ -131,7 +131,7 @@ export default async function Dashboard() {
           </form>
         </div>
         <p className="mt-3 text-xs text-zinc-500">
-          You can also toggle telemetry in the app (Settings → Ollama-Forge → Telemetry).
+          You can also toggle telemetry in the app (Settings → Ollamax → Telemetry).
         </p>
       </div>
     </Shell>

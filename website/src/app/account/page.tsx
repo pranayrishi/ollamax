@@ -48,7 +48,7 @@ export default async function AccountPage({
             )}
             {sp.error === "conflict" && (
               <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-                That identity is already linked to a different Ollama-Forge account.
+                That identity is already linked to a different Ollamax account.
               </p>
             )}
 
