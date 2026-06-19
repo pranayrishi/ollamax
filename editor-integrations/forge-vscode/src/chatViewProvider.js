@@ -301,16 +301,13 @@ class ChatViewProvider {
         context,
         autonomy: msg.autonomy || "confirm",
       };
-    } else if (msg.mode === "build") {
-      path0 = "/api/build";
-      body = { id, task: msg.text, output_dir: msg.outputDir || null };
     } else {
+      // TWO TABS (Build removed): Chat = "Ask" — PURE-LOCAL, zero-egress,
+      // single-model, tools OFF, READ-ONLY (never edits files). Autonomous,
+      // tool-using, file-editing work lives in the Agent tab (/api/research →
+      // run_agent_streamed with memory, skills, file/shell/MCP tools, delegation,
+      // scheduler). Build's multi-model orchestration is folding into Agent.
       path0 = "/api/chat";
-      // 3-TAB REFRAME: Chat is now PURE-LOCAL, zero-egress, single-model quick
-      // Q&A — tools are always OFF here. Tool-using / autonomous work lives in the
-      // Agent tab (/api/research → the full run_agent_streamed with memory,
-      // skills, file/shell/MCP tools, delegation, and the scheduler). This makes
-      // the three tabs genuinely distinct (talk / act-autonomously / build).
       body = { id, model: msg.model, messages: msg.messages || [], context, tools: false };
     }
 
@@ -520,9 +517,8 @@ class ChatViewProvider {
 
   <header id="topbar">
     <div class="modes" role="tablist">
-      <button class="mode active" data-mode="chat" title="Quick local Q&A — single model, no tools, nothing leaves your machine">Chat</button>
-      <button class="mode" data-mode="agent" title="Autonomous agent — uses tools, memory and skills, can delegate sub-agents and run scheduled tasks (all local)">Agent</button>
-      <button class="mode" data-mode="build" title="Parallel multi-model code build/orchestration">Build</button>
+      <button class="mode active" data-mode="chat" title="Ask — conversational Q&A; shows code in chat for discussion. READ-ONLY: never changes your files. Pure-local.">Chat</button>
+      <button class="mode" data-mode="agent" title="Agent — autonomous: uses tools, memory & skills, runs multi-step tasks, and edits files (with your approval).">Agent</button>
     </div>
     <div class="picker">
       <select id="autonomy" hidden title="Autonomy Dial — how much the agent does before asking you">

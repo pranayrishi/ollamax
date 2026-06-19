@@ -1,192 +1,192 @@
 {
-  "name": "forge-vscode",
-  "displayName": "Ollama-Forge",
-  "description": "Local-first AI chat panel for Ollama-Forge — Chat, a tool-using research Agent, and parallel Build, all running on your own hardware via local Ollama. No cloud, no API keys, no telemetry.",
-  "version": "0.1.0",
-  "publisher": "ollama-forge",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/pranayrishi/ollamax"
-  },
-  "engines": {
-    "vscode": "^1.85.0"
-  },
-  "categories": [
-    "AI",
-    "Chat",
-    "Machine Learning",
-    "Other"
-  ],
-  "keywords": [
-    "ollama",
-    "local",
-    "llm",
-    "ai",
-    "chat",
-    "offline"
-  ],
-  "activationEvents": [],
-  "main": "./src/extension.js",
-  "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "forge-sidebar",
-          "title": "Ollama-Forge",
-          "icon": "media/forge.svg"
-        },
-        {
-          "id": "forge-hub",
-          "title": "Forge Hub",
-          "icon": "media/hub-icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "forge-sidebar": [
-        {
-          "id": "forge.chatView",
-          "name": "Chat",
-          "type": "webview"
-        }
-      ],
-      "forge-hub": [
-        {
-          "id": "forge.hubView",
-          "name": "Packages",
-          "type": "webview"
-        }
-      ]
-    },
-    "commands": [
-      {
-        "command": "forge.focusChat",
-        "title": "Ollama-Forge: Focus Chat Panel"
-      },
-      {
-        "command": "forge.newChat",
-        "title": "Ollama-Forge: New Chat",
-        "icon": "$(add)"
-      },
-      {
-        "command": "forge.restartServer",
-        "title": "Ollama-Forge: Restart Backend Server",
-        "icon": "$(debug-restart)"
-      },
-      {
-        "command": "forge.attachSelection",
-        "title": "Ollama-Forge: Add Selection to Chat"
-      },
-      {
-        "command": "forge.attachFile",
-        "title": "Ollama-Forge: Add Active File to Chat"
-      },
-      {
-        "command": "forge.signIn",
-        "title": "Ollama-Forge: Sign in with GitHub"
-      },
-      {
-        "command": "forge.signInDevice",
-        "title": "Ollama-Forge: Sign in with GitHub (device code)"
-      },
-      {
-        "command": "forge.signOut",
-        "title": "Ollama-Forge: Sign out"
-      },
-      {
-        "command": "forge.voiceNavigate",
-        "title": "Ollama-Forge: Voice — navigate to code by speaking"
-      }
-    ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "forge.newChat",
-          "when": "view == forge.chatView",
-          "group": "navigation@1"
-        },
-        {
-          "command": "forge.restartServer",
-          "when": "view == forge.chatView",
-          "group": "navigation@2"
-        }
-      ],
-      "editor/context": [
-        {
-          "command": "forge.attachSelection",
-          "group": "forge",
-          "when": "editorHasSelection"
-        }
-      ]
-    },
-    "keybindings": [
-      {
-        "command": "forge.focusChat",
-        "key": "ctrl+shift+l",
-        "mac": "cmd+shift+l"
-      },
-      {
-        "command": "forge.attachSelection",
-        "key": "ctrl+shift+k",
-        "mac": "cmd+shift+k",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "forge.voiceNavigate",
-        "key": "ctrl+shift+v",
-        "mac": "cmd+shift+v"
-      }
-    ],
-    "configuration": {
-      "title": "Ollama-Forge",
-      "properties": {
-        "forge.serverPath": {
-          "type": "string",
-          "default": "forge",
-          "description": "Path to the `forge` binary. Defaults to `forge` on your PATH. Set this to e.g. /abs/path/to/target/release/forge if it isn't installed."
-        },
-        "forge.serverPort": {
-          "type": "number",
-          "default": 0,
-          "description": "If greater than 0, connect to an already-running `forge serve` on this port instead of launching one. Leave at 0 to have the extension launch and manage its own backend on an OS-assigned port."
-        },
-        "forge.autoStartServer": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically launch `forge serve` when the chat panel opens."
-        },
-        "forge.statusWhimsy": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show playful, rotating 'thinking' status words (Discombobulating…, Ruminating…) while a response is in flight. Turn off for a plain 'Working…' indicator. Honors the OS reduced-motion preference automatically."
-        },
-        "forge.accountServer": {
-          "type": "string",
-          "default": "",
-          "description": "Base URL of the Ollama-Forge account server for sign-in, the Hub, and the usage dashboard (e.g. https://your-app.vercel.app, or http://localhost:3000 for local dev). Leave blank to disable account features. Never used for inference; your code never goes here."
-        },
-        "forge.telemetry": {
-          "type": "boolean",
-          "default": true,
-          "description": "Send anonymous usage METADATA (counts, model/provider, token counts, language by file extension) to power your web usage dashboard. NEVER sends prompts, code, file contents, file paths, or repo names. Turn off to send nothing. Requires being signed in."
-        },
-        "forge.webTools": {
-          "type": "boolean",
-          "default": false,
-          "description": "Let the model use the free web tools (search / Wikipedia / arXiv / fetch URL) during normal chat — it decides when to look things up. PRIVACY: inference stays local, but your search queries and the text of fetched pages leave your machine (to those services). Off = pure-local chat."
-        },
-        "forge.whisperPath": {
-          "type": "string",
-          "default": "whisper-cli",
-          "description": "Path to a local whisper.cpp CLI binary, used by Voice navigation for ON-DEVICE speech-to-text. Audio never leaves your machine. Install whisper.cpp and set this if it isn't on your PATH."
-        },
-        "forge.whisperModel": {
-          "type": "string",
-          "default": "",
-          "description": "Path to a whisper.cpp ggml model (e.g. ggml-base.en.bin) for Voice navigation. Required to enable voice. Download once from the whisper.cpp model repo; transcription runs locally."
-        }
-      }
-    }
-  }
+	"name": "forge-vscode",
+	"displayName": "Ollama-Forge",
+	"description": "Local-first AI for Ollama-Forge \u2014 Chat (Ask, read-only) and an autonomous Agent (tools, memory, skills, file edits), all on your own hardware via local Ollama. No cloud, no API keys, no telemetry.",
+	"version": "0.1.1",
+	"publisher": "ollama-forge",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/pranayrishi/ollamax"
+	},
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": [
+		"AI",
+		"Chat",
+		"Machine Learning",
+		"Other"
+	],
+	"keywords": [
+		"ollama",
+		"local",
+		"llm",
+		"ai",
+		"chat",
+		"offline"
+	],
+	"activationEvents": [],
+	"main": "./src/extension.js",
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "forge-sidebar",
+					"title": "Ollama-Forge",
+					"icon": "media/forge.svg"
+				},
+				{
+					"id": "forge-hub",
+					"title": "Forge Hub",
+					"icon": "media/hub-icon.svg"
+				}
+			]
+		},
+		"views": {
+			"forge-sidebar": [
+				{
+					"id": "forge.chatView",
+					"name": "Chat",
+					"type": "webview"
+				}
+			],
+			"forge-hub": [
+				{
+					"id": "forge.hubView",
+					"name": "Packages",
+					"type": "webview"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "forge.focusChat",
+				"title": "Ollama-Forge: Focus Chat Panel"
+			},
+			{
+				"command": "forge.newChat",
+				"title": "Ollama-Forge: New Chat",
+				"icon": "$(add)"
+			},
+			{
+				"command": "forge.restartServer",
+				"title": "Ollama-Forge: Restart Backend Server",
+				"icon": "$(debug-restart)"
+			},
+			{
+				"command": "forge.attachSelection",
+				"title": "Ollama-Forge: Add Selection to Chat"
+			},
+			{
+				"command": "forge.attachFile",
+				"title": "Ollama-Forge: Add Active File to Chat"
+			},
+			{
+				"command": "forge.signIn",
+				"title": "Ollama-Forge: Sign in with GitHub"
+			},
+			{
+				"command": "forge.signInDevice",
+				"title": "Ollama-Forge: Sign in with GitHub (device code)"
+			},
+			{
+				"command": "forge.signOut",
+				"title": "Ollama-Forge: Sign out"
+			},
+			{
+				"command": "forge.voiceNavigate",
+				"title": "Ollama-Forge: Voice \u2014 navigate to code by speaking"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "forge.newChat",
+					"when": "view == forge.chatView",
+					"group": "navigation@1"
+				},
+				{
+					"command": "forge.restartServer",
+					"when": "view == forge.chatView",
+					"group": "navigation@2"
+				}
+			],
+			"editor/context": [
+				{
+					"command": "forge.attachSelection",
+					"group": "forge",
+					"when": "editorHasSelection"
+				}
+			]
+		},
+		"keybindings": [
+			{
+				"command": "forge.focusChat",
+				"key": "ctrl+shift+l",
+				"mac": "cmd+shift+l"
+			},
+			{
+				"command": "forge.attachSelection",
+				"key": "ctrl+shift+k",
+				"mac": "cmd+shift+k",
+				"when": "editorTextFocus"
+			},
+			{
+				"command": "forge.voiceNavigate",
+				"key": "ctrl+shift+v",
+				"mac": "cmd+shift+v"
+			}
+		],
+		"configuration": {
+			"title": "Ollama-Forge",
+			"properties": {
+				"forge.serverPath": {
+					"type": "string",
+					"default": "forge",
+					"description": "Path to the `forge` binary. Defaults to `forge` on your PATH. Set this to e.g. /abs/path/to/target/release/forge if it isn't installed."
+				},
+				"forge.serverPort": {
+					"type": "number",
+					"default": 0,
+					"description": "If greater than 0, connect to an already-running `forge serve` on this port instead of launching one. Leave at 0 to have the extension launch and manage its own backend on an OS-assigned port."
+				},
+				"forge.autoStartServer": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically launch `forge serve` when the chat panel opens."
+				},
+				"forge.statusWhimsy": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show playful, rotating 'thinking' status words (Discombobulating\u2026, Ruminating\u2026) while a response is in flight. Turn off for a plain 'Working\u2026' indicator. Honors the OS reduced-motion preference automatically."
+				},
+				"forge.accountServer": {
+					"type": "string",
+					"default": "",
+					"description": "Base URL of the Ollama-Forge account server for sign-in, the Hub, and the usage dashboard (e.g. https://your-app.vercel.app, or http://localhost:3000 for local dev). Leave blank to disable account features. Never used for inference; your code never goes here."
+				},
+				"forge.telemetry": {
+					"type": "boolean",
+					"default": true,
+					"description": "Send anonymous usage METADATA (counts, model/provider, token counts, language by file extension) to power your web usage dashboard. NEVER sends prompts, code, file contents, file paths, or repo names. Turn off to send nothing. Requires being signed in."
+				},
+				"forge.webTools": {
+					"type": "boolean",
+					"default": false,
+					"description": "Let the model use the free web tools (search / Wikipedia / arXiv / fetch URL) during normal chat \u2014 it decides when to look things up. PRIVACY: inference stays local, but your search queries and the text of fetched pages leave your machine (to those services). Off = pure-local chat."
+				},
+				"forge.whisperPath": {
+					"type": "string",
+					"default": "whisper-cli",
+					"description": "Path to a local whisper.cpp CLI binary, used by Voice navigation for ON-DEVICE speech-to-text. Audio never leaves your machine. Install whisper.cpp and set this if it isn't on your PATH."
+				},
+				"forge.whisperModel": {
+					"type": "string",
+					"default": "",
+					"description": "Path to a whisper.cpp ggml model (e.g. ggml-base.en.bin) for Voice navigation. Required to enable voice. Download once from the whisper.cpp model repo; transcription runs locally."
+				}
+			}
+		}
+	}
 }

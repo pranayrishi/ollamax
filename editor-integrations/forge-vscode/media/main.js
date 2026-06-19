@@ -838,12 +838,10 @@
   // Route images to a vision-capable model: nudge to switch when the current
   // pick clearly isn't multimodal (Auto + the server's own check handle the rest).
   function maybeWarnVision() {
-    // Images are only honored on the Chat path — Agent/Build can't analyze them,
+    // Images are only honored on the Chat path — Agent can't analyze them,
     // so warn instead of silently dropping the image (review #7/#8).
-    if (mode === "agent" || mode === "build") {
-      setStatus(
-        `🖼 Images only work in Chat mode — ${mode} mode can't analyze an image. Switch to Chat to use it.`
-      );
+    if (mode === "agent") {
+      setStatus("🖼 Images only work in Chat mode — switch to Chat to analyze an image.");
       return;
     }
     const m = (model || "").toLowerCase();
@@ -1031,10 +1029,8 @@
       if (dial) dial.hidden = mode !== "agent";
       inputEl.placeholder =
         mode === "agent"
-          ? "Tell the agent what to do — it uses tools, memory & skills (asks before acting)…"
-          : mode === "build"
-          ? "Describe what to build — runs parallel workers across models…"
-          : "Ask anything — runs locally on your hardware…";
+          ? "Tell the agent what to do — it uses tools, memory & skills and edits files (asks first)…"
+          : "Ask anything — conversational, read-only, runs locally on your hardware…";
     });
   });
 
