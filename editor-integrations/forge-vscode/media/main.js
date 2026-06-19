@@ -537,6 +537,8 @@
     if (activeMode === "chat" && active) {
       const txt = active.getAnswer();
       if (txt) chatHistory.push({ role: "assistant", content: txt });
+      // #3 persist this project's chat history (on-device, workspace-scoped).
+      vscode.postMessage({ type: "persistHistory", messages: chatHistory });
     }
     setStreaming(false);
     active = null;
@@ -1113,6 +1115,21 @@
         break;
       case "context":
         addContext(msg.items || []);
+        break;
+      case "restoreHistory":
+        // #3 Re-render this project's saved chat history on reopen.
+        if (Array.isArray(msg.messages) && msg.messages.length) {
+          chatHistory = msg.messages.slice();
+          for (const m of msg.messages) {
+            const el = addMessage(m.role === "assistant" ? "assistant" : "user");
+            el.setBodyText(m.content || "");
+          }
+          const div = document.createElement("div");
+          div.className = "trimmed";
+          div.textContent = "↑ restored from this project";
+          messagesEl.appendChild(div);
+          scrollDown();
+        }
         break;
       case "newChat":
         messagesEl.innerHTML = "";

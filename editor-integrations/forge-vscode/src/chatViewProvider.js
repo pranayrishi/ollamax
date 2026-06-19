@@ -75,7 +75,33 @@ class ChatViewProvider {
       this.backend.cancel(this.current.id);
       this.current = null;
     }
+    this._saveHistory([]); // #3: a new chat clears this project's persisted history
     this.post({ type: "newChat" });
+  }
+
+  // #3 Per-project chat persistence — on-device, workspace-scoped (workspaceState
+  // is automatically per-folder), never sent to the backend.
+  static get _HISTORY_KEY() {
+    return "ollamax.chat.v1";
+  }
+  _loadHistory() {
+    const h = this.context.workspaceState.get(ChatViewProvider._HISTORY_KEY, []);
+    return Array.isArray(h) ? h : [];
+  }
+  _saveHistory(messages) {
+    const arr = Array.isArray(messages) ? messages : [];
+    // Token-ish budget: keep the most recent turns within ~32k chars (~8k tokens)
+    // so a long-lived project doesn't grow unbounded.
+    const BUDGET = 32000;
+    let total = 0;
+    const kept = [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const len = ((arr[i] && arr[i].content) || "").length + 16;
+      if (total + len > BUDGET && kept.length) break;
+      total += len;
+      kept.unshift(arr[i]);
+    }
+    this.context.workspaceState.update(ChatViewProvider._HISTORY_KEY, kept);
   }
 
   async restartBackend() {
@@ -107,6 +133,9 @@ class ChatViewProvider {
         break;
       case "previewEdit":
         await this._previewEdit(msg.tool, msg.args);
+        break;
+      case "persistHistory":
+        this._saveHistory(msg.messages);
         break;
       case "refresh":
         await this._sendStatusAndModels();
@@ -143,6 +172,9 @@ class ChatViewProvider {
       whimsy: cfg.get("statusWhimsy", true),
       accountEnabled: !!(cfg.get("accountServer", "") || "").trim(),
     });
+    // #3 Per-project persistence: restore this workspace's saved chat history
+    // (on-device, workspaceState — never sent to the backend).
+    this.post({ type: "restoreHistory", messages: this._loadHistory() });
     // Account state is independent of the inference backend — surface it even
     // if Ollama isn't running, and never block on it.
     this._sendAccount();
