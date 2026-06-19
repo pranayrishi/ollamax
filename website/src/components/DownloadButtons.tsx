@@ -27,9 +27,10 @@ export function DownloadButtons({ compact = false }: { compact?: boolean }) {
         ))}
       </div>
       <p className="mt-3 text-xs text-zinc-500">
-        These are direct (unsigned) downloads. For the smoothest install with{" "}
-        <strong className="text-zinc-400">no security warning</strong>, use the{" "}
-        <Link href="/download" className="text-ember-400 hover:underline">one-line installer →</Link>{" "}
+        These are direct (unsigned) downloads — there&rsquo;s a{" "}
+        <Link href="/download#first-launch" className="text-ember-400 hover:underline">one-time step to open it →</Link>.
+        For zero warnings, use the{" "}
+        <Link href="/download" className="text-ember-400 hover:underline">one-line installer</Link>{" "}
         · needs{" "}
         <a href="https://ollama.com/download" className="text-zinc-400 hover:text-ember-400" target="_blank" rel="noopener noreferrer">Ollama</a>.
       </p>

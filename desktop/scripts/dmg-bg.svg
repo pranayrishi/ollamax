@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="0%" r="70%">
+      <stop offset="0%" stop-color="#f59e3c" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#f59e3c" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ember" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#fbbf6b"/>
+      <stop offset="100%" stop-color="#f59e3c"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="640" height="420" fill="#0c0f16"/>
+  <rect width="640" height="260" fill="url(#glow)"/>
+
+  <!-- wordmark -->
+  <g transform="translate(40,40)">
+    <rect x="0" y="0" width="30" height="30" rx="8" fill="url(#ember)"/>
+    <text x="15" y="22" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="18" text-anchor="middle" fill="#1a1205">⚒</text>
+    <text x="42" y="22" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#eef2f7">Ollamax</text>
+  </g>
+  <text x="40" y="92" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="14" fill="#93a1b3">Drag Ollamax onto the Applications folder to install.</text>
+
+  <!-- drag arrow between the two icon spots (icons are positioned by Finder) -->
+  <g stroke="url(#ember)" stroke-width="6" fill="none" stroke-linecap="round">
+    <path d="M 250 205 L 372 205"/>
+    <path d="M 356 191 L 374 205 L 356 219"/>
+  </g>
+
+  <!-- faint placeholders under where Finder drops the icons -->
+  <text x="170" y="280" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="12" text-anchor="middle" fill="#5b6878">Ollamax</text>
+  <text x="470" y="280" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="12" text-anchor="middle" fill="#5b6878">Applications</text>
+
+  <!-- first-launch instruction band -->
+  <g transform="translate(40,322)">
+    <rect x="0" y="0" width="560" height="64" rx="14" fill="#11151e" stroke="#26303f"/>
+    <circle cx="32" cy="32" r="13" fill="#f59e3c" fill-opacity="0.16" stroke="#f59e3c" stroke-opacity="0.5"/>
+    <text x="32" y="37" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="14" text-anchor="middle" fill="#fbbf6b">!</text>
+    <text x="58" y="27" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#eef2f7">First launch — one time only</text>
+    <text x="58" y="47" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="12.5" fill="#9fb0c3">Right-click Ollamax in Applications &#8594; Open &#8594; Open.  (It&#8217;s not signed yet — this is expected.)</text>
+  </g>
+</svg>

@@ -72,12 +72,14 @@ jobs:
           codesign --force --deep --sign - "${{ steps.app.outputs.app }}" || true
           codesign --verify --deep --verbose=1 "${{ steps.app.outputs.app }}" || true
 
-      - name: Package .dmg
+      - name: Package .dmg (branded window + first-launch instructions)
         run: |
           set -euo pipefail
           mkdir -p dist
-          hdiutil create -volname "Ollamax" -srcfolder "${{ steps.app.outputs.app }}" \
-            -ov -format UDZO dist/Ollamax-macos-arm64.dmg
+          # Lays out the Finder window with the drag-to-Applications background +
+          # one-time first-launch steps. Falls back to a plain .dmg on headless
+          # runners where Finder window-scripting isn't available.
+          bash desktop/scripts/make-dmg.sh "${{ steps.app.outputs.app }}" dist/Ollamax-macos-arm64.dmg
           ( cd dist && shasum -a 256 Ollamax-macos-arm64.dmg > Ollamax-macos-arm64.dmg.sha256 )
           ls -la dist
 

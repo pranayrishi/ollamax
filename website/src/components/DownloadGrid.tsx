@@ -1,11 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { detectOS, type OSInfo } from "@/lib/os";
+import { useEffect, useRef, useState } from "react";
+import { detectOS, type OS, type OSInfo } from "@/lib/os";
 import { BUNDLES, assetUrl, checksumUrl, type Bundle } from "@/lib/downloads";
+import { FirstLaunchGuide } from "./FirstLaunchGuide";
 
 export function DownloadGrid() {
   const [info, setInfo] = useState<OSInfo | null>(null);
+  const [startedOS, setStartedOS] = useState<OS | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // The moment a download starts, reveal the matching first-launch steps and
+  // scroll them into view — guidance exactly when it's needed.
+  function onDownload(os: OS) {
+    setStartedOS(os);
+    requestAnimationFrame(() => panelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
 
   useEffect(() => {
     // Prefer structured high-entropy UA data (the only reliable way to detect
@@ -76,6 +86,7 @@ export function DownloadGrid() {
                 <>
                   <a
                     href={url}
+                    onClick={() => onDownload(b.os)}
                     className="mt-4 block rounded-lg bg-ember-500 px-4 py-2 text-center text-sm font-semibold text-ink-950 hover:bg-ember-400"
                   >
                     Download
@@ -101,6 +112,16 @@ export function DownloadGrid() {
           );
         })}
       </div>
+
+      {/* Post-download: the steps appear the instant a download starts. */}
+      {startedOS && (
+        <div ref={panelRef} className="mt-6 scroll-mt-24 rounded-2xl border border-ember-500/40 bg-ember-500/[0.04] p-1">
+          <div className="mb-1 flex items-center gap-2 px-4 pt-3 text-sm font-semibold text-ember-300">
+            <span aria-hidden="true">⬇</span> Your download is starting — here&rsquo;s how to open it
+          </div>
+          <FirstLaunchGuide defaultOS={startedOS} />
+        </div>
+      )}
     </div>
   );
 }

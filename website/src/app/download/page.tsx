@@ -3,6 +3,7 @@ import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { DownloadGrid } from "@/components/DownloadGrid";
 import { CopyCommand } from "@/components/CopyCommand";
+import { FirstLaunchGuide } from "@/components/FirstLaunchGuide";
 
 export const metadata: Metadata = { title: "Download" };
 
@@ -19,10 +20,23 @@ export default function DownloadPage() {
         <h1 className="text-3xl font-bold tracking-tight text-zinc-50">Download Ollamax</h1>
         <p className="mt-3 text-zinc-400">
           Free and open source. The fastest way in is the one-line installer below — it installs the{" "}
-          <code>forge</code> engine + the VS Code chat/agent/build panel, and{" "}
+          <code>forge</code> engine + the chat/agent panel, and{" "}
           <strong className="text-zinc-200">avoids the macOS &ldquo;unidentified developer&rdquo; /
           Windows SmartScreen warning</strong> entirely.
         </p>
+
+        {/* Prominent: anyone grabbing the app/bundle directly will hit a one-time prompt. */}
+        <a
+          href="#first-launch"
+          className="mt-6 flex items-center gap-3 rounded-xl border border-ember-500/40 bg-ember-500/[0.06] px-4 py-3 text-sm text-zinc-200 transition hover:border-ember-500"
+        >
+          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-ember-500/15 text-ember-300">↓</span>
+          <span>
+            <strong className="text-zinc-100">Downloading the app directly?</strong> It&rsquo;s not
+            signed yet, so there&rsquo;s one <strong className="text-zinc-100">one-time</strong> step to
+            open it. <span className="text-ember-300 underline underline-offset-2">See First launch →</span>
+          </span>
+        </a>
 
         {/* PRIMARY: the one-liner */}
         <section className="mt-8 rounded-2xl border border-ember-500/40 bg-ink-900/60 p-6">
@@ -44,8 +58,8 @@ export default function DownloadPage() {
             <a href={PS_URL} target="_blank" rel="noopener noreferrer" className="text-ember-400 hover:underline">
               install.ps1
             </a>
-            . It detects your OS/arch, installs <code>forge</code> to your PATH, adds the VS Code
-            panel if <code>code</code> is present, and checks for Ollama.
+            . It detects your OS/arch, installs <code>forge</code> to your PATH, adds the editor panel
+            if <code>code</code> is present, and checks for Ollama.
           </p>
         </section>
 
@@ -60,32 +74,26 @@ export default function DownloadPage() {
           <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" className="text-ember-400 hover:underline">
             ollama.com/download
           </a>
-          ; the installer checks for it and suggests a model your hardware can run. The editor panel
-          needs <strong className="text-zinc-200">VS Code</strong>; the <code>forge</code> CLI works on
-          its own.
+          ; the installer checks for it and suggests a model your hardware can run.
         </div>
 
-        {/* SECONDARY: manual download */}
+        {/* PROMINENT first-launch guidance — visible, per-OS, visual (not buried). */}
+        <section id="first-launch" className="mt-12 scroll-mt-24">
+          <FirstLaunchGuide />
+        </section>
+
+        {/* SECONDARY: manual download (also reveals the steps the moment you click). */}
         <details className="mt-10 rounded-2xl border border-ink-700 bg-ink-900/40 p-6">
           <summary className="cursor-pointer text-sm font-semibold text-zinc-300">
             Prefer a manual download? (advanced)
           </summary>
-          <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-200/90">
-            <strong className="text-amber-200">Heads up:</strong> a browser-downloaded bundle{" "}
-            <em>is</em> flagged by your OS (the one-liner above avoids this). It&rsquo;s safe to run —
-            the build just isn&rsquo;t code-signed yet:
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-amber-200/80">
-              <li>
-                <strong>macOS:</strong> right-click the unpacked <code>forge</code> → <strong>Open</strong> →{" "}
-                <strong>Open</strong> (or System Settings → Privacy &amp; Security → <strong>Open Anyway</strong>).
-                The bundled <code>install.sh</code> also clears the quarantine flag.
-              </li>
-              <li>
-                <strong>Windows:</strong> on the SmartScreen prompt, click <strong>More info</strong> →{" "}
-                <strong>Run anyway</strong>.
-              </li>
-            </ul>
-          </div>
+          <p className="mt-3 text-sm text-zinc-400">
+            A browser-downloaded bundle <em>is</em> flagged by your OS (the one-liner above avoids
+            this). It&rsquo;s safe to run — the build just isn&rsquo;t code-signed yet. The exact
+            one-time step for your OS is in{" "}
+            <a href="#first-launch" className="text-ember-400 hover:underline">First launch</a> above,
+            and appears again the moment you start a download.
+          </p>
           <div className="mt-5">
             <DownloadGrid />
           </div>

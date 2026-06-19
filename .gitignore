@@ -43,3 +43,9 @@ desktop/code-oss/
 
 # Bundled voice assets (whisper.cpp binary + ggml model) — built/downloaded locally
 desktop/vendor/
+
+# Release artifacts (large; published to releases repo, not committed)
+dist/
+
+# Built Code-OSS app trees (large; packaged into dist/, not committed)
+desktop/VSCode-*/
