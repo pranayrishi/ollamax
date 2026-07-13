@@ -12,12 +12,12 @@
     "prepare-assets": "node scripts/prepare.mjs",
     "stage-whisper-runtime": "node scripts/stage-whisper-runtime.mjs",
     "validate-runtime": "node scripts/validate-runtime.mjs",
-    "test": "node --test spatial-selection.test.js test/cursor-buddy-state.test.js test/desktop-security.test.js test/hub-input-safety.test.js test/model-output-escaping.test.js test/point-directives.test.js test/voice-runtime.test.js test/workspace-paths.test.js test/package-validation.test.js",
+    "test": "npm run prepare-assets && node --test spatial-selection.test.js test/cursor-buddy-state.test.js test/desktop-security.test.js test/hub-input-safety.test.js test/model-output-escaping.test.js test/point-directives.test.js test/voice-runtime.test.js test/workspace-paths.test.js test/package-validation.test.js",
     "start": "npm run prepare-assets && electron .",
-    "dist": "npm run test && npm run validate-runtime && npm run prepare-assets && electron-builder",
-    "dist:mac": "npm run test && npm run validate-runtime && npm run prepare-assets && electron-builder --mac",
-    "dist:win": "npm run test && npm run validate-runtime && npm run prepare-assets && electron-builder --win",
-    "dist:linux": "npm run test && npm run validate-runtime && npm run prepare-assets && electron-builder --linux"
+    "dist": "npm run test && npm run validate-runtime && electron-builder",
+    "dist:mac": "npm run test && npm run validate-runtime && electron-builder --mac",
+    "dist:win": "npm run test && npm run validate-runtime && electron-builder --win",
+    "dist:linux": "npm run test && npm run validate-runtime && electron-builder --linux"
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",

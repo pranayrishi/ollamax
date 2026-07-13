@@ -86,7 +86,14 @@ test("accepts an unpacked package with an optional local Whisper runtime", () =>
     writeVoiceManifest(resourcesDir);
     writeUnpackedApp(resourcesDir);
 
-    const result = validatePackagedResources({ resourcesDir, platformName: "linux" });
+    const result = validatePackagedResources({
+      resourcesDir,
+      platformName: "linux",
+      // This fixture models a source/development package. Keep the test
+      // deterministic when the release packager exports its strict runtime
+      // requirement to the process environment.
+      requireBundledVoice: false,
+    });
     assert.equal(result.engineName, "forge");
     assert.equal(result.appStorage, "unpacked app directory");
     assert.equal(result.voiceRuntimeBundled, false);
@@ -128,6 +135,7 @@ test("accepts required files enumerated from app.asar", () => {
       resourcesDir,
       platformName: "win32",
       listArchive: () => REQUIRED_APP_FILES.map((file) => `/${file}`),
+      requireBundledVoice: false,
     });
     assert.equal(result.engineName, "forge.exe");
     assert.equal(result.appStorage, "app.asar");
@@ -145,7 +153,11 @@ test("rejects a package missing a required spatial overlay file", () => {
     writeUnpackedApp(resourcesDir, new Set(["renderer/spatial-overlay.js"]));
 
     assert.throws(
-      () => validatePackagedResources({ resourcesDir, platformName: "linux" }),
+      () => validatePackagedResources({
+        resourcesDir,
+        platformName: "linux",
+        requireBundledVoice: false,
+      }),
       /renderer\/spatial-overlay\.js/
     );
   } finally {
@@ -162,7 +174,11 @@ test("rejects a package missing the click-through cursor companion preload", () 
     writeUnpackedApp(resourcesDir, new Set(["cursor-buddy-preload.js"]));
 
     assert.throws(
-      () => validatePackagedResources({ resourcesDir, platformName: "linux" }),
+      () => validatePackagedResources({
+        resourcesDir,
+        platformName: "linux",
+        requireBundledVoice: false,
+      }),
       /cursor-buddy-preload\.js/
     );
   } finally {
