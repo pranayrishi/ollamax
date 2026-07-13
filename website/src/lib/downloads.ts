@@ -52,6 +52,6 @@ export type DesktopApp = Bundle;
 export const DESKTOP_APPS: DesktopApp[] = [
   { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · .dmg", asset: "Ollamax-macos-arm64.dmg", published: true },
   { os: "macos", arch: "x64", label: "macOS — Intel", note: "x86_64 · .dmg", asset: "Ollamax-macos-x64.dmg", published: false },
-  { os: "windows", arch: "x64", label: "Windows — x64", note: "Installer (.exe)", asset: "Ollamax-windows-x64-setup.exe", published: false },
-  { os: "linux", arch: "x64", label: "Linux — x64", note: "AppImage", asset: "Ollamax-linux-x64.AppImage", published: false },
+  { os: "windows", arch: "x64", label: "Windows — x64", note: "Installer (.exe)", asset: "Ollamax-windows-x64-setup.exe", published: true },
+  { os: "linux", arch: "x64", label: "Linux — x64", note: "AppImage", asset: "Ollamax-linux-x64.AppImage", published: true },
 ];
