@@ -170,21 +170,31 @@ jobs:
           # website/src/lib/downloads.ts. A successful electron-builder command
           # is not sufficient: fail the job when its user-facing installers are
           # absent or empty, rather than publishing an empty artifact upload.
+          # Electron Builder renders Linux's architecture differently for each
+          # package format (`x86_64` for AppImage, `amd64` for deb). Stage both
+          # under the stable public `x64` names used by the website, docs, and
+          # checksum contract instead of leaking target-specific names.
           case "${{ matrix.label }}" in
             macos-arm64)
-              expected=(
+              sources=(
                 "Ollamax-macos-arm64.dmg"
                 "Ollamax-macos-arm64.zip"
               )
+              installers=("${sources[@]}")
               ;;
             windows-x64)
-              expected=(
+              sources=(
                 "Ollamax-windows-x64-setup.exe"
                 "Ollamax-windows-x64-portable.exe"
               )
+              installers=("${sources[@]}")
               ;;
             linux-x64)
-              expected=(
+              sources=(
+                "Ollamax-linux-x86_64.AppImage"
+                "Ollamax-linux-amd64.deb"
+              )
+              installers=(
                 "Ollamax-linux-x64.AppImage"
                 "Ollamax-linux-x64.deb"
               )
@@ -195,8 +205,9 @@ jobs:
               ;;
           esac
 
-          for installer in "${expected[@]}"; do
-            source="desktop-app/release/$installer"
+          for index in "${!installers[@]}"; do
+            source="desktop-app/release/${sources[$index]}"
+            installer="${installers[$index]}"
             if [[ ! -s "$source" ]]; then
               echo "expected installer is missing or empty: $source" >&2
               find desktop-app/release -type f -exec ls -lh {} \; 2>/dev/null || true
@@ -206,7 +217,7 @@ jobs:
           done
 
           ls -la dist
-          for installer in "${expected[@]}"; do
+          for installer in "${installers[@]}"; do
             if command -v sha256sum >/dev/null 2>&1; then
               ( cd dist && sha256sum "$installer" > "$installer.sha256" )
             else
