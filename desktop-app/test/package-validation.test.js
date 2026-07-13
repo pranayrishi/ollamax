@@ -249,18 +249,26 @@ test("rejects a bundled package that omits the Whisper model even in a lightweig
   const root = makeTempDir();
   try {
     const resourcesDir = path.join(root, "resources");
-    writeEngine(resourcesDir);
+    // Windows does not preserve POSIX execute bits in a fixture. Exercise the
+    // missing-model branch against the platform-native executable there; the
+    // Unix execute-bit contract has its own test below and runs on Unix CI.
+    const platformName = process.platform === "win32" ? "win32" : "linux";
+    writeEngine(resourcesDir, platformName);
     writeVoiceManifest(resourcesDir, bundledRecognition());
-    const binary = path.join(resourcesDir, "voice", "whisper-cli");
+    const binary = path.join(
+      resourcesDir,
+      "voice",
+      platformName === "win32" ? "whisper-cli.exe" : "whisper-cli"
+    );
     writeFile(binary, "binary");
-    fs.chmodSync(binary, 0o755);
+    if (platformName !== "win32") fs.chmodSync(binary, 0o755);
     writeFile(path.join(resourcesDir, "voice", WHISPER_LICENSE_FILE), "MIT License\n");
     writeUnpackedApp(resourcesDir);
 
     assert.throws(
       () => validatePackagedResources({
         resourcesDir,
-        platformName: "linux",
+        platformName,
         assertVoiceModel: () => {},
       }),
       /bundled Whisper model/
@@ -270,27 +278,36 @@ test("rejects a bundled package that omits the Whisper model even in a lightweig
   }
 });
 
-test("rejects a non-executable bundled whisper-cli after a Unix package copy", () => {
-  const root = makeTempDir();
-  try {
-    const resourcesDir = path.join(root, "resources");
-    writeEngine(resourcesDir);
-    writeBundledVoice(resourcesDir);
-    fs.chmodSync(path.join(resourcesDir, "voice", "whisper-cli"), 0o644);
-    writeUnpackedApp(resourcesDir);
+test(
+  "rejects a non-executable bundled whisper-cli after a Unix package copy",
+  {
+    // Windows does not expose a POSIX execute bit, so chmod cannot establish
+    // the executable baseline this regression test is meant to corrupt. The
+    // native Windows executable/model/DLL contract is covered above instead.
+    skip: process.platform === "win32" && "POSIX execute-bit semantics are validated on Unix CI",
+  },
+  () => {
+    const root = makeTempDir();
+    try {
+      const resourcesDir = path.join(root, "resources");
+      writeEngine(resourcesDir);
+      writeBundledVoice(resourcesDir);
+      fs.chmodSync(path.join(resourcesDir, "voice", "whisper-cli"), 0o644);
+      writeUnpackedApp(resourcesDir);
 
-    assert.throws(
-      () => validatePackagedResources({
-        resourcesDir,
-        platformName: "linux",
-        assertVoiceModel: () => {},
-      }),
-      /not marked executable/
-    );
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+      assert.throws(
+        () => validatePackagedResources({
+          resourcesDir,
+          platformName: "linux",
+          assertVoiceModel: () => {},
+        }),
+        /not marked executable/
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   }
-});
+);
 
 test("rejects a bundled Windows package that loses a declared DLL dependency", () => {
   const root = makeTempDir();
@@ -321,12 +338,15 @@ test("rejects a bundled package whose model is not the reviewed payload", () => 
   const root = makeTempDir();
   try {
     const resourcesDir = path.join(root, "resources");
-    writeEngine(resourcesDir);
-    writeBundledVoice(resourcesDir);
+    // See the missing-model test above: use a native fixture on Windows so
+    // this assertion reaches model verification rather than POSIX mode bits.
+    const platformName = process.platform === "win32" ? "win32" : "linux";
+    writeEngine(resourcesDir, platformName);
+    writeBundledVoice(resourcesDir, { platformName });
     writeUnpackedApp(resourcesDir);
 
     assert.throws(
-      () => validatePackagedResources({ resourcesDir, platformName: "linux" }),
+      () => validatePackagedResources({ resourcesDir, platformName }),
       new RegExp(`${WHISPER_MODEL_BYTES} bytes`)
     );
   } finally {

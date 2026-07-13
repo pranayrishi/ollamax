@@ -7,8 +7,11 @@ const test = require("node:test");
 
 function hubHelpers(file) {
   const source = fs.readFileSync(file, "utf8");
-  const count = source.match(/function boundedCount\(value, max\) \{\n([\s\S]*?)\n  \}/);
-  const items = source.match(/function items\(value\) \{\n([\s\S]*?)\n  \}/);
+  // Git may check these shared browser assets out with CRLF on Windows. The
+  // generated desktop copy must be inspected exactly as shipped, independent
+  // of that checkout detail.
+  const count = source.match(/function boundedCount\(value, max\) \{\r?\n([\s\S]*?)\r?\n  \}/);
+  const items = source.match(/function items\(value\) \{\r?\n([\s\S]*?)\r?\n  \}/);
   assert.ok(count, `missing boundedCount in ${file}`);
   assert.ok(items, `missing items in ${file}`);
   return new Function(

@@ -13,7 +13,9 @@ const test = require("node:test");
 
 function escapeHelperFrom(file) {
   const source = fs.readFileSync(file, "utf8");
-  const match = source.match(/function escapeHtml\(s\) \{\n([\s\S]*?)\n  \}/);
+  // The renderer source is copied from the extension and can use CRLF on a
+  // Windows checkout. This checks the helper, not a particular line ending.
+  const match = source.match(/function escapeHtml\(s\) \{\r?\n([\s\S]*?)\r?\n  \}/);
   assert.ok(match, `missing escapeHtml helper in ${file}`);
   // The extracted helper is repository-owned source and receives only the
   // fixture below. This keeps the test coupled to the implementation that is
