@@ -62,6 +62,41 @@ pub enum Commands {
         prompt: Option<String>,
     },
 
+    #[command(about = "Run a local workspace agent that can inspect, edit, and validate files")]
+    Agent {
+        #[arg(
+            short,
+            long,
+            help = "Model to use (defaults to the best installed local model)"
+        )]
+        model: Option<String>,
+
+        #[arg(
+            long,
+            default_value = "12",
+            help = "Maximum bounded tool rounds (inventory, read, edit, validate)"
+        )]
+        max_iterations: usize,
+
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = AgentAutonomy::Confirm,
+            help = "Whether consequential file writes and shell commands need approval"
+        )]
+        autonomy: AgentAutonomy,
+
+        #[arg(
+            short = 'y',
+            long,
+            help = "Approve consequential actions without prompting (equivalent to --autonomy auto)"
+        )]
+        yes: bool,
+
+        #[arg(help = "Task for the agent to perform in the current directory")]
+        task: Vec<String>,
+    },
+
     #[command(about = "Analyze code and suggest improvements")]
     Analyze {
         #[arg(help = "File or directory to analyze")]
@@ -110,10 +145,15 @@ pub enum Commands {
         models: bool,
     },
 
-    #[command(about = "List curated free open-weight models, tiered to your hardware \
-                       (with license + what's installed + the recommended default)")]
+    #[command(
+        about = "List curated free open-weight models, tiered to your hardware \
+                       (with license + what's installed + the recommended default)"
+    )]
     Models {
-        #[arg(long, help = "Verify each tag against the live Ollama library (networked, slower)")]
+        #[arg(
+            long,
+            help = "Verify each tag against the live Ollama library (networked, slower)"
+        )]
         verify: bool,
         #[arg(long, help = "Only show models your detected VRAM can actually run")]
         fits_only: bool,
@@ -280,6 +320,16 @@ pub enum AnalysisType {
     Performance,
     Style,
     Full,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentAutonomy {
+    /// Show the proposed plan and ask before every file write or shell command.
+    Confirm,
+    /// Run inside the current-directory sandbox without per-step prompts.
+    Auto,
+    /// Inspect/search only; deny writes and shell commands.
+    Readonly,
 }
 
 #[derive(Subcommand, Debug, Clone)]

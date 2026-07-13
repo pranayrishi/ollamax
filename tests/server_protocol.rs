@@ -11,18 +11,27 @@
 //! prompt building) lives in the `#[cfg(test)]` module inside
 //! `src/server/mod.rs`.
 
-use ollama_forge::server::serve_listener;
+use ollama_forge::server::{serve_listener_in_workspace_with_token, API_TOKEN_HEADER};
 use ollama_forge::Config;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 /// Bind an ephemeral loopback port, spawn the server on it, and return the
 /// address the test client should connect to.
+const TEST_TOKEN: &str = "server-protocol-test-token-0123456789";
+
 async fn spawn_server() -> std::net::SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let workspace = std::env::current_dir().unwrap();
     tokio::spawn(async move {
-        let _ = serve_listener(listener, Config::default()).await;
+        let _ = serve_listener_in_workspace_with_token(
+            listener,
+            Config::default(),
+            workspace,
+            TEST_TOKEN,
+        )
+        .await;
     });
     addr
 }
@@ -45,8 +54,8 @@ async fn health_endpoint_returns_ok_json() {
     assert!(resp.contains("200 OK"), "got: {resp}");
     assert!(resp.contains("application/json"));
     assert!(resp.contains("\"ok\":true"));
-    // Privacy posture: localhost server still sends permissive CORS so the
-    // webview can talk to it directly if it ever needs to.
+    // Capability-authenticated API clients may use CORS from the packaged
+    // desktop renderer; project APIs themselves reject missing tokens.
     assert!(resp.contains("Access-Control-Allow-Origin: *"));
 }
 
@@ -70,7 +79,7 @@ async fn cancel_unknown_id_returns_ok_false() {
     let addr = spawn_server().await;
     let body = "{\"id\":\"does-not-exist\"}";
     let req = format!(
-        "POST /api/cancel HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        "POST /api/cancel HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n{API_TOKEN_HEADER}: {TEST_TOKEN}\r\nContent-Length: {}\r\n\r\n{}",
         body.len(),
         body
     );
@@ -84,10 +93,34 @@ async fn malformed_chat_body_is_400() {
     let addr = spawn_server().await;
     let body = "{ not json";
     let req = format!(
-        "POST /api/chat HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{}",
+        "POST /api/chat HTTP/1.1\r\nHost: x\r\n{API_TOKEN_HEADER}: {TEST_TOKEN}\r\nContent-Length: {}\r\n\r\n{}",
         body.len(),
         body
     );
     let resp = raw_request(addr, &req).await;
     assert!(resp.contains("400 Bad Request"), "got: {resp}");
+}
+
+#[tokio::test]
+async fn api_rejects_requests_without_the_private_capability() {
+    let addr = spawn_server().await;
+    let body = r#"{"id":"no-token"}"#;
+    let req = format!(
+        "POST /api/cancel HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let resp = raw_request(addr, &req).await;
+    assert!(resp.contains("401 Unauthorized"), "got: {resp}");
+    assert!(resp.contains("invalid local Ollamax API token"), "got: {resp}");
+}
+
+#[tokio::test]
+async fn console_is_same_origin_and_receives_a_private_api_capability() {
+    let addr = spawn_server().await;
+    let resp = raw_request(addr, "GET /console HTTP/1.1\r\nHost: x\r\n\r\n").await;
+    assert!(resp.contains("200 OK"), "got: {resp}");
+    assert!(resp.contains("Ollamax Agent Console"), "got: {resp}");
+    assert!(!resp.contains("__OLLAMAX_API_TOKEN__"), "got: {resp}");
+    assert!(!resp.contains("Access-Control-Allow-Origin"), "got: {resp}");
 }

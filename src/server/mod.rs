@@ -30,7 +30,9 @@
 //!
 //! - `GET  /health`        → `{ ok, version }`
 //! - `GET  /api/status`    → hardware profile + Ollama health (reuses [`VramSentinel`])
+//! - `GET  /console`       → local, browser-based Agent Console (same server origin)
 //! - `GET  /api/models`    → installed models (reuses `list_models`)
+//! - `GET  /api/workspace` → approved workspace root for this server process
 //! - `POST /api/chat`      → SSE: `meta` → `token`* → (`done` | `error` | `cancelled`)
 //! - `POST /api/research`  → SSE: `meta` → `step`* → `answer` → (`done` | …)
 //! - `POST /api/build`     → SSE: `meta` → `progress`* → `result` → `done`
@@ -59,25 +61,79 @@ use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex, Notify};
 use tracing::{info, warn};
+use uuid::Uuid;
+
+/// The local UI must prove it was launched alongside this server before it can
+/// access project data or invoke any API. This prevents a random web page from
+/// using a browser's loopback access to read local paths or drive an agent.
+pub const API_TOKEN_HEADER: &str = "x-ollamax-token";
+const MAX_REQUEST_HEAD_BYTES: usize = 64 * 1024;
+const MAX_REQUEST_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// Shared state for the running server.
 pub struct ServerState {
     config: Config,
     version: &'static str,
+    /// Captured once when the local server starts. Every filesystem-capable
+    /// agent tool is confined to this root; clients cannot submit an arbitrary
+    /// path in an HTTP request to widen the sandbox.
+    workspace_root: PathBuf,
+    /// Per-server, high-entropy capability required for every `/api/*` route.
+    /// Managed hosts pass it in `FORGE_SERVER_TOKEN`; standalone `forge serve`
+    /// generates and prints one on its ready line for the local console host.
+    api_token: String,
     /// In-flight request id → cancel signal. `Notify::notify_one` stores a
     /// permit, so a cancel that arrives a hair before the handler starts
     /// awaiting is not lost.
     cancels: Mutex<HashMap<String, Arc<Notify>>>,
-    /// In-flight Agent run id → approval-decision sender (the Autonomy Dial). The
-    /// agent task awaits the receiver; `/api/agent/approve` sends into it.
-    approvals: Mutex<HashMap<String, mpsc::UnboundedSender<bool>>>,
+    /// At most one pending approval per Agent run. It is keyed by an opaque
+    /// nonce so an early or duplicate HTTP decision cannot approve a later
+    /// plan/action in the same run.
+    approvals: Mutex<HashMap<String, PendingApproval>>,
+}
+
+struct PendingApproval {
+    approval_id: String,
+    tx: mpsc::UnboundedSender<bool>,
 }
 
 impl ServerState {
-    async fn register(&self, id: &str) -> Arc<Notify> {
+    fn new(config: Config, workspace_root: PathBuf, api_token: String) -> Self {
+        Self {
+            config,
+            version: crate::cli::VERSION,
+            workspace_root,
+            api_token,
+            cancels: Mutex::new(HashMap::new()),
+            approvals: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn authorizes(&self, head: &RequestHead) -> bool {
+        let Some(supplied) = head.headers.get(API_TOKEN_HEADER) else {
+            return false;
+        };
+        // Compare every byte instead of short-circuiting. This is mainly a
+        // browser/CSRF capability rather than an OS-user boundary, but costs
+        // nothing and avoids exposing a prefix through timing.
+        supplied.len() == self.api_token.len()
+            && supplied
+                .as_bytes()
+                .iter()
+                .zip(self.api_token.as_bytes())
+                .fold(0_u8, |different, (a, b)| different | (a ^ b))
+                == 0
+    }
+
+    async fn register(&self, id: &str) -> Option<Arc<Notify>> {
         let n = Arc::new(Notify::new());
-        self.cancels.lock().await.insert(id.to_string(), n.clone());
-        n
+        let mut cancels = self.cancels.lock().await;
+        if cancels.contains_key(id) {
+            None
+        } else {
+            cancels.insert(id.to_string(), n.clone());
+            Some(n)
+        }
     }
     async fn unregister(&self, id: &str) {
         self.cancels.lock().await.remove(id);
@@ -91,22 +147,69 @@ impl ServerState {
             None => false,
         }
     }
-    /// Register an approval channel for an Agent run; returns the receiver the
-    /// agent's policy awaits.
-    async fn register_approval(&self, id: &str) -> mpsc::UnboundedReceiver<bool> {
+    /// Register exactly one current approval prompt. This happens immediately
+    /// before the SSE event is emitted, not at run start, so client decisions
+    /// cannot accumulate and be replayed against a future tool call.
+    async fn register_approval(
+        &self,
+        run_id: &str,
+        approval_id: &str,
+    ) -> Option<mpsc::UnboundedReceiver<bool>> {
         let (tx, rx) = mpsc::unbounded_channel::<bool>();
-        self.approvals.lock().await.insert(id.to_string(), tx);
-        rx
+        let mut approvals = self.approvals.lock().await;
+        if approvals.contains_key(run_id) {
+            None
+        } else {
+            approvals.insert(
+                run_id.to_string(),
+                PendingApproval {
+                    approval_id: approval_id.to_string(),
+                    tx,
+                },
+            );
+            Some(rx)
+        }
     }
-    async fn unregister_approval(&self, id: &str) {
-        self.approvals.lock().await.remove(id);
+    async fn clear_approval(&self, run_id: &str, approval_id: &str) {
+        let mut approvals = self.approvals.lock().await;
+        if approvals
+            .get(run_id)
+            .is_some_and(|pending| pending.approval_id == approval_id)
+        {
+            approvals.remove(run_id);
+        }
     }
-    async fn send_approval(&self, id: &str, decision: bool) -> bool {
-        match self.approvals.lock().await.get(id) {
-            Some(tx) => tx.send(decision).is_ok(),
+    async fn clear_approvals_for_run(&self, run_id: &str) {
+        self.approvals.lock().await.remove(run_id);
+    }
+    async fn send_approval(&self, run_id: &str, approval_id: &str, decision: bool) -> bool {
+        let pending = {
+            let mut approvals = self.approvals.lock().await;
+            match approvals.get(run_id) {
+                Some(pending) if pending.approval_id == approval_id => approvals.remove(run_id),
+                _ => None,
+            }
+        };
+        match pending {
+            Some(pending) => pending.tx.send(decision).is_ok(),
             None => false,
         }
     }
+}
+
+fn server_api_token() -> String {
+    std::env::var("FORGE_SERVER_TOKEN")
+        .ok()
+        .map(|token| token.trim().to_string())
+        .filter(|token| valid_api_token(token))
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+fn valid_api_token(token: &str) -> bool {
+    (16..=256).contains(&token.len())
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 /// CLI entry point for `forge serve`. Binds `host:port` (forced to loopback),
@@ -124,32 +227,59 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
         .with_context(|| format!("bind {bind_host}:{port}"))?;
     let addr = listener.local_addr().context("read local_addr")?;
 
-    // Machine-readable line the VSCode extension parses to discover the port
-    // (it launches `forge serve --port 0` and reads this from stdout).
+    let workspace_root = std::env::current_dir()
+        .context("resolve current workspace")?
+        .canonicalize()
+        .context("canonicalize current workspace")?;
+    let state = Arc::new(ServerState::new(config, workspace_root, server_api_token()));
+    // Machine-readable line the managed desktop and VS Code hosts parse to
+    // discover both the port and the private per-server API capability.
     println!(
         "FORGE_SERVE_READY {}",
-        json!({ "host": addr.ip().to_string(), "port": addr.port(), "version": crate::cli::VERSION })
+        json!({
+            "host": addr.ip().to_string(),
+            "port": addr.port(),
+            "version": crate::cli::VERSION,
+            "token": state.api_token,
+        })
     );
     eprintln!("forge serve listening on http://{addr}  (local-only; Ctrl-C to stop)");
-
-    let state = Arc::new(ServerState {
-        config,
-        version: crate::cli::VERSION,
-        cancels: Mutex::new(HashMap::new()),
-        approvals: Mutex::new(HashMap::new()),
-    });
     serve(listener, state).await
 }
 
 /// Serve on an already-bound listener. Exposed so tests can bind an ephemeral
 /// `127.0.0.1:0` port and drive the protocol without a live Ollama.
 pub async fn serve_listener(listener: TcpListener, config: Config) -> Result<()> {
-    let state = Arc::new(ServerState {
-        config,
-        version: crate::cli::VERSION,
-        cancels: Mutex::new(HashMap::new()),
-        approvals: Mutex::new(HashMap::new()),
-    });
+    let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    serve_listener_in_workspace(listener, config, workspace_root).await
+}
+
+/// Variant used by integration tests and embedded hosts that need to pin an
+/// explicit, already-approved workspace root without relying on process cwd.
+pub async fn serve_listener_in_workspace(
+    listener: TcpListener,
+    config: Config,
+    workspace_root: PathBuf,
+) -> Result<()> {
+    serve_listener_in_workspace_with_token(listener, config, workspace_root, server_api_token()).await
+}
+
+/// Test/embedded-host variant with an explicit private API capability. Managed
+/// desktop and VS Code hosts normally pass this through `FORGE_SERVER_TOKEN`.
+pub async fn serve_listener_in_workspace_with_token(
+    listener: TcpListener,
+    config: Config,
+    workspace_root: PathBuf,
+    api_token: impl Into<String>,
+) -> Result<()> {
+    let workspace_root = workspace_root
+        .canonicalize()
+        .with_context(|| format!("canonicalize workspace {}", workspace_root.display()))?;
+    let api_token = api_token.into();
+    if !valid_api_token(&api_token) {
+        anyhow::bail!("server API token must be 16-256 URL-safe ASCII characters");
+    }
+    let state = Arc::new(ServerState::new(config, workspace_root, api_token));
     serve(listener, state).await
 }
 
@@ -164,7 +294,10 @@ fn now_ts() -> i64 {
 /// Run one non-streaming agent pass for a scheduled task (no client socket).
 async fn run_agent_oneshot(state: &Arc<ServerState>, prompt: &str) -> String {
     let provider = Arc::new(OllamaProvider::new(&state.config.ollama_url));
-    let registry = ToolRegistry::with_defaults();
+    // Scheduled runs are local-only unless a future scheduler UI explicitly
+    // offers an egress toggle. They must not silently turn a background task
+    // into web research.
+    let registry = ToolRegistry::new();
     let mut agent = Agent::new(
         provider,
         registry,
@@ -237,11 +370,11 @@ pub struct RequestHead {
 }
 
 impl RequestHead {
-    fn content_length(&self) -> usize {
-        self.headers
-            .get("content-length")
-            .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(0)
+    fn content_length(&self) -> Option<usize> {
+        match self.headers.get("content-length") {
+            Some(value) => value.trim().parse().ok(),
+            None => Some(0),
+        }
     }
 }
 
@@ -338,7 +471,10 @@ fn reason(status: u16) -> &'static str {
         200 => "OK",
         204 => "No Content",
         400 => "Bad Request",
+        401 => "Unauthorized",
         404 => "Not Found",
+        413 => "Payload Too Large",
+        431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",
         _ => "OK",
     }
@@ -351,6 +487,23 @@ async fn write_json(mut w: OwnedWriteHalf, status: u16, value: &Value) -> std::i
          Content-Type: application/json\r\n\
          Content-Length: {len}\r\n\
          Access-Control-Allow-Origin: *\r\n\
+         Vary: Origin\r\n\
+         Connection: close\r\n\r\n{body}",
+        reason = reason(status),
+        len = body.len(),
+    );
+    w.write_all(resp.as_bytes()).await?;
+    w.flush().await
+}
+
+async fn write_html(mut w: OwnedWriteHalf, status: u16, body: &str) -> std::io::Result<()> {
+    let resp = format!(
+        "HTTP/1.1 {status} {reason}\r\n\
+         Content-Type: text/html; charset=utf-8\r\n\
+         Content-Length: {len}\r\n\
+         Cache-Control: no-store\r\n\
+         X-Content-Type-Options: nosniff\r\n\
+         Content-Security-Policy: default-src 'self'; base-uri 'none'; frame-ancestors 'none'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'\r\n\
          Connection: close\r\n\r\n{body}",
         reason = reason(status),
         len = body.len(),
@@ -363,7 +516,7 @@ async fn write_cors_preflight(mut w: OwnedWriteHalf) -> std::io::Result<()> {
     let resp = "HTTP/1.1 204 No Content\r\n\
          Access-Control-Allow-Origin: *\r\n\
          Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
-         Access-Control-Allow-Headers: Content-Type\r\n\
+         Access-Control-Allow-Headers: Content-Type, X-Ollamax-Token\r\n\
          Content-Length: 0\r\n\
          Connection: close\r\n\r\n";
     w.write_all(resp.as_bytes()).await?;
@@ -376,6 +529,7 @@ async fn write_sse_head(w: &mut OwnedWriteHalf) -> std::io::Result<()> {
          Cache-Control: no-cache\r\n\
          Connection: keep-alive\r\n\
          Access-Control-Allow-Origin: *\r\n\
+         Vary: Origin\r\n\
          X-Accel-Buffering: no\r\n\r\n";
     w.write_all(head.as_bytes()).await?;
     w.flush().await
@@ -402,6 +556,15 @@ async fn handle_conn(stream: TcpStream, state: &Arc<ServerState>) {
         if line == "\r\n" || line == "\n" {
             break;
         }
+        if head_text.len().saturating_add(line.len()) > MAX_REQUEST_HEAD_BYTES {
+            let _ = write_json(
+                write_half,
+                431,
+                &json!({"error": "request headers are too large"}),
+            )
+            .await;
+            return;
+        }
         head_text.push_str(&line);
     }
 
@@ -410,8 +573,39 @@ async fn handle_conn(stream: TcpStream, state: &Arc<ServerState>) {
         return;
     };
 
+    // Reject an unauthenticated API call before allocating or waiting for its
+    // body. Otherwise a hostile page could tie up local-server memory with a
+    // large declared Content-Length even though route() would reject it later.
+    let request_path = head.path.split('?').next().unwrap_or("");
+    if head.method != "OPTIONS" && request_path.starts_with("/api/") && !state.authorizes(&head) {
+        let _ = write_json(
+            write_half,
+            401,
+            &json!({"error": "missing or invalid local Ollamax API token"}),
+        )
+        .await;
+        return;
+    }
+
     // Read the body (Content-Length bytes) from the same buffered reader.
-    let content_length = head.content_length();
+    let Some(content_length) = head.content_length() else {
+        let _ = write_json(
+            write_half,
+            400,
+            &json!({"error": "invalid Content-Length header"}),
+        )
+        .await;
+        return;
+    };
+    if content_length > MAX_REQUEST_BODY_BYTES {
+        let _ = write_json(
+            write_half,
+            413,
+            &json!({"error": format!("request body exceeds {MAX_REQUEST_BODY_BYTES} bytes")}),
+        )
+        .await;
+        return;
+    }
     let mut body_bytes = vec![0u8; content_length];
     if content_length > 0 && reader.read_exact(&mut body_bytes).await.is_err() {
         return;
@@ -423,14 +617,36 @@ async fn handle_conn(stream: TcpStream, state: &Arc<ServerState>) {
 
 async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<ServerState>) {
     let path = head.path.split('?').next().unwrap_or("").to_string();
+    if head.method == "OPTIONS" {
+        let _ = write_cors_preflight(w).await;
+        return;
+    }
+    // Every API route carries private project information or can trigger local
+    // work. A loopback bind alone is not enough: browsers can reach localhost
+    // from arbitrary sites. Managed hosts attach the per-server capability.
+    if path.starts_with("/api/") && !state.authorizes(&head) {
+        let _ = write_json(
+            w,
+            401,
+            &json!({"error": "missing or invalid local Ollamax API token"}),
+        )
+        .await;
+        return;
+    }
     match (head.method.as_str(), path.as_str()) {
-        ("OPTIONS", _) => {
-            let _ = write_cors_preflight(w).await;
-        }
         ("GET", "/health") => {
             let _ = write_json(w, 200, &json!({"ok": true, "version": state.version})).await;
         }
+        ("GET", "/console") => {
+            // The console is same-origin and its static template is never
+            // CORS-readable. Injecting the per-server token lets it call the
+            // protected API without persisting the capability in localStorage.
+            let page = include_str!("console.html")
+                .replace("__OLLAMAX_API_TOKEN__", &state.api_token);
+            let _ = write_html(w, 200, &page).await;
+        }
         ("GET", "/api/status") => handle_status(w, state).await,
+        ("GET", "/api/workspace") => handle_workspace(w, state).await,
         ("GET", "/api/models") => handle_models(w, state).await,
         ("GET", "/api/models/catalog") => {
             handle_models_catalog(w, state, query_param(&head.path, "verify")).await
@@ -440,22 +656,20 @@ async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<S
         }
         ("POST", "/api/agent/approve") => handle_agent_approve(w, state, &body).await,
         ("GET", "/api/voice/locate") => {
-            handle_voice_locate(w, query_param(&head.path, "q")).await
+            handle_voice_locate(w, state, query_param(&head.path, "q")).await
         }
         ("GET", "/api/schedule") => handle_schedule_list(w).await,
         ("POST", "/api/schedule") => handle_schedule_add(w, &body).await,
         ("POST", "/api/schedule/remove") => handle_schedule_remove(w, &body).await,
         ("GET", "/api/hub/categories") => handle_hub_categories(w).await,
-        ("GET", "/api/hub/search") => {
-            handle_hub_search(w, query_param(&head.path, "q")).await
-        }
+        ("GET", "/api/hub/search") => handle_hub_search(w, query_param(&head.path, "q")).await,
         ("GET", p) if p.starts_with("/api/hub/package/") => {
             handle_hub_package(w, p.trim_start_matches("/api/hub/package/")).await
         }
-        ("GET", "/api/memory") => handle_memory_list(w).await,
-        ("POST", "/api/memory/clear") => handle_memory_clear(w).await,
-        ("GET", "/api/graph/status") => handle_graph_status(w).await,
-        ("POST", "/api/graph/build") => handle_graph_build(w, &body).await,
+        ("GET", "/api/memory") => handle_memory_list(w, state).await,
+        ("POST", "/api/memory/clear") => handle_memory_clear(w, state).await,
+        ("GET", "/api/graph/status") => handle_graph_status(w, state).await,
+        ("POST", "/api/graph/build") => handle_graph_build(w, state, &body).await,
         ("POST", "/api/chat") => handle_chat(w, state, &body).await,
         ("POST", "/api/research") => handle_research(w, state, &body).await,
         ("POST", "/api/build") => handle_build(w, state, &body).await,
@@ -520,9 +734,14 @@ struct ResearchReq {
     max_iterations: Option<usize>,
     #[serde(default)]
     context: Vec<ContextItem>,
-    /// Autonomy Dial mode: "auto" | "confirm" | "readonly" (defaults to "auto").
+    /// Autonomy Dial mode: "auto" | "confirm" | "readonly" (defaults to
+    /// confirm, so omitted authority never grants write/shell access).
     #[serde(default)]
     autonomy: Option<String>,
+    /// Coding agents are local-only by default. Callers must explicitly opt
+    /// into web tools because search queries and fetched pages leave the device.
+    #[serde(default)]
+    web_tools: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -558,6 +777,20 @@ async fn handle_status(w: OwnedWriteHalf, state: &Arc<ServerState>) {
     let _ = write_json(w, 200, &payload).await;
 }
 
+/// The local console uses this to make its scope explicit. The root is captured
+/// at server startup and is informational only; callers cannot change it.
+async fn handle_workspace(w: OwnedWriteHalf, state: &Arc<ServerState>) {
+    let _ = write_json(
+        w,
+        200,
+        &json!({
+            "root": state.workspace_root.to_string_lossy(),
+            "name": state.workspace_root.file_name().and_then(|n| n.to_str()).unwrap_or("workspace"),
+        }),
+    )
+    .await;
+}
+
 async fn handle_models(w: OwnedWriteHalf, state: &Arc<ServerState>) {
     let ollama = OllamaProvider::new(&state.config.ollama_url);
     let payload = match ollama.list_models().await {
@@ -576,7 +809,7 @@ async fn handle_models(w: OwnedWriteHalf, state: &Arc<ServerState>) {
             json!({ "models": arr, "default": state.config.default_model })
         }
         Err(e) => {
-            json!({ "models": [], "default": state.config.default_model, "error": e.to_string() })
+            json!({ "models": [], "default": state.config.default_model, "error": format!("{e:#}") })
         }
     };
     let _ = write_json(w, 200, &payload).await;
@@ -707,6 +940,8 @@ async fn handle_agent_approve(w: OwnedWriteHalf, state: &Arc<ServerState>, body:
     #[derive(serde::Deserialize)]
     struct Req {
         id: String,
+        #[serde(rename = "approvalId")]
+        approval_id: String,
         decision: bool,
     }
     let req: Req = match serde_json::from_str(body) {
@@ -716,21 +951,23 @@ async fn handle_agent_approve(w: OwnedWriteHalf, state: &Arc<ServerState>, body:
             return;
         }
     };
-    let delivered = state.send_approval(&req.id, req.decision).await;
+    let delivered = state
+        .send_approval(&req.id, &req.approval_id, req.decision)
+        .await;
     let _ = write_json(w, 200, &json!({ "delivered": delivered })).await;
 }
 
 // --- Phase 2 Voice navigation: resolve a transcribed phrase to a code location
 // via the local code graph (intent -> file:line). No audio touches the engine —
 // STT happens in the extension; only the transcript text arrives here. ---------
-async fn handle_voice_locate(w: OwnedWriteHalf, q: Option<String>) {
+async fn handle_voice_locate(w: OwnedWriteHalf, state: &Arc<ServerState>, q: Option<String>) {
     let q = q.unwrap_or_default();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let graph_path = cwd.join("graphify-out").join("graph.json");
+    let graph_path = state.workspace_root.join("graphify-out").join("graph.json");
     match crate::graph::CodeGraph::from_file(&graph_path) {
         Ok(g) => match g.locate(&q) {
             Some(loc) => {
-                let _ = write_json(w, 200, &json!({ "found": true, "query": q, "target": loc })).await;
+                let _ =
+                    write_json(w, 200, &json!({ "found": true, "query": q, "target": loc })).await;
             }
             None => {
                 let _ = write_json(w, 200, &json!({ "found": false, "query": q })).await;
@@ -789,7 +1026,9 @@ async fn handle_schedule_remove(w: OwnedWriteHalf, body: &str) {
             return;
         }
     };
-    let removed = crate::scheduler::Scheduler::for_config().remove(&req.id).unwrap_or(false);
+    let removed = crate::scheduler::Scheduler::for_config()
+        .remove(&req.id)
+        .unwrap_or(false);
     let _ = write_json(w, 200, &json!({ "removed": removed })).await;
 }
 
@@ -797,7 +1036,12 @@ async fn handle_schedule_remove(w: OwnedWriteHalf, body: &str) {
 // + intent-aware search. The account server is optional enrichment only. --------
 async fn handle_hub_categories(w: OwnedWriteHalf) {
     let cats = crate::hub::categories();
-    let _ = write_json(w, 200, &json!({ "categories": cats, "source": "local-engine" })).await;
+    let _ = write_json(
+        w,
+        200,
+        &json!({ "categories": cats, "source": "local-engine" }),
+    )
+    .await;
 }
 
 async fn handle_hub_search(w: OwnedWriteHalf, q: Option<String>) {
@@ -812,7 +1056,12 @@ async fn handle_hub_package(w: OwnedWriteHalf, slug: &str) {
     let slug = slug.split('?').next().unwrap_or(slug);
     match crate::hub::package(slug) {
         Some(p) => {
-            let _ = write_json(w, 200, &serde_json::to_value(&p).unwrap_or_else(|_| json!({}))).await;
+            let _ = write_json(
+                w,
+                200,
+                &serde_json::to_value(&p).unwrap_or_else(|_| json!({})),
+            )
+            .await;
         }
         None => {
             let _ = write_json(w, 404, &json!({ "error": "unknown package", "slug": slug })).await;
@@ -822,12 +1071,8 @@ async fn handle_hub_package(w: OwnedWriteHalf, slug: &str) {
 
 // --- Part B: on-device conversational memory (view/clear). The store is local
 // per-project; nothing here ever reaches the identity backend. ----------------
-fn project_cwd() -> std::path::PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-}
-
-async fn handle_memory_list(w: OwnedWriteHalf) {
-    let store = crate::memory::MemoryStore::for_project(&project_cwd());
+async fn handle_memory_list(w: OwnedWriteHalf, state: &Arc<ServerState>) {
+    let store = crate::memory::MemoryStore::for_project(&state.workspace_root);
     let entries = store.all();
     let items: Vec<Value> = entries
         .iter()
@@ -841,15 +1086,15 @@ async fn handle_memory_list(w: OwnedWriteHalf) {
     .await;
 }
 
-async fn handle_memory_clear(w: OwnedWriteHalf) {
-    let store = crate::memory::MemoryStore::for_project(&project_cwd());
+async fn handle_memory_clear(w: OwnedWriteHalf, state: &Arc<ServerState>) {
+    let store = crate::memory::MemoryStore::for_project(&state.workspace_root);
     let ok = store.clear().is_ok();
     let _ = write_json(w, 200, &json!({ "ok": ok })).await;
 }
 
 // --- Part A: code knowledge graph status + build (graphify managed builder). ---
-async fn handle_graph_status(w: OwnedWriteHalf) {
-    let idx = crate::graph::GraphIndex::new(project_cwd());
+async fn handle_graph_status(w: OwnedWriteHalf, state: &Arc<ServerState>) {
+    let idx = crate::graph::GraphIndex::new(state.workspace_root.clone());
     let exists = idx.exists();
     let node_count = if exists {
         crate::graph::CodeGraph::from_file(&idx.graph_path())
@@ -871,7 +1116,7 @@ async fn handle_graph_status(w: OwnedWriteHalf) {
     .await;
 }
 
-async fn handle_graph_build(w: OwnedWriteHalf, body: &str) {
+async fn handle_graph_build(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) {
     // Spawns the managed graphify builder (Python, hidden). `graphify` must be
     // resolvable (bundled with the app / on PATH for dev). Fails gracefully.
     let bin = serde_json::from_str::<Value>(body)
@@ -882,7 +1127,7 @@ async fn handle_graph_build(w: OwnedWriteHalf, body: &str) {
         .ok()
         .and_then(|v| v.get("update").and_then(|b| b.as_bool()))
         .unwrap_or(true);
-    let idx = crate::graph::GraphIndex::new(project_cwd());
+    let idx = crate::graph::GraphIndex::new(state.workspace_root.clone());
     match idx.build(&bin, update) {
         Ok(p) => {
             let _ = write_json(w, 200, &json!({ "ok": true, "path": p.to_string_lossy() })).await;
@@ -934,7 +1179,8 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     // plain chat isn't a cold start either. Local only — never sent anywhere.
     {
         let task_text = latest_user_text(&req.messages, req.prompt.as_deref());
-        let mem = crate::memory::MemoryStore::for_project(&project_cwd()).render_for_context(&task_text, 400);
+        let mem = crate::memory::MemoryStore::for_project(&state.workspace_root)
+            .render_for_context(&task_text, 400);
         if !mem.is_empty() {
             rules_suffix = format!("{rules_suffix}\n\n{mem}");
         }
@@ -1017,7 +1263,7 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
             warnings,
             routing,
             trimmed,
-            "auto".to_string(),
+            "confirm".to_string(),
         )
         .await;
         return;
@@ -1057,7 +1303,11 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
             Some(req.temperature.unwrap_or(0.7))
         },
         seed: if replay_mode { Some(0) } else { None },
-        images: if images.is_empty() { None } else { Some(images) },
+        images: if images.is_empty() {
+            None
+        } else {
+            Some(images)
+        },
         think,
         ..Default::default()
     };
@@ -1079,7 +1329,14 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     )
     .await;
 
-    let cancel = state.register(&id).await;
+    let Some(cancel) = state.register(&id).await else {
+        let _ = write_sse(
+            &mut w,
+            &json!({"type": "error", "message": "a request with this id is already running"}),
+        )
+        .await;
+        return;
+    };
     let url = state.config.ollama_url.clone();
     // The channel now carries discriminated SSE events so reasoning ("thinking")
     // streams distinctly from the answer ("token").
@@ -1164,7 +1421,13 @@ async fn handle_research(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     let num_ctx = hw.optimal_context;
 
     let pick_provider = OllamaProvider::new(&state.config.ollama_url);
-    let model = match req.model {
+    // The shared picker uses "auto" as its default. Treat it as no manual
+    // override here rather than sending the literal model name `auto` to
+    // Ollama, which made the Agent tab fail while ordinary Chat worked.
+    let model = match req
+        .model
+        .filter(|m| !m.trim().is_empty() && !m.eq_ignore_ascii_case("auto"))
+    {
         Some(m) => m,
         None => pick_model(&state.config, &pick_provider).await,
     };
@@ -1180,13 +1443,30 @@ async fn handle_research(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
 
     let max_iterations = req
         .max_iterations
-        .unwrap_or(crate::agent::DEFAULT_MAX_ITERATIONS);
-    let autonomy = req.autonomy.unwrap_or_else(|| "auto".to_string());
-    // The dedicated research mode is web-enabled by definition; the meta event
-    // discloses the egress just like the chat tools toggle does.
+        .unwrap_or(crate::agent::DEFAULT_CODING_MAX_ITERATIONS);
+    let autonomy = match req.autonomy.as_deref() {
+        Some("auto") => "auto".to_string(),
+        Some("readonly") => "readonly".to_string(),
+        // Unknown and omitted values fail closed to the interactive behavior.
+        _ => "confirm".to_string(),
+    };
+    // The same endpoint powers the interactive coding Agent. Keep it strictly
+    // local by default; a caller may explicitly opt into web research and the
+    // meta event will disclose that egress.
     run_agent_streamed(
-        w, state, id, model, question, num_ctx, max_iterations, rules_suffix, true,
-        Vec::new(), Value::Null, 0, autonomy,
+        w,
+        state,
+        id,
+        model,
+        question,
+        num_ctx,
+        max_iterations,
+        rules_suffix,
+        req.web_tools,
+        Vec::new(),
+        Value::Null,
+        0,
+        autonomy,
     )
     .await;
 }
@@ -1203,7 +1483,34 @@ async fn handle_research(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
 struct ChannelApprovalPolicy {
     mode: String,
     tx: mpsc::UnboundedSender<Value>,
-    rx: tokio::sync::Mutex<mpsc::UnboundedReceiver<bool>>,
+    state: Arc<ServerState>,
+    run_id: String,
+}
+
+impl ChannelApprovalPolicy {
+    async fn request_decision(&self, mut event: Value, timeout: std::time::Duration) -> crate::agent::Approval {
+        use crate::agent::Approval;
+        let approval_id = Uuid::new_v4().to_string();
+        let Some(mut rx) = self
+            .state
+            .register_approval(&self.run_id, &approval_id)
+            .await
+        else {
+            return Approval::Deny;
+        };
+        event["approvalId"] = json!(approval_id);
+        if self.tx.send(event).is_err() {
+            self.state.clear_approval(&self.run_id, &approval_id).await;
+            return Approval::Deny;
+        }
+        let decision = match tokio::time::timeout(timeout, rx.recv()).await {
+            Ok(Some(true)) => Approval::Allow,
+            // Timeout, closed channel, or an explicit denial all fail closed.
+            _ => Approval::Deny,
+        };
+        self.state.clear_approval(&self.run_id, &approval_id).await;
+        decision
+    }
 }
 
 #[async_trait::async_trait]
@@ -1212,21 +1519,15 @@ impl crate::agent::ApprovalPolicy for ChannelApprovalPolicy {
         use crate::agent::Approval;
         // Always surface the plan (Intent Preview). Only "confirm" pauses for the
         // user's Run/Cancel; auto/readonly show it and proceed.
-        let _ = self.tx.send(json!({ "type": "plan", "text": plan }));
         if self.mode != "confirm" {
+            let _ = self.tx.send(json!({ "type": "plan", "text": plan }));
             return Approval::Allow;
         }
-        let mut rx = self.rx.lock().await;
-        match tokio::time::timeout(std::time::Duration::from_secs(300), rx.recv()).await {
-            Ok(Some(decision)) => {
-                if decision {
-                    Approval::Allow
-                } else {
-                    Approval::Deny
-                }
-            }
-            _ => Approval::Deny,
-        }
+        self.request_decision(
+            json!({ "type": "plan", "text": plan }),
+            std::time::Duration::from_secs(300),
+        )
+        .await
     }
 
     async fn approve(&self, tool: &str, args: &Value) -> crate::agent::Approval {
@@ -1234,23 +1535,12 @@ impl crate::agent::ApprovalPolicy for ChannelApprovalPolicy {
         match self.mode.as_str() {
             "auto" => Approval::Allow,
             "readonly" => Approval::Deny,
-            _ => {
-                let _ = self
-                    .tx
-                    .send(json!({ "type": "approval_request", "tool": tool, "args": args }));
-                let mut rx = self.rx.lock().await;
-                match tokio::time::timeout(std::time::Duration::from_secs(120), rx.recv()).await {
-                    Ok(Some(decision)) => {
-                        if decision {
-                            Approval::Allow
-                        } else {
-                            Approval::Deny
-                        }
-                    }
-                    // Timeout or closed channel → deny (safe default).
-                    _ => Approval::Deny,
-                }
-            }
+            _ => self
+                .request_decision(
+                    json!({ "type": "approval_request", "tool": tool, "args": args }),
+                    std::time::Duration::from_secs(120),
+                )
+                .await,
         }
     }
 }
@@ -1293,31 +1583,46 @@ async fn run_agent_streamed(
     }
     let _ = write_sse(&mut w, &meta).await;
 
-    let cancel = state.register(&id).await;
+    let Some(cancel) = state.register(&id).await else {
+        let _ = write_sse(
+            &mut w,
+            &json!({"type": "error", "message": "a request with this id is already running"}),
+        )
+        .await;
+        return;
+    };
     let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     let url = state.config.ollama_url.clone();
-    // Autonomy Dial: the agent's approval gate sends approval_request events on
-    // `tx` and awaits decisions from /api/agent/approve via this channel.
-    let appr_rx = state.register_approval(&id).await;
     // Intent Preview only PAUSES in confirm mode (still shown in others).
     let plan_enabled = autonomy == "confirm";
     let approval: Arc<dyn crate::agent::ApprovalPolicy> = Arc::new(ChannelApprovalPolicy {
         mode: autonomy,
         tx: tx.clone(),
-        rx: tokio::sync::Mutex::new(appr_rx),
+        state: state.clone(),
+        run_id: id.clone(),
     });
+    let workspace_root = state.workspace_root.clone();
     let run = tokio::spawn(async move {
         let provider = Arc::new(OllamaProvider::new(&url));
-        let mut registry = ToolRegistry::with_defaults();
+        let mut registry = if web_disclosure {
+            ToolRegistry::with_defaults()
+        } else {
+            ToolRegistry::new()
+        };
         // Part A: if this project is indexed (graphify graph present), give the
         // agent the graph tools so it queries the graph instead of reading whole
         // files — the token win.
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        crate::graph::register_graph_tools(&mut registry, &cwd.join("graphify-out").join("graph.json"));
+        let cwd = workspace_root;
+        crate::graph::register_graph_tools(
+            &mut registry,
+            &cwd.join("graphify-out").join("graph.json"),
+        );
         // Hermes-class file + shell tools, sandboxed to the workspace. The shell
         // carries its own deny-list + timeout + audit; interactive per-call
         // consent is layered in the Agent UI (Autonomy Dial). Shell honors the
         // FORGE_SHELL_DISABLED kill-switch.
+        registry.register(Arc::new(crate::tools::files::FsListTool::new(&cwd)));
+        registry.register(Arc::new(crate::tools::files::FsSearchTool::new(&cwd)));
         registry.register(Arc::new(crate::tools::files::FsReadTool::new(&cwd)));
         registry.register(Arc::new(crate::tools::files::FsWriteTool::new(&cwd)));
         registry.register(Arc::new(crate::tools::files::FsEditTool::new(&cwd)));
@@ -1327,11 +1632,17 @@ async fn run_agent_streamed(
         )));
         // #1f Sub-agent delegation: the child gets a read-only research toolset
         // (no shell/write/delegate) so it can't recurse or mutate.
-        let mut child_registry = ToolRegistry::with_defaults();
+        let mut child_registry = if web_disclosure {
+            ToolRegistry::with_defaults()
+        } else {
+            ToolRegistry::new()
+        };
         crate::graph::register_graph_tools(
             &mut child_registry,
             &cwd.join("graphify-out").join("graph.json"),
         );
+        child_registry.register(Arc::new(crate::tools::files::FsListTool::new(&cwd)));
+        child_registry.register(Arc::new(crate::tools::files::FsSearchTool::new(&cwd)));
         child_registry.register(Arc::new(crate::tools::files::FsReadTool::new(&cwd)));
         registry.register(Arc::new(
             crate::tools::delegate::DelegateTool::new(
@@ -1345,10 +1656,12 @@ async fn run_agent_streamed(
         // #1d MCP tools: connect any allowlisted MCP servers and register their
         // remote tools (the open protocol Hermes is built on). Failures are
         // logged + skipped — a broken MCP server never breaks the agent.
-        if let Some(mcp_cfg) =
-            dirs::config_dir().map(|d| d.join("ollama-forge").join("mcp_servers.json"))
-        {
-            crate::mcp::register_mcp_tools(&mut registry, &mcp_cfg).await;
+        if web_disclosure {
+            if let Some(mcp_cfg) =
+                dirs::config_dir().map(|d| d.join("ollama-forge").join("mcp_servers.json"))
+            {
+                crate::mcp::register_mcp_tools(&mut registry, &mcp_cfg).await;
+            }
         }
         // #1 Agentic file editing: tell the agent to actually WRITE code into the
         // workspace via fs_write/fs_edit (not just print it in chat). Each such
@@ -1464,7 +1777,7 @@ async fn run_agent_streamed(
         }
     }
     state.unregister(&id).await;
-    state.unregister_approval(&id).await;
+    state.clear_approvals_for_run(&id).await;
     if cancelled {
         return;
     }
@@ -1511,7 +1824,14 @@ async fn handle_build(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &st
     }
     let _ = write_sse(&mut w, &json!({"type": "meta", "id": id})).await;
 
-    let cancel = state.register(&id).await;
+    let Some(cancel) = state.register(&id).await else {
+        let _ = write_sse(
+            &mut w,
+            &json!({"type": "error", "message": "a request with this id is already running"}),
+        )
+        .await;
+        return;
+    };
     let (prog_tx, mut prog_rx) = mpsc::unbounded_channel::<ProgressEvent>();
     let task_text = req.task.clone();
     let no_security = req.no_security;
@@ -1552,7 +1872,7 @@ async fn handle_build(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &st
         }
     }
     state.unregister(&id).await;
-    state.unregister_approval(&id).await;
+    state.clear_approvals_for_run(&id).await;
     if cancelled {
         return;
     }
@@ -1647,7 +1967,11 @@ fn build_chat_prompt(
             // Image-only items carry no text — emit a marker rather than an empty
             // code fence (review #21). The bytes travel via opts.images, not text.
             if c.content.is_empty() && c.image.is_some() {
-                let name = if c.path.is_empty() { "image" } else { c.path.as_str() };
+                let name = if c.path.is_empty() {
+                    "image"
+                } else {
+                    c.path.as_str()
+                };
                 s.push_str(&format!("[image attached: {name}]\n\n"));
                 continue;
             }
@@ -1841,7 +2165,7 @@ mod tests {
             head.headers.get("host").map(String::as_str),
             Some("localhost")
         );
-        assert_eq!(head.content_length(), 0);
+        assert_eq!(head.content_length(), Some(0));
     }
 
     #[test]
@@ -1849,7 +2173,7 @@ mod tests {
         let raw = "POST /api/chat HTTP/1.1\nContent-Length: 42\n";
         let head = parse_head(raw).expect("should parse");
         assert_eq!(head.method, "POST");
-        assert_eq!(head.content_length(), 42);
+        assert_eq!(head.content_length(), Some(42));
     }
 
     #[test]

@@ -12,6 +12,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const cp = require("child_process");
+const crypto = require("crypto");
 const http = require("http");
 const https = require("https");
 const { URL } = require("url");
@@ -20,6 +21,16 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 let forgeProc = null;
 let baseUrl = null;
+// A chat-only server may run before a folder is chosen. Once a workspace is
+// open, the managed server is restarted in that folder so agent tools use it.
+let workspaceRoot = null;
+let forgeWorkspaceRoot = null;
+let forgeRestartQueue = Promise.resolve();
+let forgeStartAbort = null;
+// Private capability shared only with the bundled engine process and this
+// trusted Electron shell. It prevents arbitrary web content from driving the
+// loopback agent API.
+const forgeApiToken = crypto.randomBytes(32).toString("hex");
 
 // Account server for sign-in + the Central Hub (identity only; never inference).
 // Configurable; empty disables account features gracefully.
@@ -49,23 +60,108 @@ function forgeBinaryPath() {
   return candidates.find((p) => fs.existsSync(p)) || candidates[0];
 }
 
-function startForgeServe() {
+function forgeConfig() {
+  const workspaceReady = !!baseUrl && !!workspaceRoot && forgeWorkspaceRoot === workspaceRoot;
+  return {
+    baseUrl,
+    accountServer: ACCOUNT_SERVER,
+    apiToken: forgeApiToken,
+    workspace: workspaceRoot ? { root: workspaceRoot, ready: workspaceReady } : null,
+    workspaceReady,
+  };
+}
+
+// The renderer keeps no privileged process state. Push a fresh endpoint after
+// a workspace restart so its next request cannot target the retired server.
+function notifyForgeConfig() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("forge:configChanged", forgeConfig());
+  }
+}
+
+function stopForgeServe() {
+  const child = forgeProc;
+  baseUrl = null;
+  if (!child) return Promise.resolve();
+
+  // Detach this child from global state before killing it: a late exit/ready
+  // event from the old process must never clear a newly started server.
+  if (forgeProc === child) forgeProc = null;
+  notifyForgeConfig();
+  return new Promise((resolve) => {
+    let done = false;
+    let forceKill = null;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (forceKill) clearTimeout(forceKill);
+      resolve();
+    };
+    forceKill = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch (_) {}
+      finish();
+    }, 5000);
+    child.once("exit", finish);
+    child.once("error", finish);
+    const startup = forgeStartAbort;
+    if (startup && startup.child === child) {
+      startup.abort(new Error("forge serve stopped for workspace switch"));
+    } else {
+      try {
+        child.kill();
+      } catch (_) {
+        finish();
+      }
+    }
+  });
+}
+
+function startForgeServe(cwd) {
   return new Promise((resolve, reject) => {
     const bin = forgeBinaryPath();
     if (!fs.existsSync(bin)) {
       reject(new Error(`engine not found at ${bin}`));
       return;
     }
-    logFile(`launching ${bin} serve --port 0`);
-    forgeProc = cp.spawn(bin, ["serve", "--port", "0"], {
-      cwd: app.getPath("home"),
-      env: { ...process.env },
+    const launchCwd = path.resolve(cwd || app.getPath("home"));
+    logFile(`launching ${bin} serve --port 0 in ${launchCwd}`);
+    const child = cp.spawn(bin, ["serve", "--port", "0"], {
+      cwd: launchCwd,
+      env: { ...process.env, FORGE_SERVER_TOKEN: forgeApiToken },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    forgeProc = child;
+    baseUrl = null;
+    let settled = false;
+    let readyTimer = null;
+    const clearReadyTimer = () => {
+      if (readyTimer) clearTimeout(readyTimer);
+      readyTimer = null;
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearReadyTimer();
+      if (forgeStartAbort && forgeStartAbort.child === child) forgeStartAbort = null;
+      if (forgeProc === child) {
+        forgeProc = null;
+        baseUrl = null;
+        notifyForgeConfig();
+      }
+      try {
+        child.kill();
+      } catch (_) {}
+      reject(error);
+    };
+    forgeStartAbort = { child, abort: fail };
+
     let buf = "";
     const onData = (d) => {
+      if (forgeProc !== child) return;
       buf += d.toString();
       let i;
       while ((i = buf.indexOf("\n")) !== -1) {
@@ -75,24 +171,51 @@ function startForgeServe() {
         if (m) {
           try {
             const info = JSON.parse(m[1]);
+            if (info.token !== forgeApiToken) {
+              fail(new Error("local engine did not confirm its private API capability"));
+              return;
+            }
             baseUrl = `http://127.0.0.1:${info.port}`;
             logFile(`forge serve ready on ${baseUrl} (v${info.version})`);
+            if (!settled) {
+              settled = true;
+              clearReadyTimer();
+              if (forgeStartAbort && forgeStartAbort.child === child) forgeStartAbort = null;
+            }
+            notifyForgeConfig();
             resolve(baseUrl);
           } catch (e) {
-            reject(new Error(`bad ready line: ${e}`));
+            fail(new Error(`bad ready line: ${e}`));
           }
         }
       }
     };
-    forgeProc.stdout.on("data", onData);
-    forgeProc.stderr.on("data", (d) => logFile(`[forge] ${d.toString().trim()}`));
-    forgeProc.on("error", reject);
-    forgeProc.on("exit", (code) => {
+    child.stdout.on("data", onData);
+    child.stderr.on("data", (d) => logFile(`[forge] ${d.toString().trim()}`));
+    child.on("error", (error) => fail(error));
+    child.on("exit", (code) => {
       logFile(`forge serve exited (${code})`);
-      forgeProc = null;
+      if (forgeProc === child) {
+        forgeProc = null;
+        baseUrl = null;
+        notifyForgeConfig();
+      }
+      if (!settled) fail(new Error(`forge serve exited (${code}) before reporting ready`));
     });
-    setTimeout(() => baseUrl || reject(new Error("forge serve did not become ready in 15s")), 15000);
+    readyTimer = setTimeout(() => fail(new Error("forge serve did not become ready in 15s")), 15000);
   });
+}
+
+// Serialize restarts so replacing folders cannot leave two engines racing to
+// update the renderer's endpoint.
+function restartForgeServe(cwd) {
+  const launchCwd = path.resolve(cwd || app.getPath("home"));
+  const restart = forgeRestartQueue.then(async () => {
+    await stopForgeServe();
+    return startForgeServe(launchCwd);
+  });
+  forgeRestartQueue = restart.catch(() => undefined);
+  return restart;
 }
 
 function createWindow() {
@@ -116,7 +239,7 @@ function createWindow() {
 
 // --- IPC: things the renderer can't do itself (Node/Electron only) --------
 
-ipcMain.handle("forge:config", () => ({ baseUrl, accountServer: ACCOUNT_SERVER }));
+ipcMain.handle("forge:config", () => forgeConfig());
 
 ipcMain.handle("forge:pickFiles", async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
@@ -282,21 +405,74 @@ ipcMain.handle("hub:support", async (_e, { slug, repos, token } = {}) => {
 // terminal — it does NOT contradict "no user-facing CLI install" (that was about
 // distribution, not having an editor terminal).
 // =====================================================================
-let workspaceRoot = null;
 const IGNORE_DIRS = new Set([".git", "node_modules", "target", "dist", ".next", "release", ".cache"]);
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
+function isWithinWorkspace(root, target) {
+  const rel = path.relative(root, target);
+  return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
+}
+
 function inWorkspace(p) {
-  if (!workspaceRoot) return false;
-  const r = path.resolve(p);
-  return r === workspaceRoot || r.startsWith(workspaceRoot + path.sep);
+  return !!workspaceRoot && typeof p === "string" && isWithinWorkspace(workspaceRoot, path.resolve(p));
+}
+
+function canonicalWorkspaceRoot(p) {
+  const resolved = path.resolve(p);
+  const realpath = fs.realpathSync.native || fs.realpathSync;
+  const root = realpath(resolved);
+  if (!fs.statSync(root).isDirectory()) throw new Error("selected path is not a folder");
+  return root;
+}
+
+// Keep folder changes serialized: stopping a process, waiting for it to exit,
+// and then starting its replacement must be one indivisible workspace change.
+let workspaceSwitchQueue = Promise.resolve();
+async function switchWorkspace(nextRoot) {
+  const previousRoot = workspaceRoot;
+  workspaceRoot = nextRoot;
+  forgeWorkspaceRoot = null;
+  notifyForgeConfig();
+  try {
+    await restartForgeServe(nextRoot);
+    forgeWorkspaceRoot = nextRoot;
+    notifyForgeConfig();
+    return { root: workspaceRoot, name: path.basename(workspaceRoot) || workspaceRoot };
+  } catch (e) {
+    // Restore the prior usable session (or the chat-only home server) rather
+    // than leaving a failed workspace switch with no backend at all.
+    workspaceRoot = previousRoot;
+    forgeWorkspaceRoot = null;
+    let restoreError = null;
+    try {
+      await restartForgeServe(previousRoot || app.getPath("home"));
+      forgeWorkspaceRoot = previousRoot || null;
+    } catch (restoreFailure) {
+      restoreError = restoreFailure;
+    }
+    notifyForgeConfig();
+    const detail = restoreError
+      ? `\n\nThe previous local engine could not be restored: ${restoreError.message}`
+      : "\n\nYour previous workspace/session was restored.";
+    logFile(`workspace switch failed: ${e.message}`);
+    dialog.showErrorBox("Ollamax", `Could not start the local engine for this folder:\n${e.message}${detail}`);
+    return null;
+  }
 }
 
 ipcMain.handle("ide:openFolder", async () => {
   const r = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
   if (r.canceled || !r.filePaths[0]) return null;
-  workspaceRoot = path.resolve(r.filePaths[0]);
-  return { root: workspaceRoot, name: path.basename(workspaceRoot) };
+  let nextRoot;
+  try {
+    nextRoot = canonicalWorkspaceRoot(r.filePaths[0]);
+  } catch (e) {
+    dialog.showErrorBox("Ollamax", `Could not open that folder:\n${e.message}`);
+    return null;
+  }
+  const change = workspaceSwitchQueue.then(() => switchWorkspace(nextRoot));
+  workspaceSwitchQueue = change.catch(() => undefined);
+  return change;
 });
 
 // One directory level (lazy tree expansion). Dirs first, then files, sorted.
@@ -333,6 +509,161 @@ ipcMain.handle("ide:writeFile", async (_e, { path: p, content }) => {
     return { ok: true };
   } catch (e) {
     return { error: e.message };
+  }
+});
+
+// Return an in-root, non-symlink target for the *preview* path. The Rust file
+// tools repeat these checks before writing; this prevents the review dialog
+// from being tricked into showing an unrelated file in the meantime.
+function previewWorkspacePath(rel) {
+  if (!workspaceRoot || forgeWorkspaceRoot !== workspaceRoot || !baseUrl) {
+    return { error: "opened workspace is not ready for agent edits" };
+  }
+  if (typeof rel !== "string" || !rel.trim() || rel.includes("\0")) {
+    return { error: "a non-empty relative path is required" };
+  }
+  if (
+    path.isAbsolute(rel) ||
+    path.win32.isAbsolute(rel) ||
+    path.posix.isAbsolute(rel) ||
+    /^[a-zA-Z]:/.test(rel) ||
+    rel.split(/[\\/]+/).some((part) => part === "..")
+  ) {
+    return { error: "path must stay inside the opened workspace" };
+  }
+  const target = path.resolve(workspaceRoot, rel);
+  if (target === workspaceRoot || !isWithinWorkspace(workspaceRoot, target)) {
+    return { error: "path must name a file inside the opened workspace" };
+  }
+
+  // Match the engine's defense-in-depth symlink policy for both existing files
+  // and newly proposed nested files (stop once the first new component appears).
+  const relative = path.relative(workspaceRoot, target);
+  let current = workspaceRoot;
+  for (const part of relative.split(path.sep)) {
+    if (!part) continue;
+    current = path.join(current, part);
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        return { error: "paths containing symlinks cannot be reviewed or changed" };
+      }
+    } catch (e) {
+      if (e && e.code === "ENOENT") break;
+      return { error: `could not inspect proposed path: ${e.message}` };
+    }
+  }
+  return { target, relative: relative.replace(/\\/g, "/") };
+}
+
+function lineCount(text) {
+  return text ? text.split(/\r\n|\n|\r/).length : 0;
+}
+
+function diffLine(text) {
+  const clean = text.replace(/\0/g, "�").replace(/\t/g, "  ");
+  return clean.length > 180 ? `${clean.slice(0, 177)}…` : clean;
+}
+
+// This deliberately summarizes only the changed region so a native dialog is
+// reviewable; it never writes a temp file or the workspace file.
+function conciseDiff(current, proposed, isNew) {
+  const before = current ? current.split(/\r\n|\n|\r/) : [];
+  const after = proposed ? proposed.split(/\r\n|\n|\r/) : [];
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let suffix = 0;
+  while (
+    suffix < before.length - start &&
+    suffix < after.length - start &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+  const removed = before.slice(start, before.length - suffix);
+  const added = after.slice(start, after.length - suffix);
+  const lines = [
+    `${isNew ? "New file" : "Existing file"} · ${lineCount(current)} → ${lineCount(proposed)} lines`,
+    `${Buffer.byteLength(current, "utf8")} → ${Buffer.byteLength(proposed, "utf8")} bytes`,
+    "--- current",
+    "+++ proposed",
+    `@@ changed near line ${start + 1} @@`,
+  ];
+  const append = (prefix, values) => {
+    values.slice(0, 8).forEach((line) => lines.push(`${prefix} ${diffLine(line)}`));
+    if (values.length > 8) lines.push(`${prefix} … ${values.length - 8} more line(s)`);
+  };
+  append("-", removed);
+  append("+", added);
+  return lines.join("\n").slice(0, 3500);
+}
+
+function prepareEditPreview(tool, args) {
+  if (!args || typeof args !== "object") return { error: "missing tool arguments" };
+  if (tool !== "fs_write" && tool !== "fs_edit") return { error: "unsupported edit tool" };
+
+  const pathResult = previewWorkspacePath(args.path);
+  if (pathResult.error) return pathResult;
+  let current = "";
+  let isNew = false;
+  try {
+    const stat = fs.lstatSync(pathResult.target);
+    if (!stat.isFile()) return { error: "target is not a regular file" };
+    if (stat.size > MAX_FILE_BYTES) return { error: "target is too large to review" };
+    current = fs.readFileSync(pathResult.target, "utf8");
+  } catch (e) {
+    if (!e || e.code !== "ENOENT") return { error: `could not read target: ${e.message}` };
+    isNew = true;
+  }
+
+  let proposed;
+  if (tool === "fs_edit") {
+    if (typeof args.old_string !== "string" || typeof args.new_string !== "string" || !args.old_string) {
+      return { error: "fs_edit needs non-empty old_string and string new_string" };
+    }
+    const first = current.indexOf(args.old_string);
+    const second = first < 0 ? -1 : current.indexOf(args.old_string, first + args.old_string.length);
+    if (first < 0 || second >= 0) {
+      return { error: first < 0 ? "edit target text was not found" : "edit target text is not unique" };
+    }
+    proposed = current.slice(0, first) + args.new_string + current.slice(first + args.old_string.length);
+  } else {
+    if (typeof args.content !== "string") return { error: "fs_write needs string content" };
+    proposed = args.content;
+  }
+  if (Buffer.byteLength(proposed, "utf8") > MAX_FILE_BYTES) return { error: "proposed content is too large to review" };
+  if (proposed === current) return { error: "proposal does not change the file" };
+
+  return {
+    target: pathResult.target,
+    relative: pathResult.relative,
+    isNew,
+    detail: conciseDiff(current, proposed, isNew),
+  };
+}
+
+ipcMain.handle("ide:previewEdit", async (_e, { tool, args } = {}) => {
+  const preview = prepareEditPreview(tool, args);
+  if (preview.error) {
+    logFile(`blocked agent preview: ${preview.error}`);
+    return { decision: false, reason: preview.error };
+  }
+  const options = {
+    type: "question",
+    title: "Review Ollamax change",
+    message: `Apply Ollamax's ${preview.isNew ? "new file" : "change"} to ${preview.relative}?`,
+    detail: `Nothing has been written yet. Review this concise diff:\n\n${preview.detail}`,
+    buttons: ["Apply change", "Discard"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  };
+  try {
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+    return { decision: result.response === 0 };
+  } catch (e) {
+    logFile(`agent preview dialog failed: ${e.message}`);
+    return { decision: false, reason: "review dialog failed" };
   }
 });
 

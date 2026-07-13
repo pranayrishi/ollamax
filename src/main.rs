@@ -1,16 +1,19 @@
 use anyhow::Result;
 use clap::Parser;
-use ollama_forge::agent::{Agent, AgentConfig};
-use ollama_forge::cli::{Cli, Commands, RulesAction, SkillsAction};
+use ollama_forge::agent::{Agent, AgentConfig, Approval, ApprovalPolicy};
+use ollama_forge::cli::{AgentAutonomy, Cli, Commands, RulesAction, SkillsAction};
 use ollama_forge::executor::ProgressEvent;
 use ollama_forge::orchestrator::{BuildRequest, Orchestrator, OrchestratorConfig};
 use ollama_forge::providers::{GenerateOptions, LlmProvider, OllamaProvider};
 use ollama_forge::replay::{quick_hash, read_log};
 use ollama_forge::rules::RuleSet;
 use ollama_forge::security::{SecurityGuard, Severity};
-use ollama_forge::tools::ToolRegistry;
-use ollama_forge::{init_tracing, monitoring::VramSentinel, skills::SkillsEngine, Config};
-use std::path::{Path, PathBuf};
+use ollama_forge::tools::{files::{FsEditTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool}, shell::{ShellPolicy, ShellTool}, ToolRegistry};
+use ollama_forge::{
+    init_tracing, monitoring::VramSentinel, skills::SkillsEngine, Config,
+};
+use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::{error, info};
 
 fn main() {
@@ -44,9 +47,15 @@ async fn async_main() -> Result<()> {
     };
     init_tracing(log_level)?;
 
-    let config = match cli.config.as_deref() {
-        Some(path) => load_config_from(path)?,
-        None => Config::load().await?,
+    // `init --force` is the recovery path for a broken project config, so do
+    // not parse that config before it has a chance to overwrite it.
+    let config = if matches!(&cli.command, Commands::Init { .. }) {
+        Config::default()
+    } else {
+        match cli.config.as_deref() {
+            Some(path) => Config::load_from_path(path)?,
+            None => Config::load().await?,
+        }
     };
 
     // Load user "always-rules" from the rules directory and prepare a
@@ -213,6 +222,27 @@ async fn async_main() -> Result<()> {
             }
             // Append to replay log if FORGE_REPLAY_LOG is set.
             maybe_log_replay(&opts, &full, &config.ollama_url).await;
+        }
+
+        Commands::Agent {
+            model,
+            max_iterations,
+            autonomy,
+            yes,
+            task,
+        } => {
+            if task.is_empty() {
+                anyhow::bail!("forge agent: task is required");
+            }
+            run_workspace_agent(
+                &config,
+                &rules_suffix,
+                task.join(" "),
+                model,
+                max_iterations,
+                if yes { AgentAutonomy::Auto } else { autonomy },
+            )
+            .await?;
         }
 
         Commands::Status { models } => {
@@ -1227,6 +1257,170 @@ async fn async_main() -> Result<()> {
     Ok(())
 }
 
+/// Terminal approval gate for `forge agent`. The server/UI path has an
+/// interactive diff preview; the CLI instead keeps the user in control with a
+/// concise prompt before every consequential operation. File tools still enforce
+/// their workspace sandbox even in `--autonomy auto` mode.
+#[derive(Clone, Copy)]
+struct CliApprovalPolicy {
+    mode: AgentAutonomy,
+}
+
+#[async_trait::async_trait]
+impl ApprovalPolicy for CliApprovalPolicy {
+    async fn approve(&self, tool: &str, args: &serde_json::Value) -> Approval {
+        match self.mode {
+            AgentAutonomy::Auto => Approval::Allow,
+            AgentAutonomy::Readonly => Approval::Deny,
+            AgentAutonomy::Confirm => {
+                let description = cli_action_description(tool, args);
+                if cli_confirm(format!("Apply agent action: {description}? [y/N] ")).await {
+                    Approval::Allow
+                } else {
+                    Approval::Deny
+                }
+            }
+        }
+    }
+
+    async fn approve_plan(&self, plan: &str) -> Approval {
+        if self.mode != AgentAutonomy::Confirm {
+            return Approval::Allow;
+        }
+        let prompt = format!("\nAgent plan:\n{plan}\n\nRun this plan in the current workspace? [y/N] ");
+        if cli_confirm(prompt).await {
+            Approval::Allow
+        } else {
+            Approval::Deny
+        }
+    }
+}
+
+fn cli_action_description(tool: &str, args: &serde_json::Value) -> String {
+    match tool {
+        "fs_write" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("(unknown path)");
+            let bytes = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(str::len)
+                .unwrap_or(0);
+            format!("write {path} ({bytes} bytes)")
+        }
+        "fs_edit" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("(unknown path)");
+            format!("edit {path}")
+        }
+        "shell" => {
+            let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("(empty command)");
+            format!("run `{command}`")
+        }
+        _ => format!("run {tool}"),
+    }
+}
+
+async fn cli_confirm(prompt: String) -> bool {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut stderr = std::io::stderr().lock();
+        if write!(stderr, "{prompt}").and_then(|_| stderr.flush()).is_err() {
+            return false;
+        }
+        let mut input = String::new();
+        match std::io::stdin().read_line(&mut input) {
+            Ok(_) => matches!(input.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+            Err(_) => false,
+        }
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// `forge agent "..."` — a workspace-aware local coding loop for terminal
+/// users. Unlike `forge chat`, this path gives the model concrete filesystem
+/// discovery and edit tools rooted at the current directory. It intentionally
+/// registers no web tools, so code-agent inference and tool use stay local.
+async fn run_workspace_agent(
+    config: &Config,
+    rules_suffix: &str,
+    task: String,
+    requested_model: Option<String>,
+    max_iterations: usize,
+    autonomy: AgentAutonomy,
+) -> Result<()> {
+    let workspace = std::env::current_dir()?
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("resolve current workspace: {e}"))?;
+    let provider = Arc::new(OllamaProvider::new(&config.ollama_url));
+    let model = match requested_model
+        .filter(|m| !m.trim().is_empty() && !m.eq_ignore_ascii_case("auto"))
+    {
+        Some(model) => model,
+        None => pick_installed_model(config, &provider).await?,
+    };
+    let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
+    let hardware = sentinel.detect_hardware().await;
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FsListTool::new(&workspace)));
+    registry.register(Arc::new(FsSearchTool::new(&workspace)));
+    registry.register(Arc::new(FsReadTool::new(&workspace)));
+    registry.register(Arc::new(FsWriteTool::new(&workspace)));
+    registry.register(Arc::new(FsEditTool::new(&workspace)));
+    registry.register(Arc::new(ShellTool::new(&workspace, ShellPolicy::default())));
+
+    let mut system_suffix = format!(
+        "{rules_suffix}\n\n## Workspace agent\nYou are working inside `{}`. Use fs_list and fs_search to orient yourself, then read files before editing. Keep every path relative to this workspace. Use fs_write/fs_edit to make requested code changes rather than only returning a code block. The user must approve consequential actions unless autonomy is auto.",
+        workspace.display()
+    );
+    if system_suffix.starts_with("\n\n") {
+        system_suffix = system_suffix.trim_start().to_string();
+    }
+
+    eprintln!(
+        "⚒  forge agent\n   workspace: {}\n   model: `{model}` · num_ctx: {} · autonomy: {:?}\n",
+        workspace.display(),
+        hardware.optimal_context,
+        autonomy,
+    );
+    let approval: Arc<dyn ApprovalPolicy> = Arc::new(CliApprovalPolicy { mode: autonomy });
+    let mut agent = Agent::new(
+        provider,
+        registry,
+        AgentConfig {
+            model,
+            num_ctx: hardware.optimal_context,
+            keep_alive: "1h".to_string(),
+            max_iterations: max_iterations.max(1),
+            system_suffix,
+        },
+    )
+    .with_approval(approval)
+    .with_planning(autonomy == AgentAutonomy::Confirm);
+
+    let trace = agent
+        .run(&task, |step| {
+            let preview: String = step
+                .result_preview
+                .replace('\n', " ")
+                .chars()
+                .take(240)
+                .collect();
+            eprintln!(
+                "   [{}] {} {}",
+                if step.ok { "ok" } else { "failed" },
+                step.tool,
+                preview
+            );
+        })
+        .await?;
+    if trace.iteration_capped {
+        eprintln!("⚠️  agent reached the {}-round safety limit.", max_iterations.max(1));
+    }
+    println!("{}", trace.answer);
+    Ok(())
+}
+
 /// Render a braille spinner to stderr until `cancel` fires. Used by
 /// long-running operations (model preload, future build) so the user knows
 /// the process is alive. Renders to stderr so it doesn't pollute piped
@@ -1322,7 +1516,7 @@ const STARTER_FORGE_TOML: &str = r#"[forge]
 version = "1.0"
 
 [ollama]
-url = "http://localhost:11434"
+url = "http://127.0.0.1:11434"
 default_model = "qwen2.5-coder:7b"
 planning_model = "qwen2.5-coder:7b"
 
@@ -1363,11 +1557,6 @@ async fn init_project(force: bool) -> Result<()> {
     println!("   forge audit src/             # scan your code for leaked secrets");
     println!("   forge chat \"hello\"           # try the model interactively");
     Ok(())
-}
-
-fn load_config_from(path: &Path) -> Result<Config> {
-    let content = std::fs::read_to_string(path)?;
-    Ok(serde_yaml::from_str(&content)?)
 }
 
 /// Pick the most-capable installed Ollama model. Prefers `config.default_model`

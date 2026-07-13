@@ -28,10 +28,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-/// Default cap on tool-call rounds. 6 rounds is enough for
-/// "search → fetch a result → search refined → fetch → search → answer".
-/// Override at the call site via `AgentConfig::max_iterations`.
+/// Default cap for a lightweight research-style run. Override at the call site
+/// via `AgentConfig::max_iterations`.
 pub const DEFAULT_MAX_ITERATIONS: usize = 6;
+
+/// A workspace coding task commonly needs to inventory the repository, search,
+/// read one or more files, edit, and validate. Six turns is too short for that
+/// sequence, so interactive Agent surfaces use this larger bounded budget.
+pub const DEFAULT_CODING_MAX_ITERATIONS: usize = 12;
 
 pub struct Agent {
     provider: Arc<OllamaProvider>,
@@ -76,7 +80,7 @@ pub trait ApprovalPolicy: Send + Sync {
 /// Autonomy Dial in "confirm" mode. Read-only tools (research/graph/fs_read)
 /// always stream through.
 pub fn is_consequential(tool: &str) -> bool {
-    matches!(tool, "fs_write" | "fs_edit" | "shell")
+    matches!(tool, "fs_write" | "fs_edit" | "shell") || tool.starts_with("mcp__")
 }
 
 #[derive(Debug, Clone)]
@@ -97,7 +101,7 @@ impl Default for AgentConfig {
             model: "qwen2.5-coder:7b".to_string(),
             num_ctx: 16_384,
             keep_alive: "1h".to_string(),
-            max_iterations: DEFAULT_MAX_ITERATIONS,
+            max_iterations: DEFAULT_CODING_MAX_ITERATIONS,
             system_suffix: String::new(),
         }
     }
@@ -479,10 +483,20 @@ fn record_step<F>(
 fn build_system_prompt(tools: &ToolRegistry) -> String {
     let mut s = String::new();
     s.push_str(
-        "You are a research agent. You answer the user's question by reasoning step by step \
-         and calling tools when you need outside information. Be specific. Cite sources \
-         (URLs) in your final answer when you used them.\n\n",
+        "You are Ollamax, a local-first coding and research agent. Solve the user's task by \
+         inspecting the available tools and using them when they materially help. Make the \
+         smallest correct change, verify it when a safe validation tool is available, and report \
+         only work that actually completed. For research, cite source URLs in the final answer \
+         when you used web tools.\n\n",
     );
+    let has_workspace_tools = tools.get("fs_list").is_some();
+    if has_workspace_tools {
+        s.push_str(
+            "For a code task, first orient yourself with fs_list/fs_search, then read the \
+             relevant current files before changing them. When the user asks to change files, \
+             use the filesystem tools instead of only printing a code sample.\n\n",
+        );
+    }
     s.push_str(&tools.describe_for_model());
     s.push('\n');
     s.push_str(
@@ -491,17 +505,31 @@ fn build_system_prompt(tools: &ToolRegistry) -> String {
          (`action: answer`). Do not emit prose outside the JSON object.\n\n",
     );
     // Few-shot examples — small models (7-8B) cannot infer arg shape from a
-    // raw JSON Schema reliably. They CAN copy patterns. Without these, the
-    // model emits `args: {}` and the tool fails immediately.
+    // raw JSON Schema reliably. Only show examples for tools that are actually
+    // registered: otherwise a local-only coding run may waste turns trying an
+    // unavailable web tool.
+    if tools.get("web_search").is_some() {
+        s.push_str(
+            "Examples of valid web-tool calls:\n\n\
+             {\"action\":\"use_tool\",\"tool\":\"web_search\",\"args\":{\"query\":\"recent advances in transformer architectures\"}}\n\n\
+             {\"action\":\"use_tool\",\"tool\":\"wikipedia\",\"args\":{\"title\":\"Quantum entanglement\"}}\n\n\
+             {\"action\":\"use_tool\",\"tool\":\"wikipedia\",\"args\":{\"search\":\"swallow airspeed\"}}\n\n\
+             {\"action\":\"use_tool\",\"tool\":\"arxiv\",\"args\":{\"query\":\"attention is all you need\",\"max_results\":3}}\n\n\
+             {\"action\":\"use_tool\",\"tool\":\"fetch_url\",\"args\":{\"url\":\"https://en.wikipedia.org/wiki/Barn_swallow\"}}\n\n",
+        );
+    }
+    if has_workspace_tools {
+        s.push_str(
+            "Workspace-tool examples:\n\n\
+             {\"action\":\"use_tool\",\"tool\":\"fs_list\",\"args\":{\"path\":\"\",\"depth\":2}}\n\n\
+             {\"action\":\"use_tool\",\"tool\":\"fs_search\",\"args\":{\"query\":\"handle_login\",\"path\":\"src\"}}\n\n\
+             {\"action\":\"use_tool\",\"tool\":\"fs_read\",\"args\":{\"path\":\"src/auth.rs\"}}\n\n\
+             {\"action\":\"use_tool\",\"tool\":\"fs_edit\",\"args\":{\"path\":\"src/auth.rs\",\"old_string\":\"let enabled = false;\",\"new_string\":\"let enabled = true;\"}}\n\n",
+        );
+    }
     s.push_str(
-        "Examples of valid tool calls:\n\n\
-         {\"action\":\"use_tool\",\"tool\":\"web_search\",\"args\":{\"query\":\"recent advances in transformer architectures\"}}\n\n\
-         {\"action\":\"use_tool\",\"tool\":\"wikipedia\",\"args\":{\"title\":\"Quantum entanglement\"}}\n\n\
-         {\"action\":\"use_tool\",\"tool\":\"wikipedia\",\"args\":{\"search\":\"swallow airspeed\"}}\n\n\
-         {\"action\":\"use_tool\",\"tool\":\"arxiv\",\"args\":{\"query\":\"attention is all you need\",\"max_results\":3}}\n\n\
-         {\"action\":\"use_tool\",\"tool\":\"fetch_url\",\"args\":{\"url\":\"https://en.wikipedia.org/wiki/Barn_swallow\"}}\n\n\
-         Example of a final answer:\n\n\
-         {\"action\":\"answer\",\"text\":\"According to Wikipedia, the barn swallow flies at 35-45 km/h... [source: https://en.wikipedia.org/wiki/Barn_swallow]\"}\n\n",
+        "Example of a final answer:\n\n\
+         {\"action\":\"answer\",\"text\":\"Updated src/auth.rs and verified the requested condition.\"}\n\n",
     );
     s.push_str(
         "When you have enough information, stop calling tools and emit `action: answer` \
@@ -596,6 +624,7 @@ mod tests {
         assert!(!is_consequential("fs_read"));
         assert!(!is_consequential("web_search"));
         assert!(!is_consequential("graph_query"));
+        assert!(is_consequential("mcp__github__create_issue"));
 
         struct DenyAll;
         #[async_trait::async_trait]
@@ -644,5 +673,17 @@ mod tests {
         for name in registry.names() {
             assert!(s.contains(&name), "system prompt missing tool `{name}`");
         }
+    }
+
+    #[test]
+    fn local_workspace_prompt_does_not_advertise_unavailable_web_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(crate::tools::files::FsListTool::new(
+            std::env::temp_dir(),
+        )));
+        let s = build_system_prompt(&registry);
+        assert!(s.contains("fs_list"));
+        assert!(!s.contains("\"tool\":\"web_search\""));
+        assert!(!s.contains("\"tool\":\"fetch_url\""));
     }
 }

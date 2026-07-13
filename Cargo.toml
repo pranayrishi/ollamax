@@ -27,6 +27,9 @@ reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-feature
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
+# `forge init` documents a project-local forge.toml. Keep the existing YAML
+# config format too, but parse the project format with a real TOML parser.
+toml = "0.8"
 # CLI.
 clap = { version = "4.4", features = ["derive", "cargo", "wrap_help"] }
 # Errors.

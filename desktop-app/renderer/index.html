@@ -28,8 +28,8 @@
       <section id="chat-view">
         <header id="topbar">
           <div class="modes" role="tablist">
-            <button class="mode active" data-mode="chat" title="Quick local Q&A — single model, no tools, nothing leaves your machine">Chat</button>
-            <button class="mode" data-mode="agent" title="Autonomous agent — uses tools, memory and skills, can delegate sub-agents and run scheduled tasks (all local)">Agent</button>
+            <button class="mode active" data-mode="agent" title="Autonomous agent — inspects the opened workspace and edits files with your approval">Agent</button>
+            <button class="mode" data-mode="chat" title="Quick local Q&A — read-only, nothing changes in your workspace">Ask</button>
             <button class="mode" data-mode="build" title="Parallel multi-model code build/orchestration">Build</button>
           </div>
         </header>
@@ -46,7 +46,7 @@
         <footer id="composer">
           <!-- #6: model/router picker directly above the input. Auto = default. -->
           <div class="modelrow">
-            <select id="autonomy" hidden title="Autonomy Dial — how much the agent does before asking you">
+            <select id="autonomy" title="Autonomy Dial — how much the agent does before asking you">
               <option value="confirm">Confirm each action</option>
               <option value="auto">Act autonomously</option>
               <option value="readonly">Read-only (no writes)</option>
@@ -59,7 +59,7 @@
             <button class="attach" data-attach="image" title="Attach an image (needs a vision-capable model)">+ image</button>
           </div>
           <div class="inputrow">
-            <textarea id="input" rows="3" placeholder="Ask anything — runs locally on your hardware. ⏎ to send, ⇧⏎ for newline."></textarea>
+            <textarea id="input" rows="3" placeholder="Open a folder, then tell the agent what to change — it asks before edits. ⏎ to send, ⇧⏎ for newline."></textarea>
             <div class="btns">
               <button id="send" class="send">Send</button>
               <button id="stop" class="stop" hidden>Stop</button>

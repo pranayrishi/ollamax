@@ -158,6 +158,12 @@
 					"default": 0,
 					"description": "If greater than 0, connect to an already-running `forge serve` on this port instead of launching one. Leave at 0 to have the extension launch and manage its own backend on an OS-assigned port."
 				},
+				"forge.serverToken": {
+					"type": "string",
+					"default": "",
+					"scope": "machine",
+					"description": "Required only with forge.serverPort: the private FORGE_SERVER_TOKEN for that already-running local server. It is sent only to 127.0.0.1 and is never logged. Leave blank when Ollamax manages the server."
+				},
 				"forge.autoStartServer": {
 					"type": "boolean",
 					"default": true,

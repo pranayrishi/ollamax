@@ -182,7 +182,14 @@ mod tests {
     async fn timeout_kills_long_command() {
         let pol = ShellPolicy { enabled: true, timeout: Duration::from_millis(200) };
         let t = ShellTool::new(std::env::temp_dir(), pol);
-        let r = t.invoke(json!({"command":"sleep 5"})).await.unwrap();
+        let command = if cfg!(windows) {
+            // cmd.exe has no `sleep`; ping's interval makes a portable long
+            // command without depending on PowerShell availability.
+            "ping 127.0.0.1 -n 6 >NUL"
+        } else {
+            "sleep 5"
+        };
+        let r = t.invoke(json!({"command":command})).await.unwrap();
         assert!(!r.ok && r.content.contains("timed out"));
     }
 }

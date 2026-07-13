@@ -1,4 +1,4 @@
-# Ollama-Forge
+# Ollamax
 
 **A harness optimization layer for local coding agents that run on Ollama.**
 
@@ -17,8 +17,8 @@
 If you want AI coding assistance without shipping your codebase to a third
 party, your options today are: configure each tool (Aider, Continue.dev, Cline,
 OpenHands, twinny…) by hand, juggle model selection per task, manage VRAM
-manually, and accept whatever defaults each tool ships. Ollama-Forge is the
-shared optimization layer underneath:
+manually, and accept whatever defaults each tool ships. Ollamax is a
+local-first coding agent and workspace console built around Ollama:
 
 - **Hardware-aware defaults.** Detects RAM/VRAM at install and runtime, picks a
   sane default model and `num_ctx`, refuses to load models that won't fit.
@@ -29,8 +29,9 @@ shared optimization layer underneath:
 - **Local secret scanner.** Refuses to send files containing private keys, AWS
   keys, GitHub tokens, or known credential patterns to the model.
 
-It is **not** a replacement for Aider or Cline — it's the glue that makes them
-sing on local hardware.
+It is pre-alpha, but its Agent mode now works on the codebase you explicitly
+open: it can inspect files, edit them through sandboxed tools, run bounded
+validation commands, and show/require approvals.
 
 ---
 
@@ -58,8 +59,8 @@ running. Rust toolchain (1.75+) needed to build from source — pre-built
 binaries are not yet shipping.
 
 ```bash
-git clone https://github.com/ollama-forge/ollama-forge
-cd ollama-forge
+git clone https://github.com/pranayrishi/ollamax.git
+cd ollamax
 ./install.sh                      # builds with cargo, installs to ~/.local/forge/bin
 forge status                      # show detected hardware + recommended model
 forge status --models             # also lists models known to Ollama
@@ -67,6 +68,48 @@ forge status --models             # also lists models known to Ollama
 
 `forge status` is the most useful command in v0.1.0. It is also the cheapest
 way to verify your install works without pulling a model.
+
+---
+
+## Local workspace Agent
+
+Run the Agent from the root of the project you want it to change:
+
+```bash
+forge agent "Add a health endpoint and tests for it"
+```
+
+The default `confirm` mode shows a plan and asks before each file write, exact
+edit, or shell validation command. `--autonomy readonly` lets it inspect and
+search only; `--yes` (or `--autonomy auto`) permits actions within the current
+workspace sandbox without per-step prompts.
+
+```bash
+forge agent --autonomy readonly "Explain the authentication flow"
+forge agent --yes "Create a small CLI command and run its unit tests"
+```
+
+The agent has explicit `fs_list`, `fs_search`, `fs_read`, `fs_write`, and
+`fs_edit` tools. It rejects absolute paths, `..` traversal, and symlink paths;
+write/edit tools are bounded in size and stay under the captured workspace
+root. Local coding runs do not register web or MCP tools by default.
+
+## Local Agent Console
+
+Start the local server from the workspace and open the printed local URL with
+`/console` appended:
+
+```bash
+forge serve --port 7878
+# open http://127.0.0.1:7878/console
+```
+
+The console is a local task board with queued/working/review/done states, a
+model and permission picker, streamed activity, plans, file-change records,
+and approval controls. Task snapshots are scoped to the server's workspace in
+your browser storage. The server binds only to loopback and issues a
+per-process capability to its trusted desktop, VS Code, and console clients;
+do not expose the local port to an untrusted reverse proxy.
 
 ---
 
@@ -86,11 +129,13 @@ way to verify your install works without pulling a model.
 | `forge audit <dir>`          |   ✅   | Walks the dir, runs the secret scanner, exits 1 on Critical/High; `--json` for CI consumers   |
 | `forge preload [model]`      |   ✅   | Warm-loads a model with `--keep-alive`; braille spinner so a 14B cold-load doesn't look hung |
 | `forge chat "..."`           |   ✅   | Streams tokens to stdout as they arrive (real NDJSON drain, not buffered)                     |
+| `forge agent "..."`          |   ✅   | Local workspace agent: lists/searches/reads files, writes through a sandbox, and validates changes with visible approval controls |
+| `forge serve --port 7878`    |   ✅   | Runs the local desktop/VS Code backend and the browser-based Agent Console at `/console`       |
 | `forge run-skill <name>`     |   ✅   | Loads a skill, picks an installed model (with fallback), streams the response                |
 | `forge skills list/add/search` | ✅   | Recipe management; `add` is local-path only by design                                         |
 | `forge analyze <dir>`        |   ✅   | Local secret scan + token-budgeted model code review                                          |
 | `forge test <file>`          |   ✅   | Generates tests for a single source file in the right framework for the language              |
-| `forge init`                 |   🟢   | Writes a starter `forge.toml`                                                                 |
+| `forge init`                 |   ✅   | Writes a supported project-local `forge.toml`                                                 |
 | `forge parallel`             |   ❌   | Errors loudly — use `forge build`                                                             |
 
 ✅ = works · 🟢 = works but unproven against real-world workloads · ❌ = not implemented (and tells you so)
@@ -204,7 +249,7 @@ Module boundaries are stable; internals will change.
 version = "1.0"
 
 [ollama]
-url = "http://localhost:11434"
+url = "http://127.0.0.1:11434"
 default_model = "llama3.2:3b"
 planning_model = "qwen2.5-coder:7b"
 
@@ -222,6 +267,29 @@ enforced = true
 
 Defaults are picked for an 8 GB VRAM machine. `forge status` will tell you
 whether your hardware can do better.
+
+`forge.toml` is a project-local override and is loaded automatically from the
+current directory. You can also select it explicitly with
+`forge --config path/to/forge.toml status`. Existing global
+`~/.config/ollama-forge/config.yaml` files remain supported; project TOML
+values override the corresponding global settings.
+
+### Windows and custom Ollama hosts
+
+Ollamax defaults to `http://127.0.0.1:11434` rather than `localhost` to avoid
+Windows installations where `localhost` resolves to IPv6 but Ollama only
+listens on IPv4. If your Ollama daemon uses another local host or port, set
+`OLLAMA_HOST` before launching Ollamax, for example:
+
+```powershell
+$env:OLLAMA_HOST = "127.0.0.1:11555"
+ollama serve
+```
+
+You can instead set `[ollama].url` in `forge.toml`. When connectivity fails,
+the model picker now reports the exact endpoint and underlying Ollama error;
+on Windows, check it directly with
+`Invoke-RestMethod http://127.0.0.1:11434/api/tags`.
 
 ---
 
@@ -246,10 +314,13 @@ bundled recipe parses.
 
 ## Privacy
 
-All inference goes to your local Ollama daemon at `http://localhost:11434`. The
-binary makes no other outbound connections (no telemetry, no update checks, no
-docs lookups). The secret scanner runs *before* content is sent to the model
-to prevent accidental leakage of credentials in your codebase.
+All inference goes to your local Ollama daemon at `http://127.0.0.1:11434` by
+default. The workspace Agent and local console register no web or MCP tools by
+default, so code-agent work stays on-device. The research command and an
+explicit web-tools option can contact their named public sources; the server
+discloses that egress in the task stream. The secret scanner runs *before*
+content is sent to the model to prevent accidental leakage of credentials in
+your codebase.
 
 This is verifiable — there are exactly two places `reqwest` is constructed
 ([`src/providers/ollama.rs`](src/providers/ollama.rs)), both pointing at the

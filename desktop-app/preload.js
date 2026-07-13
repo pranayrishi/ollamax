@@ -5,8 +5,15 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("forgeNative", {
-  // { baseUrl: "http://127.0.0.1:<port>", accountServer: "" }
+  // { baseUrl, accountServer, apiToken, workspace, workspaceReady }
   config: () => ipcRenderer.invoke("forge:config"),
+  // A workspace switch restarts the local engine on a new ephemeral port.
+  onConfigChanged: (cb) => {
+    if (typeof cb !== "function") return () => {};
+    const listener = (_e, config) => cb(config);
+    ipcRenderer.on("forge:configChanged", listener);
+    return () => ipcRenderer.removeListener("forge:configChanged", listener);
+  },
   // Returns [{ path, label, content }] from a native file picker.
   pickFiles: () => ipcRenderer.invoke("forge:pickFiles"),
   openExternal: (url) => ipcRenderer.invoke("forge:openExternal", url),
@@ -26,6 +33,9 @@ contextBridge.exposeInMainWorld("forgeNative", {
     readDir: (dir) => ipcRenderer.invoke("ide:readDir", dir),
     readFile: (p) => ipcRenderer.invoke("ide:readFile", p),
     writeFile: (p, content) => ipcRenderer.invoke("ide:writeFile", { path: p, content }),
+    // Computes and displays a native diff review in the main process; it never
+    // writes the proposed content. The bridge relays its decision to the agent.
+    previewEdit: (tool, args) => ipcRenderer.invoke("ide:previewEdit", { tool, args }),
   },
   pty: {
     start: (size) => ipcRenderer.invoke("pty:start", size),

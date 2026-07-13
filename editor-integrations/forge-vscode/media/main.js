@@ -42,13 +42,16 @@
   ];
 
   // ----- state -----
-  let mode = "chat";
+  // Start in Agent mode: Ollamax is a coding assistant, so a normal composer
+  // prompt can inspect and change the opened workspace (subject to the visible
+  // permission dial). Ask remains one click away for read-only discussion.
+  let mode = "agent";
   let model = null;
   let streaming = false;
   let chatHistory = []; // {role, content} — chat mode only, for multi-turn
   let contextItems = []; // {path, content, label}
   let active = null; // the assistant message currently streaming
-  let activeMode = "chat"; // mode of the in-flight turn (may differ from toggle)
+  let activeMode = "agent"; // mode of the in-flight turn (may differ from toggle)
   let lastAutonomy = "confirm"; // autonomy of the in-flight agent turn (gates the Plan card)
   /** queued items: {text, mode, model, context} */
   let queue = [];
@@ -324,7 +327,7 @@
       },
       // Intent Preview: the agent's proposed plan before it executes. In confirm
       // mode it's gated with Run / Cancel; otherwise it's shown for transparency.
-      addPlan(text, gated) {
+      addPlan(text, gated, approvalId) {
         this.stopStatus();
         steps.hidden = false;
         const card = document.createElement("div");
@@ -347,7 +350,7 @@
           cancel.className = "ghost";
           cancel.textContent = "Cancel (I'll do it)";
           const decide = (decision) => {
-            vscode.postMessage({ type: "approve", decision });
+            vscode.postMessage({ type: "approve", approvalId, decision });
             actions.textContent = decision ? "▶ running…" : "✕ cancelled";
           };
           run.addEventListener("click", () => decide(true));
@@ -382,7 +385,7 @@
         deny.className = "ghost";
         deny.textContent = "Deny";
         const decide = (decision) => {
-          vscode.postMessage({ type: "approve", decision });
+          vscode.postMessage({ type: "approve", approvalId: ev.approvalId, decision });
           actions.textContent = decision ? "✓ approved" : "✕ denied";
         };
         allow.addEventListener("click", () => decide(true));
@@ -595,13 +598,13 @@
         active.addStep(ev);
         break;
       case "plan":
-        active.addPlan(ev.text || "", lastAutonomy === "confirm");
+        active.addPlan(ev.text || "", lastAutonomy === "confirm", ev.approvalId);
         break;
       case "approval_request":
         // #1 File edits get a real diff/preview + modal in the editor (host-driven);
         // other consequential tools (shell) keep the inline Approve/Deny.
         if (ev.tool === "fs_write" || ev.tool === "fs_edit") {
-          vscode.postMessage({ type: "previewEdit", tool: ev.tool, args: ev.args });
+          vscode.postMessage({ type: "previewEdit", tool: ev.tool, args: ev.args, approvalId: ev.approvalId });
           active.showNote(
             "📝 Proposed change to " + ((ev.args && ev.args.path) || "a file") +
               " — review the diff that opened, then Apply / Discard."

@@ -10,49 +10,87 @@
 (function () {
   let baseUrl = null;
   let accountServer = "";
-  let current = null; // { id, ctrl }
+  let apiToken = "";
+  let workspaceReady = false;
+  let current = null; // { id, ctrl, baseUrl }
+  let reviewInFlight = null;
 
   const post = (m) => window.postMessage(m, "*");
   const newId = () => `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
-  async function init() {
+  function clearCurrent(run) {
+    if (current === run) current = null;
+  }
+
+  function applyConfig(cfg) {
+    const previousBaseUrl = baseUrl;
+    baseUrl = (cfg && cfg.baseUrl) || null;
+    accountServer = (cfg && cfg.accountServer) || "";
+    apiToken = (cfg && cfg.apiToken) || "";
+    workspaceReady = !!(cfg && cfg.workspaceReady);
+
+    // A folder switch replaces the server process/port. End the old stream
+    // locally rather than allowing its late events to affect the new session.
+    if (previousBaseUrl && previousBaseUrl !== baseUrl && current) {
+      const run = current;
+      current = null;
+      run.ctrl.abort();
+      post({ type: "stream", ev: { type: "cancelled" } });
+    }
+  }
+
+  async function refreshConfig() {
     const cfg = await window.forgeNative.config();
-    baseUrl = cfg.baseUrl;
-    accountServer = cfg.accountServer || "";
-    if (!baseUrl) {
+    applyConfig(cfg);
+    return cfg;
+  }
+
+  async function init() {
+    try {
+      await refreshConfig();
+    } catch (_) {
       post({ type: "backendError", message: "local engine not running" });
     }
   }
   const ready = init();
 
+  if (window.forgeNative && typeof window.forgeNative.onConfigChanged === "function") {
+    window.forgeNative.onConfigChanged(applyConfig);
+  }
+
   async function getJson(path) {
-    const r = await fetch(baseUrl + path);
+    const target = baseUrl;
+    if (!target) throw new Error("local engine not running");
+    const r = await fetch(target + path, {
+      headers: { "X-Ollamax-Token": apiToken },
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
   }
 
   async function streamPost(path, body, id) {
     const ctrl = new AbortController();
-    current = { id, ctrl };
-    let res;
+    const run = { id, ctrl, baseUrl };
+    if (!run.baseUrl) {
+      post({ type: "stream", ev: { type: "error", message: "local engine not running" } });
+      return;
+    }
+    current = run;
     try {
-      res = await fetch(baseUrl + path, {
+      const res = await fetch(run.baseUrl + path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Ollamax-Token": apiToken },
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
-    } catch (e) {
-      post({ type: "stream", ev: { type: "error", message: String(e) } });
-      current = null;
-      return;
-    }
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    try {
+      if (!res.ok || !res.body) throw new Error(`request failed (HTTP ${res.status})`);
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (current !== run) return;
         buf += dec.decode(value, { stream: true });
         let idx;
         while ((idx = buf.indexOf("\n\n")) !== -1) {
@@ -64,15 +102,45 @@
             const json = t.slice(5).trim();
             if (!json) continue;
             try {
-              post({ type: "stream", ev: JSON.parse(json) });
+              if (current === run) post({ type: "stream", ev: JSON.parse(json) });
             } catch (_) {}
           }
         }
       }
-    } catch (_) {
-      /* aborted or socket closed; the UI already saw cancelled/done */
+    } catch (e) {
+      if (!ctrl.signal.aborted && current === run) {
+        post({ type: "stream", ev: { type: "error", message: String(e) } });
+      }
+    } finally {
+      clearCurrent(run);
     }
-    current = null;
+  }
+
+  async function relayApproval(run, approvalId, decision) {
+    if (!run || current !== run || !run.baseUrl || typeof approvalId !== "string" || !approvalId) return;
+    try {
+      await fetch(run.baseUrl + "/api/agent/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Ollamax-Token": apiToken },
+        body: JSON.stringify({ id: run.id, approvalId, decision: !!decision }),
+      });
+    } catch (_) {}
+  }
+
+  async function reviewEdit(msg) {
+    const run = current;
+    if (!run || reviewInFlight) return;
+    reviewInFlight = run;
+    let decision = false;
+    try {
+      const review = await window.forgeNative.ide.previewEdit(msg.tool, msg.args);
+      decision = !!(review && review.decision);
+    } catch (_) {
+      // A failed/closed native dialog is a denial, preserving the safe default.
+      decision = false;
+    }
+    await relayApproval(run, msg.approvalId, decision);
+    if (reviewInFlight === run) reviewInFlight = null;
   }
 
   async function handle(msg) {
@@ -80,11 +148,23 @@
     switch (msg.type) {
       case "ready":
       case "refresh": {
+        try {
+          await refreshConfig();
+        } catch (_) {}
         post({ type: "config", whimsy: true, accountEnabled: !!accountServer });
         if (msg.type === "ready") post({ type: "account", user: null });
+        if (!baseUrl) {
+          post({ type: "backendError", message: "local engine not running" });
+          break;
+        }
         try {
           const m = await getJson("/api/models");
           post({ type: "models", models: m.models || [], default: m.default });
+          // The local server returns provider details (including its endpoint)
+          // in-band, so do not collapse an Ollama failure into a generic error.
+          if (m.error) {
+            post({ type: "backendError", message: `Failed to list models from Ollama: ${m.error}` });
+          }
         } catch (_) {
           post({ type: "backendError", message: "could not reach the local engine" });
         }
@@ -97,12 +177,32 @@
       case "modelInfo": {
         if (!msg.name) break;
         try {
+          await refreshConfig();
           const info = await getJson(`/api/model_info?name=${encodeURIComponent(msg.name)}`);
           post({ type: "modelInfo", info });
         } catch (_) {}
         break;
       }
       case "send": {
+        try {
+          await refreshConfig();
+        } catch (_) {
+          post({ type: "stream", ev: { type: "error", message: "local engine not running" } });
+          break;
+        }
+        if (!baseUrl) {
+          post({ type: "stream", ev: { type: "error", message: "local engine not running" } });
+          break;
+        }
+        // Chat remains pure/read-only and usable without a folder. Agent tools
+        // are never started until a folder has explicitly restarted the server.
+        if (msg.mode === "agent" && !workspaceReady) {
+          post({
+            type: "stream",
+            ev: { type: "error", message: "Open a folder in the Editor before running an Agent task." },
+          });
+          break;
+        }
         const id = newId();
         const context = msg.context || [];
         if (msg.mode === "agent") {
@@ -125,14 +225,15 @@
         break;
       }
       case "cancel": {
-        if (current) {
-          const id = current.id;
-          current.ctrl.abort();
+        const run = current;
+        if (run) {
+          current = null;
+          run.ctrl.abort();
           try {
-            await fetch(baseUrl + "/api/cancel", {
+            await fetch(run.baseUrl + "/api/cancel", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ id }),
+              headers: { "Content-Type": "application/json", "X-Ollamax-Token": apiToken },
+              body: JSON.stringify({ id: run.id }),
             });
           } catch (_) {}
           post({ type: "stream", ev: { type: "cancelled" } });
@@ -141,16 +242,13 @@
       }
       case "approve": {
         // Autonomy Dial / Plan card decision → relay to the waiting agent run.
-        const id = current && current.id;
-        if (id) {
-          try {
-            await fetch(baseUrl + "/api/agent/approve", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ id, decision: !!msg.decision }),
-            });
-          } catch (_) {}
-        }
+        await relayApproval(current, msg.approvalId, !!msg.decision);
+        break;
+      }
+      case "previewEdit": {
+        // The shared chat UI already emits this for fs_write/fs_edit approvals.
+        // Main validates/calculates the proposal and owns the native dialog.
+        await reviewEdit(msg);
         break;
       }
       case "attachFile":

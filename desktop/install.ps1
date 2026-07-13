@@ -60,8 +60,17 @@ if ($vsix -and (Get-Command code -ErrorAction SilentlyContinue)) {
   Say "VS Code 'code' command not found — install the panel from VS Code -> Extensions -> Install from VSIX"
 }
 
-# 6) Ollama prerequisite + recommended model.
+# 6) Ollama prerequisite + local API probe + recommended model. Checking the
+# executable alone is not enough on Windows: the tray/service can be stopped,
+# a proxy can intercept localhost, or OLLAMA_HOST can point at another port.
 if (Get-Command ollama -ErrorAction SilentlyContinue) {
+  try {
+    Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" -TimeoutSec 5 | Out-Null
+    Ok "Ollama local API reachable at 127.0.0.1:11434"
+  } catch {
+    Say "Ollama is installed but its local API did not answer at 127.0.0.1:11434. Start the Ollama app/service, then test: Invoke-RestMethod http://127.0.0.1:11434/api/tags"
+    Say "If you use a custom host or port, set OLLAMA_HOST before launching Ollamax."
+  }
   $rec = (& (Join-Path $dest "forge.exe") models 2>$null | Select-String -Pattern 'ollama pull \S+' | Select-Object -First 1).Matches.Value
   if (-not $rec) { $rec = "ollama pull qwen2.5-coder:7b" }
   Say "Recommended model - run:  $rec"

@@ -29,6 +29,21 @@ function activate(context) {
   const hub = new HubViewProvider(context, auth, log, telemetry, backend);
   const voice = new VoiceNavigator(context, backend, log);
 
+  // `forge serve` captures its filesystem sandbox at process start. A workspace
+  // switch therefore cannot reuse the old process: stop any in-flight request,
+  // then rebind an extension-managed server to the newly opened folder. A
+  // configured external server is never killed; Agent preflight verifies it.
+  const workspaceFoldersChanged = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    provider.workspaceChanged();
+    backend.rebindWorkspace().catch((error) => {
+      const message = `Ollamax could not rebind its local backend after the workspace changed: ${String(
+        error && error.message ? error.message : error
+      )}`;
+      log(message);
+      provider.post({ type: "backendError", message });
+    });
+  });
+
   // One-time, honest telemetry disclosure (opt-out model). Shown once; the user
   // can turn it off immediately or in Settings.
   if (!context.globalState.get("forge.telemetryDisclosed")) {
@@ -76,7 +91,8 @@ function activate(context) {
     vscode.commands.registerCommand("forge.voiceNavigate", () => voice.open()),
     { dispose: () => voice.dispose() },
     // Make sure the backend process is killed and pending telemetry flushed.
-    { dispose: () => backend.stop() },
+    workspaceFoldersChanged,
+    { dispose: () => backend.dispose() },
     { dispose: () => telemetry.dispose() }
   );
 }

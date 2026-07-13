@@ -50,7 +50,7 @@ impl Default for OrchestratorConfig {
         // Must agree with `Config::default` in lib.rs and `STARTER_FORGE_TOML`
         // in main.rs. Single source of truth via the qwen2.5-coder ladder.
         Self {
-            ollama_url: "http://localhost:11434".to_string(),
+            ollama_url: crate::providers::ollama::DEFAULT_OLLAMA_ENDPOINT.to_string(),
             default_model: "qwen2.5-coder:7b".to_string(),
             planning_model: "qwen2.5-coder:7b".to_string(),
             max_parallel_workers: 4,

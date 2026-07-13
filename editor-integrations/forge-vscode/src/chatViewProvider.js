@@ -129,10 +129,10 @@ class ChatViewProvider {
         this._handleCancel();
         break;
       case "approve":
-        await this._approve(!!msg.decision);
+        await this._approve(!!msg.decision, msg.approvalId);
         break;
       case "previewEdit":
-        await this._previewEdit(msg.tool, msg.args);
+        await this._previewEdit(msg.tool, msg.args, msg.approvalId);
         break;
       case "persistHistory":
         this._saveHistory(msg.messages);
@@ -195,11 +195,11 @@ class ChatViewProvider {
   // request is for fs_write/fs_edit: path-guard, show the change as a real VS Code
   // diff + a modal BEFORE anything is written, then relay the decision to the
   // agent run (the sandboxed fs tool does the actual write on Approve).
-  async _previewEdit(tool, args) {
+  async _previewEdit(tool, args, approvalId) {
     const folders = vscode.workspace.workspaceFolders;
     const root = folders && folders[0] ? folders[0].uri.fsPath : null;
     if (!root) {
-      await this._approve(false);
+      await this._approve(false, approvalId);
       vscode.window.showWarningMessage("Open a folder before letting the Agent edit files.");
       return;
     }
@@ -208,7 +208,7 @@ class ChatViewProvider {
     const abs = path.resolve(root, rel);
     const inside = abs === root || abs.startsWith(root + path.sep);
     if (!rel || path.isAbsolute(rel) || !inside) {
-      await this._approve(false);
+      await this._approve(false, approvalId);
       vscode.window.showWarningMessage(`Ollamax blocked an unsafe file path from the Agent: ${rel || "(empty)"}`);
       return;
     }
@@ -228,7 +228,7 @@ class ChatViewProvider {
       const newS = String((args && args.new_string) || "");
       const occurrences = oldS ? current.split(oldS).length - 1 : 0;
       if (occurrences !== 1) {
-        await this._approve(false);
+        await this._approve(false, approvalId);
         vscode.window.showWarningMessage(
           `Ollamax edit not applied: target text ${occurrences === 0 ? "not found" : "not unique"} in ${rel}.`
         );
@@ -279,7 +279,7 @@ class ChatViewProvider {
     }, 20000);
 
     const apply = choice === "Apply";
-    await this._approve(apply); // relay to the engine; the fs tool writes on Allow
+    await this._approve(apply, approvalId); // relay to the engine; the fs tool writes on Allow
     if (apply) {
       setTimeout(async () => {
         try {
@@ -290,10 +290,17 @@ class ChatViewProvider {
     }
   }
 
-  async _approve(decision) {
-    if (!this.currentAgentId) return;
+  async _approve(decision, approvalId) {
+    if (!this.currentAgentId || typeof approvalId !== "string" || !approvalId) {
+      this.log("approval ignored: no active Agent run or approval nonce");
+      return;
+    }
     try {
-      await this.backend.postJson("/api/agent/approve", { id: this.currentAgentId, decision });
+      await this.backend.postJson("/api/agent/approve", {
+        id: this.currentAgentId,
+        approvalId,
+        decision,
+      });
     } catch (e) {
       this.log(`approve failed: ${e && e.message}`);
     }
@@ -380,6 +387,14 @@ class ChatViewProvider {
     try {
       const models = await this.backend.getJson("/api/models");
       this.post({ type: "models", models: models.models || [], default: models.default });
+      if (models.error) {
+        this.post({
+          type: "backendError",
+          message:
+            `Ollama could not be reached at the configured local endpoint. ${models.error} ` +
+            "On Windows, verify the Ollama app/service is running and run `Invoke-RestMethod http://127.0.0.1:11434/api/tags`.",
+        });
+      }
     } catch (e) {
       this.log(`models fetch failed: ${e}`);
     }
@@ -413,10 +428,30 @@ class ChatViewProvider {
       this.post({ type: "backendError", message: "Sign in with your Ollamax account to use the app." });
       return;
     }
+    const isAgent = msg.mode === "agent";
+    const folders = vscode.workspace.workspaceFolders;
+    const workspaceRoot = folders && folders[0] ? folders[0].uri.fsPath : null;
+    if (isAgent && !workspaceRoot) {
+      const message = "Open a workspace folder before running the Ollamax Agent. It only edits the folder you explicitly opened.";
+      this.post({ type: "backendError", message });
+      vscode.window.showWarningMessage(message);
+      return;
+    }
     try {
-      await this.backend.ensureStarted();
+      // Agent runs get a stronger preflight than Ask: the server must prove it
+      // was launched for this exact VS Code folder before it sees the prompt.
+      if (isAgent) {
+        await this.backend.ensureWorkspace(workspaceRoot);
+        if (!this.backend.isWorkspaceBound(workspaceRoot)) {
+          throw new Error("Ollamax Agent blocked this request because the backend is not bound to the open workspace.");
+        }
+      } else {
+        await this.backend.ensureStarted();
+      }
     } catch (e) {
-      this.post({ type: "backendError", message: String(e && e.message) });
+      const message = String(e && e.message);
+      this.post({ type: "backendError", message });
+      if (isAgent) vscode.window.showWarningMessage(message);
       return;
     }
 
@@ -425,7 +460,7 @@ class ChatViewProvider {
     let path0;
     let body;
 
-    if (msg.mode === "agent") {
+    if (isAgent) {
       path0 = "/api/research";
       // Autonomy Dial: "auto" | "confirm" | "readonly" (default confirm-each so a
       // first-timer is asked before the agent writes/executes anything).
@@ -459,6 +494,7 @@ class ChatViewProvider {
         if (this.current && this.current.id === id) {
           this.current = null;
         }
+        if (this.currentAgentId === id) this.currentAgentId = null;
         this.post({ type: "streamEnd", id });
         return;
       }
@@ -490,10 +526,29 @@ class ChatViewProvider {
         if (this.current && this.current.id === id) {
           this.current = null;
         }
+        if (this.currentAgentId === id) this.currentAgentId = null;
       }
     });
 
     this.current = { id, handle };
+  }
+
+  /** Stop an in-flight response before the backend is rebound to another folder. */
+  workspaceChanged() {
+    if (!this.current) return;
+    const { id, handle } = this.current;
+    // Ask the old server to stop before the extension tears down or invalidates
+    // its workspace binding. Dropping the stream alone is not enough for an
+    // external configured server that the extension does not own.
+    this.backend.cancel(id);
+    try {
+      handle.abort();
+    } catch {
+      /* request is already closed */
+    }
+    this.current = null;
+    this.currentAgentId = null;
+    this.post({ type: "stream", id, ev: { type: "cancelled", reason: "workspaceChanged" } });
   }
 
   _handleCancel() {
@@ -504,6 +559,7 @@ class ChatViewProvider {
     this.backend.cancel(id); // server-side stop
     handle.abort(); // drop the socket
     this.current = null;
+    this.currentAgentId = null;
     this.post({ type: "stream", id, ev: { type: "cancelled" } });
   }
 
@@ -653,11 +709,11 @@ class ChatViewProvider {
 
   <header id="topbar">
     <div class="modes" role="tablist">
-      <button class="mode active" data-mode="chat" title="Ask — conversational Q&A; shows code in chat for discussion. READ-ONLY: never changes your files. Pure-local.">Chat</button>
-      <button class="mode" data-mode="agent" title="Agent — autonomous: uses tools, memory & skills, runs multi-step tasks, and edits files (with your approval).">Agent</button>
+      <button class="mode active" data-mode="agent" title="Agent — inspects your workspace, runs multi-step tasks, and edits files with your approval.">Agent</button>
+      <button class="mode" data-mode="chat" title="Ask — conversational Q&A. Read-only: never changes your files.">Ask</button>
     </div>
     <div class="picker">
-      <select id="autonomy" hidden title="Autonomy Dial — how much the agent does before asking you">
+      <select id="autonomy" title="Autonomy Dial — how much the agent does before asking you">
         <option value="confirm">Confirm each action</option>
         <option value="auto">Act autonomously</option>
         <option value="readonly">Read-only (no writes)</option>
@@ -684,7 +740,7 @@ class ChatViewProvider {
       <button class="attach" data-attach="pick" title="@-mention files from the workspace">@ files</button>
     </div>
     <div class="inputrow">
-      <textarea id="input" rows="3" placeholder="Ask anything — runs locally on your hardware. ⏎ to send, ⇧⏎ for newline."></textarea>
+    <textarea id="input" rows="3" placeholder="Tell the agent what to change — it works locally and asks before edits. ⏎ to send, ⇧⏎ for newline."></textarea>
       <div class="btns">
         <button id="send" class="send">Send</button>
         <button id="stop" class="stop" hidden>Stop</button>
