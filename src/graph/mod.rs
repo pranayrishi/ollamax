@@ -100,8 +100,8 @@ impl CodeGraph {
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
-        let data = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let data =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         Self::from_json(&data)
     }
 
@@ -176,7 +176,10 @@ impl CodeGraph {
     pub fn query(&self, question: &str, max_seeds: usize) -> String {
         let scored = self.score(question);
         if scored.is_empty() {
-            return format!("No graph matches for: {question}\n(Graph has {} nodes.)", self.nodes.len());
+            return format!(
+                "No graph matches for: {question}\n(Graph has {} nodes.)",
+                self.nodes.len()
+            );
         }
         let mut out = String::new();
         out.push_str(&format!("Relevant code for \"{question}\":\n"));
@@ -194,7 +197,10 @@ impl CodeGraph {
                         out.push_str("    … (more neighbors)\n");
                         break;
                     }
-                    out.push_str(&format!("    →{rel}: {}\n", CodeGraph::short(self.get(nid), nid)));
+                    out.push_str(&format!(
+                        "    →{rel}: {}\n",
+                        CodeGraph::short(self.get(nid), nid)
+                    ));
                 }
             }
             if out.len() > MAX_TOOL_OUTPUT_BYTES {
@@ -237,7 +243,8 @@ impl CodeGraph {
     }
 
     fn short(n: Option<&GraphNode>, id: &str) -> String {
-        n.and_then(|x| x.label.clone()).unwrap_or_else(|| id.to_string())
+        n.and_then(|x| x.label.clone())
+            .unwrap_or_else(|| id.to_string())
     }
 
     /// Details for one node (by id or exact label).
@@ -254,7 +261,10 @@ impl CodeGraph {
                 n.id,
                 n.file_type.as_deref().unwrap_or("?"),
                 n.source_file.as_deref().unwrap_or("?"),
-                n.source_location.as_deref().map(|l| format!("\nloc: {l}")).unwrap_or_default()
+                n.source_location
+                    .as_deref()
+                    .map(|l| format!("\nloc: {l}"))
+                    .unwrap_or_default()
             ),
             None => format!("No node `{id_or_label}`."),
         }
@@ -265,7 +275,11 @@ impl CodeGraph {
         let id = if self.by_id.contains_key(id_or_label) {
             id_or_label.to_string()
         } else {
-            match self.nodes.iter().find(|n| n.label.as_deref() == Some(id_or_label)) {
+            match self
+                .nodes
+                .iter()
+                .find(|n| n.label.as_deref() == Some(id_or_label))
+            {
                 Some(n) => n.id.clone(),
                 None => return format!("No node `{id_or_label}`."),
             }
@@ -278,7 +292,10 @@ impl CodeGraph {
                 }
                 out
             }
-            _ => format!("{} has no recorded neighbors.", Self::short(self.get(&id), &id)),
+            _ => format!(
+                "{} has no recorded neighbors.",
+                Self::short(self.get(&id), &id)
+            ),
         }
     }
 }
@@ -303,7 +320,9 @@ pub struct GraphIndex {
 
 impl GraphIndex {
     pub fn new(project_root: impl Into<PathBuf>) -> Self {
-        Self { project_root: project_root.into() }
+        Self {
+            project_root: project_root.into(),
+        }
     }
 
     /// graphify writes `graphify-out/graph.json` under the project root.
@@ -390,7 +409,11 @@ impl Tool for GraphQueryTool {
             Ok(g) => g,
             Err(r) => return Ok(r),
         };
-        Ok(ToolResult { tool: "graph_query".into(), ok: true, content: g.query(q, 8) })
+        Ok(ToolResult {
+            tool: "graph_query".into(),
+            ok: true,
+            content: g.query(q, 8),
+        })
     }
 }
 
@@ -415,7 +438,11 @@ impl Tool for GraphNeighborsTool {
             Ok(g) => g,
             Err(r) => return Ok(r),
         };
-        Ok(ToolResult { tool: "graph_neighbors".into(), ok: true, content: g.neighbors(id) })
+        Ok(ToolResult {
+            tool: "graph_neighbors".into(),
+            ok: true,
+            content: g.neighbors(id),
+        })
     }
 }
 
@@ -425,8 +452,12 @@ pub fn register_graph_tools(registry: &mut crate::tools::ToolRegistry, graph_pat
     if !graph_path.is_file() {
         return false;
     }
-    registry.register(Arc::new(GraphQueryTool { graph_path: graph_path.to_path_buf() }));
-    registry.register(Arc::new(GraphNeighborsTool { graph_path: graph_path.to_path_buf() }));
+    registry.register(Arc::new(GraphQueryTool {
+        graph_path: graph_path.to_path_buf(),
+    }));
+    registry.register(Arc::new(GraphNeighborsTool {
+        graph_path: graph_path.to_path_buf(),
+    }));
     true
 }
 
@@ -481,7 +512,9 @@ mod tests {
     #[test]
     fn locate_resolves_spoken_intent_to_a_jump_target() {
         let g = CodeGraph::from_json(FIXTURE).unwrap();
-        let loc = g.locate("take me to the login handler").expect("should locate");
+        let loc = g
+            .locate("take me to the login handler")
+            .expect("should locate");
         assert_eq!(loc.file, "src/auth.rs");
         assert_eq!(loc.line, 10); // parsed from "L10"
         assert!(loc.symbol.contains("login"));
@@ -508,7 +541,10 @@ mod tests {
     #[test]
     fn register_skips_when_no_graph_file() {
         let mut r = crate::tools::ToolRegistry::new();
-        assert!(!register_graph_tools(&mut r, Path::new("/nonexistent/graph.json")));
+        assert!(!register_graph_tools(
+            &mut r,
+            Path::new("/nonexistent/graph.json")
+        ));
         assert!(r.is_empty());
     }
 }

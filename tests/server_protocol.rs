@@ -128,7 +128,10 @@ async fn api_rejects_requests_without_the_private_capability() {
     );
     let resp = raw_request(addr, &req).await;
     assert!(resp.contains("401 Unauthorized"), "got: {resp}");
-    assert!(resp.contains("invalid local Ollamax API token"), "got: {resp}");
+    assert!(
+        resp.contains("invalid local Ollamax API token"),
+        "got: {resp}"
+    );
 }
 
 #[tokio::test]

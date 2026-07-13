@@ -9,6 +9,9 @@ name: release-app
 # and the report. Signing + notarization is the future paid step.
 #
 # Requires the same RELEASES_REPO_TOKEN secret as release.yml (cross-repo publish).
+# Each native runner attaches its verified installers directly to the release.
+# This avoids intermediate Actions artifact storage, which is independently
+# quota-limited and must not block an otherwise valid public release.
 
 on:
   push:
@@ -27,6 +30,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Release updates are serialized so the three native runners never race
+      # to create or update the same public GitHub Release.
+      max-parallel: 1
       matrix:
         include:
           - os: macos-latest
@@ -135,33 +141,21 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: app-${{ matrix.label }}
-          path: dist/*
-          if-no-files-found: error
-
-  publish:
-    name: publish app installers
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/app-v')
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: app-*
-          path: dist
-          merge-multiple: true
       # Publish onto the BASE version release (strip the `app-` prefix) so the app
       # installers live alongside everything else on a single "latest" release —
       # keeps the website's releases/latest/download/<asset> URLs working.
       - id: ver
+        if: startsWith(github.ref, 'refs/tags/app-v')
         run: echo "tag=${GITHUB_REF_NAME#app-}" >> "$GITHUB_OUTPUT"
-      - uses: softprops/action-gh-release@v2
+
+      - name: Publish verified installers directly
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.RELEASES_REPO }}
           token: ${{ secrets.RELEASES_REPO_TOKEN }}
           tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: main
           name: Ollamax ${{ steps.ver.outputs.tag }}
           body: |
             Standalone desktop app (UNSIGNED, ad-hoc-signed, Sattva-style) +

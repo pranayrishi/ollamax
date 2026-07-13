@@ -384,12 +384,11 @@ impl SkillsEngine {
 /// though dots are otherwise useful in versioned skill identifiers.
 fn validate_skill_name(name: &str) -> Result<()> {
     let bytes = name.as_bytes();
-    let valid_first = bytes
-        .first()
-        .is_some_and(|b| b.is_ascii_alphanumeric());
-    let valid_rest = bytes.iter().skip(1).all(|b| {
-        b.is_ascii_alphanumeric() || matches!(*b, b'.' | b'_' | b'-')
-    });
+    let valid_first = bytes.first().is_some_and(|b| b.is_ascii_alphanumeric());
+    let valid_rest = bytes
+        .iter()
+        .skip(1)
+        .all(|b| b.is_ascii_alphanumeric() || matches!(*b, b'.' | b'_' | b'-'));
     if !(1..=96).contains(&bytes.len()) || !valid_first || !valid_rest || name.contains("..") {
         anyhow::bail!(
             "unsafe skill name `{name}`; use [A-Za-z0-9][A-Za-z0-9._-]{{0,95}} without `..`"
@@ -435,7 +434,10 @@ mod tests {
             "A_1",
             max_length_name.as_str(),
         ] {
-            assert!(validate_skill_name(valid).is_ok(), "expected valid: {valid}");
+            assert!(
+                validate_skill_name(valid).is_ok(),
+                "expected valid: {valid}"
+            );
         }
         let too_long_name = "x".repeat(97);
         for unsafe_name in [
@@ -465,11 +467,17 @@ mod tests {
 
         let add = engine.add_skill(test_skill("../escaped")).await;
         assert!(add.is_err());
-        assert!(!outside.exists(), "unsafe skill name must not write outside skills dir");
+        assert!(
+            !outside.exists(),
+            "unsafe skill name must not write outside skills dir"
+        );
 
         let remove = engine.remove_skill("../escaped").await;
         assert!(remove.is_err());
-        assert!(!outside.exists(), "unsafe skill name must not remove outside skills dir");
+        assert!(
+            !outside.exists(),
+            "unsafe skill name must not remove outside skills dir"
+        );
     }
 
     #[tokio::test]
@@ -484,7 +492,9 @@ mod tests {
         .unwrap();
         let eng = SkillsEngine::new(dir.clone());
         eng.load_skills().await.unwrap();
-        let m = eng.best_match("please use the zqxwvtoken approach here").await;
+        let m = eng
+            .best_match("please use the zqxwvtoken approach here")
+            .await;
         assert_eq!(m.map(|s| s.name), Some("alpha-skill".to_string()));
         // A query sharing no >=4-char token with any skill matches nothing.
         assert!(eng.best_match("qqqzzz wwwyyy").await.is_none());

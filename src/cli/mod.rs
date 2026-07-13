@@ -473,7 +473,11 @@ pub enum PluginsAction {
         #[arg(help = "Task or query used for relevance matching")]
         query: Vec<String>,
 
-        #[arg(long, default_value = "3", help = "Maximum matching plugins to show (1-5)")]
+        #[arg(
+            long,
+            default_value = "3",
+            help = "Maximum matching plugins to show (1-5)"
+        )]
         max_plugins: usize,
     },
 }

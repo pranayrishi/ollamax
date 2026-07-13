@@ -125,7 +125,10 @@ fn canonical_output_root(out_dir: &Path) -> Result<PathBuf> {
             ));
         }
         Ok(metadata) if !metadata.is_dir() => {
-            return Err(anyhow!("output path {} is not a directory", out_dir.display()));
+            return Err(anyhow!(
+                "output path {} is not a directory",
+                out_dir.display()
+            ));
         }
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -151,7 +154,10 @@ fn canonical_output_root(out_dir: &Path) -> Result<PathBuf> {
         ));
     }
     if !metadata.is_dir() {
-        return Err(anyhow!("output path {} is not a directory", out_dir.display()));
+        return Err(anyhow!(
+            "output path {} is not a directory",
+            out_dir.display()
+        ));
     }
     let canonical = out_dir
         .canonicalize()
@@ -168,9 +174,9 @@ fn canonical_output_root(out_dir: &Path) -> Result<PathBuf> {
 fn is_safe_relative_path(path: &Path) -> bool {
     !path.as_os_str().is_empty()
         && !path.is_absolute()
-        && path.components().all(|component| {
-            matches!(component, Component::Normal(_) | Component::CurDir)
-        })
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
 /// Build a target only after proving that all existing components below the
@@ -240,7 +246,10 @@ fn reject_symlink_components(root: &Path, target: &Path) -> Result<()> {
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
             Err(error) => {
-                return Err(anyhow!("inspect output path {}: {error}", current.display()));
+                return Err(anyhow!(
+                    "inspect output path {}: {error}",
+                    current.display()
+                ));
             }
         }
     }

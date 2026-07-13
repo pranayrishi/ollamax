@@ -280,10 +280,7 @@ async fn redirecting_readme_requests_are_rejected_without_a_cross_origin_fetch()
     fake_task.abort();
 
     assert!(error.to_string().contains("returned HTTP 302"), "{error:#}");
-    assert!(!manager
-        .install_root()
-        .join("roboflow-supervision")
-        .exists());
+    assert!(!manager.install_root().join("roboflow-supervision").exists());
 }
 
 #[tokio::test]

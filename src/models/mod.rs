@@ -159,23 +159,143 @@ impl ModelRegistry {
         use License::*;
         let entries = vec![
             // --- Modest (~8 GB): runs on a laptop / small GPU / Apple Silicon ---
-            CuratedModel::new("Qwen3", "qwen3:4b", "4B", Modest, 3_500, Apache2, "general, coding"),
-            CuratedModel::new("Phi-4-mini", "phi4-mini", "3.8B", Modest, 3_300, Mit, "reasoning, compact"),
-            CuratedModel::new("Qwen2.5-Coder", "qwen2.5-coder:7b", "7B", Modest, 5_500, Apache2, "coding"),
-            CuratedModel::new("Gemma 3", "gemma3:4b", "4B", Modest, 4_000, Gemma, "general"),
+            CuratedModel::new(
+                "Qwen3",
+                "qwen3:4b",
+                "4B",
+                Modest,
+                3_500,
+                Apache2,
+                "general, coding",
+            ),
+            CuratedModel::new(
+                "Phi-4-mini",
+                "phi4-mini",
+                "3.8B",
+                Modest,
+                3_300,
+                Mit,
+                "reasoning, compact",
+            ),
+            CuratedModel::new(
+                "Qwen2.5-Coder",
+                "qwen2.5-coder:7b",
+                "7B",
+                Modest,
+                5_500,
+                Apache2,
+                "coding",
+            ),
+            CuratedModel::new(
+                "Gemma 3",
+                "gemma3:4b",
+                "4B",
+                Modest,
+                4_000,
+                Gemma,
+                "general",
+            ),
             // --- Single consumer GPU (~16–24 GB) ---
-            CuratedModel::new("Qwen3", "qwen3:14b", "14B", Single, 9_500, Apache2, "general, coding"),
-            CuratedModel::new("Qwen3-Coder", "qwen3-coder:30b", "30B (MoE)", Single, 20_000, Apache2, "coding, agentic"),
-            CuratedModel::new("Devstral Small", "devstral", "24B", Single, 15_000, Apache2, "agentic coding"),
-            CuratedModel::new("DeepSeek-Coder-V2", "deepseek-coder-v2:16b", "16B (MoE)", Single, 10_500, Other, "coding"),
-            CuratedModel::new("Gemma 3", "gemma3:27b", "27B", Single, 17_000, Gemma, "general"),
-            CuratedModel::new("Codestral", "codestral", "22B", Single, 13_500, MistralResearch, "coding (non-commercial license)"),
+            CuratedModel::new(
+                "Qwen3",
+                "qwen3:14b",
+                "14B",
+                Single,
+                9_500,
+                Apache2,
+                "general, coding",
+            ),
+            CuratedModel::new(
+                "Qwen3-Coder",
+                "qwen3-coder:30b",
+                "30B (MoE)",
+                Single,
+                20_000,
+                Apache2,
+                "coding, agentic",
+            ),
+            CuratedModel::new(
+                "Devstral Small",
+                "devstral",
+                "24B",
+                Single,
+                15_000,
+                Apache2,
+                "agentic coding",
+            ),
+            CuratedModel::new(
+                "DeepSeek-Coder-V2",
+                "deepseek-coder-v2:16b",
+                "16B (MoE)",
+                Single,
+                10_500,
+                Other,
+                "coding",
+            ),
+            CuratedModel::new(
+                "Gemma 3",
+                "gemma3:27b",
+                "27B",
+                Single,
+                17_000,
+                Gemma,
+                "general",
+            ),
+            CuratedModel::new(
+                "Codestral",
+                "codestral",
+                "22B",
+                Single,
+                13_500,
+                MistralResearch,
+                "coding (non-commercial license)",
+            ),
             // --- High-end / multi-GPU (large MoE) ---
-            CuratedModel::new("DeepSeek-R1", "deepseek-r1:671b", "671B (MoE)", HighEnd, 400_000, Mit, "reasoning, coding"),
-            CuratedModel::new("Qwen3", "qwen3:235b", "235B (MoE)", HighEnd, 150_000, Apache2, "frontier general"),
-            CuratedModel::new("Llama 4 Scout", "llama4:scout", "109B (MoE)", HighEnd, 70_000, Llama, "huge context"),
-            CuratedModel::new("GLM-4.6", "glm4:latest", "large", HighEnd, 60_000, Mit, "coding, agentic"),
-            CuratedModel::new("Mistral Large", "mistral-large", "123B", HighEnd, 73_000, MistralResearch, "general (non-commercial license)"),
+            CuratedModel::new(
+                "DeepSeek-R1",
+                "deepseek-r1:671b",
+                "671B (MoE)",
+                HighEnd,
+                400_000,
+                Mit,
+                "reasoning, coding",
+            ),
+            CuratedModel::new(
+                "Qwen3",
+                "qwen3:235b",
+                "235B (MoE)",
+                HighEnd,
+                150_000,
+                Apache2,
+                "frontier general",
+            ),
+            CuratedModel::new(
+                "Llama 4 Scout",
+                "llama4:scout",
+                "109B (MoE)",
+                HighEnd,
+                70_000,
+                Llama,
+                "huge context",
+            ),
+            CuratedModel::new(
+                "GLM-4.6",
+                "glm4:latest",
+                "large",
+                HighEnd,
+                60_000,
+                Mit,
+                "coding, agentic",
+            ),
+            CuratedModel::new(
+                "Mistral Large",
+                "mistral-large",
+                "123B",
+                HighEnd,
+                73_000,
+                MistralResearch,
+                "general (non-commercial license)",
+            ),
         ];
         Self { entries }
     }
@@ -221,10 +341,13 @@ impl ModelRegistry {
     /// 4. the largest model that fits;
     /// 5. the smallest curated model overall (last resort).
     pub fn recommend(&self, free_vram_mb: usize, installed: &[String]) -> Option<&CuratedModel> {
-        let is_installed = |m: &CuratedModel| installed.iter().any(|i| tag_matches(&m.ollama_tag, i));
+        let is_installed =
+            |m: &CuratedModel| installed.iter().any(|i| tag_matches(&m.ollama_tag, i));
         let fits = self.fits(free_vram_mb); // biggest-first
         fits.iter()
-            .find(|m| is_installed(m) && m.license.commercial_friendly() && m.strengths.contains("coding"))
+            .find(|m| {
+                is_installed(m) && m.license.commercial_friendly() && m.strengths.contains("coding")
+            })
             .or_else(|| fits.iter().find(|m| is_installed(m)))
             .or_else(|| fits.iter().find(|m| m.license.commercial_friendly()))
             .or_else(|| fits.first())
@@ -315,10 +438,14 @@ mod tests {
         // 8 GB machine: only small models, and nothing high-end.
         let small = reg.fits(8_000);
         assert!(!small.is_empty());
-        assert!(small.iter().all(|m| (m.approx_vram_mb as f64 * 1.25) as usize <= 8_000));
+        assert!(small
+            .iter()
+            .all(|m| (m.approx_vram_mb as f64 * 1.25) as usize <= 8_000));
         assert!(small.iter().all(|m| m.tier != HardwareTier::HighEnd));
         // Biggest-first ordering.
-        assert!(small.windows(2).all(|w| w[0].approx_vram_mb >= w[1].approx_vram_mb));
+        assert!(small
+            .windows(2)
+            .all(|w| w[0].approx_vram_mb >= w[1].approx_vram_mb));
     }
 
     #[test]
@@ -343,7 +470,10 @@ mod tests {
         let reg = ModelRegistry::seed();
         let rec = reg.recommend(6_000, &[]).unwrap();
         assert!((rec.approx_vram_mb as f64 * 1.25) as usize <= 6_000);
-        assert!(rec.license.commercial_friendly(), "default should be commercial-safe");
+        assert!(
+            rec.license.commercial_friendly(),
+            "default should be commercial-safe"
+        );
     }
 
     #[test]
@@ -360,8 +490,15 @@ mod tests {
     fn mark_installed_matches_quantized_suffix() {
         let mut reg = ModelRegistry::seed();
         reg.mark_installed(&["qwen2.5-coder:7b-instruct-q4_K_M".to_string()]);
-        let m = reg.all().iter().find(|m| m.ollama_tag == "qwen2.5-coder:7b").unwrap();
-        assert!(m.installed, "should match the seed tag as a prefix despite quant suffix");
+        let m = reg
+            .all()
+            .iter()
+            .find(|m| m.ollama_tag == "qwen2.5-coder:7b")
+            .unwrap();
+        assert!(
+            m.installed,
+            "should match the seed tag as a prefix despite quant suffix"
+        );
     }
 
     #[test]
@@ -374,9 +511,19 @@ mod tests {
             .filter(|m| m.installed)
             .map(|m| m.ollama_tag.as_str())
             .collect();
-        assert_eq!(installed, vec!["qwen3:4b"], "only the exact size pulled is installed");
+        assert_eq!(
+            installed,
+            vec!["qwen3:4b"],
+            "only the exact size pulled is installed"
+        );
         // The bigger qwen3 sizes must NOT be marked installed.
-        assert!(!reg.all().iter().any(|m| m.ollama_tag == "qwen3:14b" && m.installed));
-        assert!(!reg.all().iter().any(|m| m.ollama_tag == "qwen3:235b" && m.installed));
+        assert!(!reg
+            .all()
+            .iter()
+            .any(|m| m.ollama_tag == "qwen3:14b" && m.installed));
+        assert!(!reg
+            .all()
+            .iter()
+            .any(|m| m.ollama_tag == "qwen3:235b" && m.installed));
     }
 }

@@ -620,8 +620,10 @@ mod tests {
             "small:1.5b",
             2_000, // ~2 GB free — can't hold both models
         );
-        let overrides: std::collections::BTreeSet<String> =
-            subs.iter().filter_map(|s| s.model_override.clone()).collect();
+        let overrides: std::collections::BTreeSet<String> = subs
+            .iter()
+            .filter_map(|s| s.model_override.clone())
+            .collect();
         assert!(
             overrides.len() <= 1,
             "VRAM-too-small must collapse to one model, got {overrides:?}"
