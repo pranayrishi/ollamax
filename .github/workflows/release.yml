@@ -85,6 +85,7 @@ jobs:
 
       - name: Package the VS Code extension (.vsix)
         working-directory: editor-integrations/forge-vscode
+        shell: bash
         # Pack it locally on each native runner so every bundle is self-contained
         # and the release does not depend on Actions artifact storage.
         run: npx --yes @vscode/vsce@3 package --no-dependencies --allow-missing-repository -o "$GITHUB_WORKSPACE/forge-vscode.vsix"
@@ -117,7 +118,8 @@ jobs:
 
       - name: Smoke-test the binary (windows)
         if: runner.os == 'Windows'
-        run: target\${{ matrix.target }}\release\forge.exe --version
+        shell: pwsh
+        run: '& ".\target\${{ matrix.target }}\release\forge.exe" --version'
 
       - name: Assemble bundle + checksum
         shell: bash

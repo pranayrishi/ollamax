@@ -63,3 +63,7 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The action's SARIF artifact is optional. Keeping it off preserves
+          # the scan result when this repository's Actions artifact quota is
+          # full; a detected secret still fails this step.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
