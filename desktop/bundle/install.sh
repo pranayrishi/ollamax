@@ -34,7 +34,7 @@ fi
 
 # 3) Ollama prerequisite -----------------------------------------------------
 if command -v ollama >/dev/null 2>&1; then
-  echo "✓ Ollama detected — pull a model, e.g.:  ollama pull qwen2.5-coder:7b"
+  echo "✓ Ollama detected — pull a model, e.g.:  ollama pull qwen3.5:4b"
 else
   echo "! Ollama NOT found — install it from https://ollama.com/download (required for local inference)"
 fi

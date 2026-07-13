@@ -79,3 +79,94 @@ jobs:
       - name: install.sh dry-run
         if: runner.os != 'Windows'
         run: ./install.sh --dry-run --prefix /tmp/forge-ci
+
+  desktop:
+    name: desktop validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the bundled forge engine
+        run: cargo build --release --locked
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop-app/package-lock.json
+
+      - name: Install and test desktop sources
+        working-directory: desktop-app
+        run: |
+          npm ci
+          npm test
+          npm run validate-runtime
+          npm run prepare-assets
+          node --check main.js
+          node --check preload.js
+          node --check lib/desktop-security.js
+          node --check lib/workspace-paths.js
+          node --check spatial-preload.js
+          node --check renderer/hub.js
+          node --check renderer/desktop-points.js
+          node --check renderer/desktop-voice.js
+          node --check renderer/desktop-spatial.js
+          node --check renderer/spatial-overlay.js
+
+      # `--dir` runs Electron Builder's afterPack hook without producing an
+      # installer. That hook checks the actual staged Resources directory.
+      - name: Smoke-test staged desktop package contents
+        working-directory: desktop-app
+        run: npx electron-builder --linux dir --publish never
+
+  extension:
+    name: editor extension validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test and package the VS Code extension
+        working-directory: editor-integrations/forge-vscode
+        run: |
+          node --test src/external-url.test.js src/workspace-preview-paths.test.js
+          node --check src/auth.js
+          node --check src/hub.js
+          node --check src/chatViewProvider.js
+          node --check src/workspace-preview-paths.js
+          npx --yes @vscode/vsce@3 package --no-dependencies --allow-missing-repository -o /tmp/forge-vscode.vsix
+
+  website:
+    name: website validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install, test, typecheck, and build website
+        working-directory: website
+        env:
+          AUTH_SECRET: ci-auth-secret-at-least-thirty-two-characters
+          APP_JWT_SECRET: ci-app-jwt-secret-at-least-thirty-two-characters
+          AUTH_GITHUB_ID: ci-github-id
+          AUTH_GITHUB_SECRET: ci-github-secret
+          AUTH_GOOGLE_ID: ci-google-id
+          AUTH_GOOGLE_SECRET: ci-google-secret
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ollamax_ci
+          NEXT_PUBLIC_SITE_URL: https://ci.ollamax.invalid
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+          npm run build

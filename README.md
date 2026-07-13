@@ -4,12 +4,16 @@
 
 > [简体中文](README.zh.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Português](README.pt.md)
 
-> **Status: pre-alpha (v0.2.0).** The CLI ships hardware detection, bundled
+> **Status: pre-alpha.** This source tree ships hardware detection, bundled
 > skill recipes, a security/secret scanner, controlled local Agent/Team
-> workspace editing, curated documentation-only GitHub knowledge plugins, and
-> local evaluation records. The legacy parallel build path remains text-oriented;
-> worktrees, executable plugins, and an evaluation runner are not yet shipped.
-> See [Roadmap](#roadmap) for current limits. PRs welcome —
+> workspace editing, a reviewed local-model catalog, explicit local voice and
+> screen-region context in the Electron app, curated documentation-only GitHub
+> knowledge plugins, and local evaluation records. The legacy parallel build
+> path remains text-oriented; worktrees, executable plugins, and an evaluation
+> runner are not yet shipped. The public `v0.2.0` download predates the local
+> voice, spatial-context, and expanded-model work described below; it must not
+> be treated as containing it. See [Release sequence](#release-sequence) and
+> [Roadmap](#roadmap) for current limits. PRs welcome —
 > [good-first-issue label](https://github.com/pranayrishi/ollamax/labels/good%20first%20issue).
 
 ---
@@ -70,8 +74,110 @@ forge status                      # show detected hardware + recommended model
 forge status --models             # also lists models known to Ollama
 ```
 
-`forge status` is the most useful command in v0.2.0. It is also the cheapest
-way to verify your install works without pulling a model.
+`forge status` is the cheapest way to verify a source or packaged install
+without pulling a model.
+
+## Model catalog and local runtimes
+
+`forge models` distinguishes models that can be pulled by a local Ollama
+daemon from models that need separately operated server infrastructure. It only
+prints an `ollama pull` command for a reviewed Ollama-local tag; it does not
+present a cloud service or a server-class checkpoint as a laptop download.
+
+For a new local setup, start with a model that fits your hardware and leave
+room for the context cache:
+
+```bash
+ollama pull qwen3.5:4b       # compact local generalist / visual model
+ollama pull gemma4:e2b       # modest local Gemma 4 visual model
+ollama pull deepseek-r1:8b   # local DeepSeek reasoning model; text-only
+forge models
+```
+
+Qwen 3.5 and Gemma 4 are the current consumer-local visual options in the
+catalog. DeepSeek-R1 `:8b` is a useful local reasoning partner, but it cannot
+read a screen crop on its own, so pair it with an installed vision-capable
+model for spatial work. Hardware recommendations are conservative estimates,
+not a promise that a model's maximum context will fit alongside other loaded
+models.
+
+DeepSeek V4 Flash/Pro and MiniMax M3 are shown as **separately self-hosted,
+server-class** options. They are not Ollama pulls and are not casual offline
+laptop installs. Running either one requires an appropriately provisioned,
+locally operated inference server (for example a compatible vLLM, SGLang, or
+Transformers deployment). Ollamax routes an **explicitly configured,
+loopback-only** OpenAI-compatible endpoint in Chat, Agent, Research, and Team;
+the managed local server and desktop model picker use the same selector. It
+does not provision, size, or operate that server, and Auto routing never
+silently sends a request there. Declare the endpoint and one or more served
+models, then select a `local:<endpoint>/<model>` name:
+
+```toml
+[[local_endpoints]]
+id = "lab"
+url = "http://127.0.0.1:8000" # normalized and restricted to loopback /v1
+max_parallel_requests = 2
+
+[[local_endpoints.models]]
+id = "deepseek-v4-flash"
+served_model = "DeepSeek-V4-Flash"
+label = "Lab DeepSeek V4 Flash"
+thinking = true
+context_window_tokens = 32768
+```
+
+```bash
+forge chat --model local:lab/deepseek-v4-flash "Summarize this design"
+forge agent --model local:lab/deepseek-v4-flash "Implement the approved plan"
+forge team --model local:lab/deepseek-v4-flash --parallel-scouts "Add tests"
+```
+
+An optional `api_key_env` may name a local server bearer-token environment
+variable; tokens are never stored in `forge.toml` or displayed by the picker.
+Configured endpoints share a bounded request lane, including the parallel
+read-only scout phase. Build/Orchestrator remains Ollama-only for now and
+rejects `local:` selectors clearly rather than pretending it can launch or
+manage a server-class runtime. Direct catalog names for separately self-hosted
+models are rejected with the same `local:<endpoint>/<model>` instruction,
+rather than being sent to Ollama. A cataloged cloud-only tag such as
+`minimax-m3:cloud` is also rejected before any Ollama request; it cannot be
+used as a substitute for a self-hosted model. More generally, a direct
+case-insensitive `:cloud` suffix (for example `qwen3.5:cloud` or
+`gemma4:cloud`) is rejected rather than being mistaken for an offline model.
+The catalog also discloses
+`minimax-m3:cloud` as cloud-only specifically so it cannot be mistaken for a
+free offline model. Review each model's license and deployment notes before
+commercial use—MiniMax M3 in particular has notice requirements.
+
+The catalog is based on the current upstream model pages: [Qwen 3.5 on
+Ollama](https://registry.ollama.com/library/qwen3.5), [Gemma 4 on
+Ollama](https://registry.ollama.com/library/gemma4), [DeepSeek V4
+Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash), and [MiniMax
+M3](https://huggingface.co/MiniMaxAI/MiniMax-M3). Those sources are also the
+place to check model licenses, hardware requirements, and deployment guidance
+before changing a local endpoint.
+
+## Release sequence
+
+The public release is assembled in two deliberately ordered tag workflows. Do
+not update website download links or describe a public version as containing a
+feature until both workflows have completed and the public release is visible.
+
+```bash
+# 1. Build and attach the Electron installers to a draft for this version.
+git tag app-vX.Y.Z
+git push origin app-vX.Y.Z
+
+# 2. After the app workflow succeeds, build the CLI/VS Code bundles, verify the
+#    complete asset contract, and publish that same draft.
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+`app-vX.Y.Z` is an internal staging tag, not a public download release. The
+following `vX.Y.Z` tag publishes only after the desktop and CLI/VS Code assets
+are present. This is why the existing public `v0.2.0` assets remain a baseline
+until a newer pair of workflows has passed.
 
 ---
 
@@ -112,22 +218,26 @@ the legacy text-only build workflow:
 
 ```bash
 forge team "Add an authenticated health endpoint and its tests"
-forge team --parallel-scouts --scout-model qwen2.5-coder:1.5b \
-  --planner-model qwen2.5-coder:7b --yes "Refactor the API boundary"
+forge team --parallel-scouts --scout-model qwen3.5:4b \
+  --planner-model deepseek-r1:8b --yes "Refactor the API boundary"
 ```
 
 The default topology is intentionally conservative: two read-only scouts, a
 read-only planner hand-off, one writer, fixed repository-detected checks, and
-an advisory reviewer. The writer is always single-lane. `--parallel-scouts`
-only overlaps the two read-only scouts when your project enables at least two
-workers; it never enables simultaneous writers in one checkout. A `Verified`
-result requires a successful writer mutation plus a passing functional test
-command (`cargo test --workspace`, `npm test`, or `python -m pytest`) after all
-detected checks pass. A diff/lint/typecheck-only run is reported as
-`ChecksPassed` and still needs human acceptance. Neither status substitutes for
-CI, security review, or deployment validation. In `--autonomy auto`, checks
-execute project code on the host, so use confirmation for unfamiliar
-repositories.
+an advisory reviewer. The worker executor enforces the configured concurrency
+limit, tracks pending/running/terminal worker state, and returns results in
+input order; parallel work is real but bounded. The writer is always
+single-lane. `--parallel-scouts` only overlaps the two read-only scouts when
+your project enables at least two workers; it never enables simultaneous
+writers in one checkout. This is intentional coordination, not a collection of
+independent worktrees. A `Verified` result requires a successful writer
+mutation plus a passing functional test command (`cargo test --workspace`,
+`npm test`, or `python -m pytest`) after all detected checks pass. A
+diff/lint/typecheck-only run is reported as `ChecksPassed` and still needs human
+acceptance. Neither status substitutes for CI, security review, or deployment
+validation. Team runs are bounded/restartable rather than an unattended
+infinite process. In `--autonomy auto`, checks execute project code on the
+host, so use confirmation for unfamiliar repositories.
 
 The local server exposes the same workflow at `POST /api/team`; the VS Code
 extension, standalone app, and browser console include a Team mode with
@@ -195,9 +305,41 @@ The server binds only to loopback and issues a
 per-process capability to its trusted desktop, VS Code, and console clients;
 do not expose the local port to an untrusted reverse proxy.
 
+## Desktop voice and spatial context
+
+The Electron desktop app adopts the useful interaction shape of a cursor-side
+assistant without requiring paid speech services: explicit push-to-talk records
+audio only after the user holds the control, then sends the resulting WAV to a
+local `whisper.cpp` executable and local model when one is configured. Optional
+spoken responses use a local system voice (`say` on macOS, SAPI on Windows, or
+`espeak` where available), or an explicitly configured local TTS executable.
+There is no hidden cloud STT/TTS fallback. If a release has not staged a
+Whisper runtime and model, the voice control says so and remains unavailable
+until local setup is completed.
+
+**Select region** opens an explicit lasso overlay. A screenshot is captured
+only after that action, then the chosen display region is cropped and size
+capped before it is attached as visual context. The app does not send the full
+desktop to the model, does not save the crop as a workspace file, and clears
+screen-derived visual briefs after the turn; those briefs are not added to
+Ollamax memory or replay logs. Spatial context requires a loopback Ollama
+endpoint and an installed vision model. In Chat, automatic routing selects an
+installed local vision model. In Agent and Team, a separate local vision worker
+first produces an untrusted evidence brief for the coding model.
+
+A visual brief can describe UI evidence—it cannot click the operating system,
+read outside the selected crop, alter a project, or bypass Agent/Team approval
+and workspace boundaries. For example, selecting a search bar can help an
+Agent identify its layout before implementing a requested equivalent, but file
+writes still follow the selected autonomy mode and normal confirmation flow.
+
 ---
 
-## What works in v0.2.0
+## What is implemented in this source tree
+
+The table describes the current source tree. It is not a claim about the
+already-published `v0.2.0` artifacts; use the [release sequence](#release-sequence)
+before representing a newer feature as downloadable.
 
 | Command                      | Status | What it does                                                                                  |
 | :--------------------------- | :----: | :-------------------------------------------------------------------------------------------- |
@@ -208,6 +350,7 @@ do not expose the local port to an untrusted reverse proxy.
 | `forge rules list/init/show/path` | ✅ | **Persistent always-rules.** Drop Markdown files into `~/.config/ollama-forge/rules/` and they get prepended to every system prompt across `chat`, `research`, `run-skill`, `analyze`, `test`, and `build`. |
 | `forge build "..." -o dir/`  |   ✅   | Legacy text-oriented parallel orchestration; `--output` extracts labeled code blocks and writes them to disk. Use `forge team` for controlled workspace edits. |
 | `forge status`               |   ✅   | Hardware (NVIDIA / AMD / Apple Silicon / Intel / CPU), recommended model, Ollama health, loaded models |
+| `forge models`               |   ✅   | Reviewed Qwen, Gemma 4, DeepSeek, and MiniMax catalog with explicit Ollama-local, self-hosted, and cloud-only labels; only local Ollama entries get pull commands |
 | `forge --version`            |   ✅   | Includes git short SHA so a build can be pinned for replay/debug                              |
 | `forge optimize`             |   ✅   | Prints a tuned `Modelfile` for your hardware                                                  |
 | `forge audit <dir>`          |   ✅   | Walks the dir, runs the secret scanner, exits 1 on Critical/High; `--json` for CI consumers   |
@@ -253,12 +396,12 @@ of 250 ms prevents the loop from hammering DDG into a temporary IP ban.
 
 ### Heterogeneous parallel execution
 
-`forge build` runs multiple workers in parallel on **different models at
-the same time**. Architecture work routes to the largest installed model,
-boilerplate (frontend / tests) routes to the smallest, balanced work uses
-the analyzer's pick. Distinct models are preloaded *concurrently* into
-Ollama (which serializes per-model but not across models), so a 32B and a
-3B can warm up at the same time.
+`forge build` runs multiple workers in parallel on **different installed
+models**. Architecture work routes to the largest installed model, boilerplate
+(frontend / tests) routes to the smallest, and balanced work uses the
+analyzer's pick. Distinct models are preloaded in a separately bounded lane,
+while execution workers obey the configured concurrency cap. Ollama may still
+serialize work per model and hardware can be the practical bottleneck.
 
 The router is **VRAM-aware**: if the sum of selected models wouldn't fit
 in `free_vram_mb`, the router collapses the assignment to the largest
@@ -320,9 +463,9 @@ src/
 ├── tools/        descriptor-confined workspace tools and guarded shell
 ├── orchestrator/ planner→executor→merger pipeline (scaffold)
 ├── router/       complexity heuristic → model tier selection
-├── executor/     parallel worker pool (scaffold)
+├── executor/     bounded parallel worker + preload pools
 ├── context/      sliding-window context manager + Modelfile generator
-├── providers/    Ollama HTTP client (`/api/generate`, `/api/chat`, `/api/tags`)
+├── providers/    Ollama client + strict loopback OpenAI-compatible client
 ├── security/     regex secret scanner + audit log
 ├── monitoring/   sysinfo-based hardware detection (VRAM detection is best-effort)
 └── skills/       JSON recipe loader
@@ -342,8 +485,9 @@ version = "1.0"
 
 [ollama]
 url = "http://127.0.0.1:11434"
-default_model = "llama3.2:3b"
-planning_model = "qwen2.5-coder:7b"
+default_model = "qwen3.5:4b"
+planning_model = "deepseek-r1:8b"
+execution_models = ["qwen3.5:4b", "deepseek-r1:8b", "qwen3.5:9b", "gemma4:12b"]
 
 [execution]
 parallel_workers = 4
@@ -357,8 +501,11 @@ scan_secrets = true
 enforced = true
 ```
 
-Defaults are picked for an 8 GB VRAM machine. `forge status` will tell you
-whether your hardware can do better.
+The included starter file is a balanced example, not a promise that every
+listed model fits an 8 GB GPU at once. `forge status` and `forge models` expose
+the detected hardware and catalog caveats; leave headroom for the context cache
+and prefer one small visual model plus one text/reasoning model on consumer
+hardware.
 
 `forge.toml` is a project-local override and is loaded automatically from the
 current directory. You can also select it explicitly with
@@ -406,17 +553,21 @@ bundled recipe parses.
 
 ## Privacy
 
-All inference goes to your local Ollama daemon at `http://127.0.0.1:11434` by
-default. The workspace Agent and local console register no web or MCP tools by
-default, so code-agent work stays on-device. The research command and an
-explicit web-tools option can contact their named public sources; the server
-discloses that egress in the task stream. The secret scanner runs *before*
-content is sent to the model to prevent accidental leakage of credentials in
-your codebase.
+By default, inference goes to your local Ollama daemon at
+`http://127.0.0.1:11434`. The optional OpenAI-compatible provider is deliberately
+loopback-only: it rejects remote hosts and is for a separately operated local
+inference server, not an internet API. The workspace Agent and local console
+register no web or MCP tools by default, so code-agent work stays on-device.
+The research command and an explicit web-tools option can contact their named
+public sources; the server discloses that egress in the task stream. The secret
+scanner runs *before* content is sent to the model to prevent accidental
+leakage of credentials in your codebase.
 
-This is verifiable — there are exactly two places `reqwest` is constructed
-([`src/providers/ollama.rs`](src/providers/ollama.rs)), both pointing at the
-configured `ollama_url`.
+Voice recognition and speech output are also local-only as described in
+[Desktop voice and spatial context](#desktop-voice-and-spatial-context).
+Screen-region context is limited to an explicit user selection and, for visual
+requests, is rejected unless the Ollama endpoint is loopback. A cloud-only
+catalog entry remains a disclosure, not a local routing target.
 
 ---
 
@@ -424,7 +575,7 @@ configured `ollama_url`.
 
 Honest list. Not sorted by hype.
 
-- [ ] Wire the orchestrator end-to-end (planner → parallel executor → merger)
+- [ ] Complete the legacy orchestrator's end-to-end planner → executor → merger workflow
 - [ ] `SKILL.md` YAML format compatibility
 - [ ] GBNF grammar-constrained tool calls (llama.cpp feature exposure)
 - [ ] Deterministic replay log (model digest + seed + prompt hash)
@@ -440,7 +591,7 @@ Honest list. Not sorted by hype.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The fastest way to help right now is
 to file issues for any rough edge in `forge status` or `forge optimize` —
-those are the surfaces most likely to ship in v0.2.0.
+those are the surfaces most likely to change next.
 
 ---
 

@@ -14,9 +14,9 @@ export function Privacy() {
           <article className="surface p-6">
             <h3 className="mb-3 text-2xl leading-none tracking-[-0.02em] text-foreground">Inference never touches our servers</h3>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              Prompts, code, and model responses run on your machine via local Ollama, or go directly
-              from your machine to a provider you choose. Our backend never receives, proxies, logs,
-              or stores any of it. There is literally no table in our database for it.
+              Prompts, code, and model responses run through local Ollama or an explicitly configured,
+              loopback self-hosted server. Our backend never receives, proxies, logs, or stores any of it.
+              There is literally no table in our database for it.
             </p>
           </article>
           <article className="surface-subtle p-6">

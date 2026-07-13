@@ -1,7 +1,7 @@
 {
   "name": "ollama-forge-app",
   "productName": "Ollamax",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local-first AI coding — a standalone desktop app with Agent and controlled Team workflows on your own hardware via local Ollama.",
   "author": "Ollamax",
   "license": "MIT",
@@ -10,13 +10,17 @@
   "private": true,
   "scripts": {
     "prepare-assets": "node scripts/prepare.mjs",
+    "stage-whisper-runtime": "node scripts/stage-whisper-runtime.mjs",
+    "validate-runtime": "node scripts/validate-runtime.mjs",
+    "test": "node --test spatial-selection.test.js test/cursor-buddy-state.test.js test/desktop-security.test.js test/hub-input-safety.test.js test/model-output-escaping.test.js test/point-directives.test.js test/voice-runtime.test.js test/workspace-paths.test.js test/package-validation.test.js",
     "start": "npm run prepare-assets && electron .",
-    "dist": "npm run prepare-assets && electron-builder",
-    "dist:mac": "npm run prepare-assets && electron-builder --mac",
-    "dist:win": "npm run prepare-assets && electron-builder --win",
-    "dist:linux": "npm run prepare-assets && electron-builder --linux"
+    "dist": "npm run test && npm run validate-runtime && npm run prepare-assets && electron-builder",
+    "dist:mac": "npm run test && npm run validate-runtime && npm run prepare-assets && electron-builder --mac",
+    "dist:win": "npm run test && npm run validate-runtime && npm run prepare-assets && electron-builder --win",
+    "dist:linux": "npm run test && npm run validate-runtime && npm run prepare-assets && electron-builder --linux"
   },
   "devDependencies": {
+    "@electron/asar": "^3.4.1",
     "electron": "^43.1.0",
     "electron-builder": "^26.15.3",
     "@electron/fuses": "^1.8.0"
@@ -33,6 +37,11 @@
     "files": [
       "main.js",
       "preload.js",
+      "cursor-buddy-preload.js",
+      "cursor-buddy-state.js",
+      "spatial-preload.js",
+      "spatial-selection.js",
+      "lib/**/*",
       "renderer/**/*",
       "package.json",
       "!**/*.map"
@@ -43,7 +52,8 @@
     },
     "extraResources": [
       { "from": "assets/", "to": "assets/" },
-      { "from": "bin/", "to": "bin/" }
+      { "from": "bin/", "to": "bin/" },
+      { "from": "voice/", "to": "voice/" }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -55,6 +65,9 @@
       "icon": "assets/icon.icns",
       "hardenedRuntime": true,
       "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Ollamax uses the microphone only while you hold the local voice-command control. Audio is transcribed on this device."
+      },
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist"
     },

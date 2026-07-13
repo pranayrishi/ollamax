@@ -12,7 +12,7 @@ const faqs = [
   },
   {
     q: "Does my code get sent to your servers?",
-    a: "No. Inference runs locally on Ollama (or goes directly from your machine to a provider you configure). We never receive prompts, code, file contents, paths, or repo names. The backend handles accounts, the Hub catalog, downloads, and anonymous usage metadata only.",
+    a: "No. In the local-first configuration, inference runs through local Ollama or an explicitly configured loopback self-hosted server. We never receive prompts, code, file contents, paths, or repo names. Ollamax has no hosted-provider integration or automatic cloud fallback; the backend handles accounts, the Hub catalog, downloads, and anonymous usage metadata only.",
   },
   {
     q: "What about telemetry / the usage dashboard?",
@@ -32,7 +32,7 @@ const faqs = [
   },
   {
     q: "What does it cost to run?",
-    a: "The local app is free and open source. Cloud models, if you choose to use them, are billed by that provider directly — not by us.",
+    a: "The local app is free and open source, with no hosted-model billing path. If you operate a server-class local model, its hardware and hosting costs are yours to provision; Ollamax does not run it for you.",
   },
 ];
 

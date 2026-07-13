@@ -24,6 +24,11 @@ permissions:
 
 env:
   RELEASES_REPO: pranayrishi/ollamax-releases
+  # The tag is asserted against this commit after checkout so a moved tag or a
+  # different upstream revision cannot silently change a public installer.
+  WHISPER_CPP_VERSION: v1.9.1
+  WHISPER_CPP_COMMIT: f049fff95a089aa9969deb009cdd4892b3e74916
+  WHISPER_MODEL_URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 
 jobs:
   prepare-public-release:
@@ -128,6 +133,17 @@ jobs:
             exit 1
           }
 
+      - name: Assert the Linux artifact is built on x64
+        if: matrix.label == 'linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          [[ "$arch" == "x86_64" ]] || {
+            echo "expected an x86_64 Linux runner for Ollamax-linux-x64, got $arch" >&2
+            exit 1
+          }
+
       - name: Build the forge engine (bundled into the app)
         uses: dtolnay/rust-toolchain@stable
       - name: Test the bundled forge engine
@@ -138,6 +154,33 @@ jobs:
         with:
           node-version: 22
 
+      # A tag is the public package identity. Refuse to produce a draft whose
+      # tag says one version while the bundled CLI, Electron app, or VS Code
+      # panel says another.
+      - name: Assert app release tag matches shipped package versions
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${GITHUB_REF_NAME#app-v}"
+          node - "$expected" <<'NODE'
+          const fs = require("fs");
+          const expected = process.argv[2];
+          const cargo = fs.readFileSync("Cargo.toml", "utf8");
+          const cargoVersion = /^\s*version\s*=\s*"([^"]+)"\s*$/m.exec(cargo)?.[1];
+          const versions = {
+            "Cargo.toml": cargoVersion,
+            "desktop-app/package.json": JSON.parse(fs.readFileSync("desktop-app/package.json", "utf8")).version,
+            "desktop-app/package-lock.json": JSON.parse(fs.readFileSync("desktop-app/package-lock.json", "utf8")).version,
+            "editor-integrations/forge-vscode/package.json": JSON.parse(fs.readFileSync("editor-integrations/forge-vscode/package.json", "utf8")).version,
+          };
+          const mismatches = Object.entries(versions).filter(([, version]) => version !== expected);
+          if (mismatches.length) {
+            throw new Error(`release tag v${expected} does not match ${mismatches.map(([file, version]) => `${file}=${version ?? "missing"}`).join(", ")}`);
+          }
+          console.log(`verified shipped package versions: ${expected}`);
+          NODE
+
       # node-pty (the integrated terminal) is a native module rebuilt by node-gyp.
       # The runners ship Python 3.12+, which removed `distutils` → node-gyp fails
       # ("No module named 'distutils'"). Pin Python 3.11 (still has distutils) so
@@ -146,14 +189,140 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install + package the app (prepare.mjs stages the engine + UI)
+      - name: Install desktop packaging dependencies
         working-directory: desktop-app
         env:
           # `python` resolves to the pinned 3.11 on all runners (setup-python).
           npm_config_python: python
+        run: npm ci
+
+      # The checked-in manifest is intentionally unbundled. Only this
+      # disposable release workspace may flip it after all three local files
+      # have been built/downloaded and verified by stage-whisper-runtime.mjs.
+      - name: Assert source voice manifest is intentionally unbundled
+        working-directory: desktop-app
+        run: >-
+          node -e "const fs=require('fs'); const manifest=JSON.parse(fs.readFileSync('voice/manifest.json','utf8')); if (manifest?.recognition?.bundled !== false) throw new Error('source voice manifest must remain bundled:false before release staging');"
+
+      - name: Build pinned whisper.cpp runtime (macOS/Linux)
+        if: matrix.label != 'windows-x64'
+        shell: bash
         run: |
-          npm ci
-          npm run dist
+          set -euo pipefail
+          source_dir="${RUNNER_TEMP}/ollamax-whisper.cpp"
+          rm -rf "$source_dir"
+          git clone --depth 1 --branch "$WHISPER_CPP_VERSION" \
+            https://github.com/ggml-org/whisper.cpp.git "$source_dir"
+          actual_commit="$(git -C "$source_dir" rev-parse HEAD)"
+          [[ "$actual_commit" == "$WHISPER_CPP_COMMIT" ]] || {
+            echo "whisper.cpp $WHISPER_CPP_VERSION resolved to $actual_commit, expected $WHISPER_CPP_COMMIT" >&2
+            exit 1
+          }
+          cmake -S "$source_dir" -B "$source_dir/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWHISPER_BUILD_EXAMPLES=ON \
+            -DWHISPER_BUILD_TESTS=OFF \
+            -DWHISPER_BUILD_SERVER=OFF \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build "$source_dir/build" --target whisper-cli --config Release --parallel
+          cli="$source_dir/build/bin/whisper-cli"
+          [[ -x "$cli" ]] || {
+            echo "whisper-cli was not built as an executable" >&2
+            exit 1
+          }
+          target_platform=linux
+          if [[ "${{ matrix.label }}" == "macos-arm64" ]]; then target_platform=darwin; fi
+          {
+            echo "OLLAMAX_WHISPER_CLI_PATH=$cli"
+            echo "OLLAMAX_WHISPER_LICENSE_PATH=$source_dir/LICENSE"
+            echo "OLLAMAX_WHISPER_DLL_DIR=$(dirname "$cli")"
+            echo "OLLAMAX_WHISPER_STAGE_PLATFORM=$target_platform"
+          } >> "$GITHUB_ENV"
+
+      - name: Build pinned whisper.cpp runtime (Windows x64)
+        if: matrix.label == 'windows-x64'
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_ARCH -ne "X64") {
+            throw "expected an X64 Windows runner for Ollamax-windows-x64, got $env:RUNNER_ARCH"
+          }
+          $sourceDir = Join-Path $env:RUNNER_TEMP "ollamax-whisper.cpp"
+          if (Test-Path $sourceDir) { Remove-Item -Recurse -Force $sourceDir }
+          git clone --depth 1 --branch $env:WHISPER_CPP_VERSION https://github.com/ggml-org/whisper.cpp.git $sourceDir
+          $actualCommit = (git -C $sourceDir rev-parse HEAD).Trim()
+          if ($actualCommit -ne $env:WHISPER_CPP_COMMIT) {
+            throw "whisper.cpp $env:WHISPER_CPP_VERSION resolved to $actualCommit, expected $env:WHISPER_CPP_COMMIT"
+          }
+          cmake -S $sourceDir -B "$sourceDir/build" -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          cmake --build "$sourceDir/build" --target whisper-cli --config Release --parallel
+          $candidates = @(Get-ChildItem -Path "$sourceDir/build" -Recurse -File -Filter "whisper-cli.exe")
+          if ($candidates.Count -ne 1) {
+            throw "expected exactly one whisper-cli.exe, found $($candidates.Count)"
+          }
+          $cli = $candidates[0].FullName
+          if ((Get-Item $cli).Length -le 0) { throw "whisper-cli.exe is empty" }
+          Add-Content -Path $env:GITHUB_ENV -Value "OLLAMAX_WHISPER_CLI_PATH=$cli"
+          Add-Content -Path $env:GITHUB_ENV -Value "OLLAMAX_WHISPER_LICENSE_PATH=$(Join-Path $sourceDir 'LICENSE')"
+          Add-Content -Path $env:GITHUB_ENV -Value "OLLAMAX_WHISPER_DLL_DIR=$(Split-Path -Parent $cli)"
+          Add-Content -Path $env:GITHUB_ENV -Value "OLLAMAX_WHISPER_STAGE_PLATFORM=win32"
+
+      - name: Download reviewed Whisper model (macOS/Linux)
+        if: matrix.label != 'windows-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          model_dir="${RUNNER_TEMP}/ollamax-whisper-model"
+          mkdir -p "$model_dir"
+          model="$model_dir/ggml-base.en.bin"
+          rm -f "$model"
+          curl --fail --location --retry 5 --retry-delay 3 \
+            --output "$model" "$WHISPER_MODEL_URL"
+          [[ -s "$model" ]] || { echo "Whisper model download is empty" >&2; exit 1; }
+          echo "OLLAMAX_WHISPER_MODEL_PATH=$model" >> "$GITHUB_ENV"
+
+      - name: Download reviewed Whisper model (Windows x64)
+        if: matrix.label == 'windows-x64'
+        shell: pwsh
+        run: |
+          $modelDir = Join-Path $env:RUNNER_TEMP "ollamax-whisper-model"
+          New-Item -ItemType Directory -Force -Path $modelDir | Out-Null
+          $model = Join-Path $modelDir "ggml-base.en.bin"
+          Remove-Item -Force -ErrorAction SilentlyContinue $model
+          curl.exe --fail --location --retry 5 --retry-delay 3 --output $model $env:WHISPER_MODEL_URL
+          if (-not (Test-Path $model) -or (Get-Item $model).Length -le 0) {
+            throw "Whisper model download is empty"
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "OLLAMAX_WHISPER_MODEL_PATH=$model"
+
+      - name: Stage verified bundled Whisper runtime
+        working-directory: desktop-app
+        env:
+          # Guarded by the script so a normal `npm run dist` can never make a
+          # checked-out source manifest claim that it bundles a model.
+          OLLAMAX_RELEASE_STAGE_VOICE: "1"
+        run: npm run stage-whisper-runtime
+
+      - name: Smoke-test staged whisper-cli (macOS/Linux)
+        if: matrix.label != 'windows-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${GITHUB_WORKSPACE}/desktop-app/voice/whisper-cli" -h >/dev/null
+
+      - name: Smoke-test staged whisper-cli (Windows x64)
+        if: matrix.label == 'windows-x64'
+        shell: pwsh
+        run: |
+          $runtime = Join-Path $env:GITHUB_WORKSPACE "desktop-app/voice/whisper-cli.exe"
+          & $runtime -h | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "staged whisper-cli.exe failed its local smoke test" }
+
+      - name: Package app with verified bundled Whisper runtime
+        working-directory: desktop-app
+        env:
+          npm_config_python: python
+          OLLAMAX_REQUIRE_BUNDLED_VOICE: "1"
+        run: npm run dist
 
       - name: Verify macOS ad-hoc signature
         if: matrix.label == 'macos-arm64'
@@ -244,10 +413,13 @@ jobs:
           make_latest: false
           name: Ollamax ${{ steps.ver.outputs.tag }}
           body: |
-            Standalone desktop app (UNSIGNED, ad-hoc-signed, Sattva-style) +
-            CLI bundles. macOS first launch: right-click the app → Open → Open
-            (not code-signed yet). Verify against the matching .sha256. Bundles
-            the forge engine; Ollama required (https://ollama.com/download).
+            Standalone desktop app only (UNSIGNED, ad-hoc-signed, Sattva-style).
+            The matching source `v*` workflow adds the CLI/VS Code bundles and
+            publishes this draft only after the full asset contract passes.
+            macOS first launch: right-click the app → Open → Open (not
+            code-signed yet). Verify against the matching .sha256. This release
+            workflow stages a verified local Whisper runtime; Ollama is the
+            default local runtime (https://ollama.com/download).
           files: |
             dist/*
           fail_on_unmatched_files: true

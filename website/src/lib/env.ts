@@ -14,10 +14,6 @@ function required(name: string): string {
   return v;
 }
 
-function optional(name: string): string | undefined {
-  return process.env[name] || undefined;
-}
-
 // A signing secret must be present AND long enough to resist offline brute force
 // of the HMAC. 32+ chars ≈ the `openssl rand -base64 32` we document.
 function requiredSecret(name: string, minLen = 32): string {
@@ -43,9 +39,4 @@ export const env = {
   appJwtSecret: () => requiredSecret("APP_JWT_SECRET"),
   databaseUrl: () => required("DATABASE_URL"),
 
-  downloads: {
-    macos: optional("NEXT_PUBLIC_DOWNLOAD_MACOS"),
-    windows: optional("NEXT_PUBLIC_DOWNLOAD_WINDOWS"),
-    linux: optional("NEXT_PUBLIC_DOWNLOAD_LINUX"),
-  },
 };

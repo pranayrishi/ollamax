@@ -1,16 +1,16 @@
 # Desktop App + Signed Distribution (Code-OSS fork)
 
-> **Round 6 update.** The signed release pipeline is now defined in
+> **Status: forward-looking Code-OSS fork scaffold.** This directory is not the
+> active downloadable desktop app. The active app is the Electron shell in
+> [`../desktop-app`](../desktop-app), released through
+> [`.github/workflows/release-app.yml`](../.github/workflows/release-app.yml)
+> followed by [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 > [`.github/workflows/release-desktop.yml`](../.github/workflows/release-desktop.yml)
-> (mac notarized · Windows Authenticode · Linux AppImage/.deb), with signing
-> scripts in [`scripts/sign-macos.sh`](scripts/sign-macos.sh) +
-> [`scripts/sign-windows.ps1`](scripts/sign-windows.ps1) and the first-run UX in
-> [`FIRST-RUN.md`](FIRST-RUN.md). It runs end-to-end once the fork is wired
-> (bootstrap + bundle scripts) and the signing secrets are provided. I cannot
-> produce *actually* signed binaries here (no Apple/Windows certs, no multi-GB
-> fork build), so this is the working pipeline + scaffold, per the brief.
+> remains a manual-only future signing/notarization scaffold for a Code-OSS
+> fork; its bootstrap/bundle steps still need to be wired before it can produce
+> a shippable signed app.
 
-## Signing setup (owner — required for shippable mac/Windows builds)
+## Signing setup for the future Code-OSS fork
 
 | Secret | Where to get it | CI secret name |
 | :-- | :-- | :-- |
@@ -18,12 +18,52 @@
 | Apple Team ID + notary creds | Apple Developer + an app-specific password | `APPLE_TEAM_ID`, `APPLE_NOTARY_APPLE_ID`, `APPLE_NOTARY_PASSWORD` |
 | Windows code-signing cert (.pfx, base64) — **EV preferred** so SmartScreen trusts it | a CA (DigiCert/Sectigo/etc.) | `WINDOWS_CERT_PFX_BASE64`, `WINDOWS_CERT_PASSWORD` |
 
-Add these in GitHub → Settings → Secrets → Actions. Tag a release (`git tag v0.2.0
-&& git push --tags`) → `release-desktop.yml` builds, signs, notarizes, and
-publishes installers + SHA-256 to the GitHub Release. Then set the website
-`NEXT_PUBLIC_DOWNLOAD_*` (+ `_SHA256`) env vars to those URLs so the
-`/download` page lights up. **Auto-update** is not built (documented in
-FIRST-RUN.md).
+Add these in GitHub → Settings → Secrets → Actions before turning the
+Code-OSS fork into a signed product. Their presence alone does not sign the
+current Electron app, and manually dispatching `release-desktop.yml` does not
+publish a complete public release while its fork build remains a scaffold.
+
+## Active Electron release flow
+
+The current Electron app produces unsigned/ad-hoc-signed packages. Publish a
+version in this order so the public release is never made current with only a
+partial asset set:
+
+```bash
+# First: native Electron installers are built and attached to a draft.
+git tag app-vX.Y.Z
+git push origin app-vX.Y.Z
+
+# Only after release-app succeeds: CLI/VS Code bundles are built, the complete
+# contract is checked, and the same draft is published.
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+`app-vX.Y.Z` is not a public release tag. Update the website's download URLs
+or `latest` claims only after the matching `vX.Y.Z` workflow has published the
+complete release. The public `v0.2.0` downloads predate the local voice,
+spatial-context, and expanded-model features in the current source tree.
+**Auto-update** is not built (documented in [FIRST-RUN.md](FIRST-RUN.md)).
+
+## Current runtime boundary (the future fork must preserve it)
+
+The shipped Electron shell, not this Code-OSS scaffold, owns the current local
+voice, lasso, and visual-only cursor cue. See [`../desktop-app`](../desktop-app)
+for its package/runtime contract. A future fork must port and verify those
+surfaces independently; this document does not claim that the scaffold already
+ships them.
+
+`forge serve` uses local Ollama by default. It can also route an explicitly
+configured `local:<endpoint>/<model>` selector to a separately operated,
+literal-loopback OpenAI-compatible server for Chat, Agent, Research, and Team.
+It never provisions that server, treats no catalog entry as a one-click
+download, and has no cloud-inference fallback. Build/Orchestrator stays
+Ollama-only. The future fork should reuse this engine boundary rather than
+adding its own endpoint discovery or credential transport. In particular, a
+configured endpoint's declared `vision` or `thinking` flag is not proof that
+model-specific reasoning, native tools, or video APIs work through the generic
+Chat Completions adapter.
 
 ---
 
@@ -42,7 +82,10 @@ FIRST-RUN.md).
 A user downloads one installer (`.dmg` / `.deb` / `.AppImage` / Windows setup),
 opens **Ollamax**, and the AI chat panel is already docked on the right. The
 app bundles the `forge` binary; on first run it detects Ollama and offers to
-install it / pull a model. No terminal, no extension install, no API keys.
+install it / pull a model. Ollama is the default runtime; an operator-run local
+endpoint remains an explicit advanced configuration, not an automatic setup.
+No terminal, no extension install, and no hosted-model API keys are required
+for the default path.
 
 ## Naming (needs your confirmation)
 
@@ -59,7 +102,8 @@ Ollamax.app (Code-OSS fork)
 ├── (rebranded Code-OSS shell: product.json, icons, about strings)
 ├── resources/app/extensions/forge-vscode/   ← Phase 2 extension, as a built-in
 └── resources/app/bin/forge                   ← Phase 1 Rust binary (forge serve)
-                                                 └─ talks to local Ollama @ :11434
+                                                 └─ local Ollama by default, or an explicitly selected
+                                                    loopback self-hosted endpoint
 ```
 
 The desktop app is just Code-OSS + our built-in extension + our bundled binary.
@@ -102,6 +146,11 @@ present by default, (b) rebrand, and (c) package + sign.
   - If installed but not serving, offer to run `ollama serve`.
   - Offer to `ollama pull <recommended_model>` (the status payload already
     returns the hardware-recommended model).
+- This walkthrough is deliberately for the default Ollama path. Do **not**
+  auto-detect, start, or expose a remote endpoint as an alternative. An
+  advanced operator who runs a separate local server must declare its literal
+  loopback URL and named models in `forge.toml`, then choose the corresponding
+  `local:<endpoint>/<model>` selector.
 
 ### 5. Package per OS
 - macOS: `.dmg` (or `.zip`) from `yarn gulp vscode-darwin-arm64` + a packaging

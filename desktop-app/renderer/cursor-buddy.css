@@ -1,0 +1,24 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; pointer-events: none; }
+#buddy {
+  width: 100%; min-height: 48px; display: flex; align-items: center; gap: 9px;
+  padding: 8px 11px; border: 1px solid rgba(255,255,255,.22); border-radius: 11px;
+  background: rgba(12, 15, 22, .9); color: #f3f5fa;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  box-shadow: 0 8px 30px rgba(0,0,0,.36); backdrop-filter: blur(10px);
+}
+#buddy[hidden] { display: none; }
+.target-cue {
+  position: absolute; z-index: 2; width: 28px; height: 28px; border: 3px solid #7cbbff;
+  border-radius: 50%; background: rgba(36, 105, 184, .18); box-shadow: 0 0 0 5px rgba(83, 165, 255, .18), 0 4px 18px rgba(0, 0, 0, .42);
+  pointer-events: none; transform: translate(-50%, -50%); animation: point-pulse 1.25s ease-in-out infinite;
+}
+.target-cue[hidden] { display: none; }
+#buddy.pointing { position: absolute; top: 9px; left: 54px; width: calc(100% - 62px); min-height: 50px; }
+.indicator { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #f6b73c; box-shadow: 0 0 0 3px rgba(246,183,60,.15); }
+.copy { min-width: 0; display: flex; flex-direction: column; gap: 1px; line-height: 1.15; }
+#label { font-size: 12px; font-weight: 650; }
+#detail { overflow: hidden; color: #c4cad6; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes point-pulse { 50% { box-shadow: 0 0 0 10px rgba(83, 165, 255, .08), 0 4px 18px rgba(0, 0, 0, .42); } }
+@media (prefers-reduced-motion: reduce) { .target-cue { animation: none; } }

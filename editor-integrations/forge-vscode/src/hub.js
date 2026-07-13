@@ -18,6 +18,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { URL } = require("url");
+const { safeExternalUrl } = require("./external-url");
 
 // Mirror Rust's `dirs::config_dir()` so we write to the same rules/skills dirs
 // the `forge` binary reads (RuleSet::default_dir / SkillsEngine).
@@ -196,7 +197,12 @@ class HubViewProvider {
     try {
       const res = await this._post(`${base}/api/star/intent`, { repos, category: slug }, token);
       if (res.url) {
-        await vscode.env.openExternal(vscode.Uri.parse(res.url));
+        const reviewUrl = safeExternalUrl(res.url);
+        if (!reviewUrl) {
+          this.post({ type: "error", message: "The account server returned an unsafe support-review URL." });
+          return;
+        }
+        await vscode.env.openExternal(vscode.Uri.parse(reviewUrl));
         vscode.window.showInformationMessage(
           "Hub: opened the browser to review and star the repos (optional, opt-in)."
         );

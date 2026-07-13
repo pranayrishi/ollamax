@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'self'; script-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="spatial-overlay.css" rel="stylesheet" />
+  <title>Select screen region</title>
+</head>
+<body>
+  <main id="stage" aria-label="Screen region selector">
+    <img id="capture" alt="Current screen capture" draggable="false" />
+    <canvas id="lasso" aria-label="Draw around the region you want to attach"></canvas>
+    <div class="instruction"><strong>Draw around a screen region</strong><span>Release to attach locally · Esc to cancel</span></div>
+  </main>
+  <script src="spatial-overlay.js"></script>
+</body>
+</html>

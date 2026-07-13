@@ -22,8 +22,17 @@ const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
 const { URL } = require("url");
+const { safeExternalUrl } = require("./external-url");
 
 const SECRET_KEY = "forge.account.tokens.v1";
+
+async function openApprovedExternal(candidate) {
+  const url = safeExternalUrl(candidate);
+  if (!url) {
+    throw new Error("Refusing to open a non-HTTPS or non-loopback HTTP URL, or a URL with credentials.");
+  }
+  return vscode.env.openExternal(vscode.Uri.parse(url));
+}
 
 function b64url(buf) {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -51,23 +60,12 @@ class ForgeAuth {
           "(e.g. https://your-app.vercel.app) or http://localhost:3000 for local dev."
       );
     }
-    // Require HTTPS for anything but loopback — identity tokens + profile must
-    // never transit in cleartext to a remote host.
-    let parsed;
-    try {
-      parsed = new URL(url);
-    } catch {
-      throw new Error(`Invalid forge.accountServer URL: ${url}`);
-    }
-    const isLoopback =
-      parsed.hostname === "127.0.0.1" ||
-      parsed.hostname === "localhost" ||
-      parsed.hostname === "[::1]" ||
-      parsed.hostname === "::1";
-    if (parsed.protocol !== "https:" && !isLoopback) {
+    // Identity tokens + profile must never transit in cleartext to a remote
+    // host. Reuse the external-link allowlist so a credential-bearing or custom
+    // scheme cannot be used for either HTTP requests or the system browser.
+    if (!safeExternalUrl(url)) {
       throw new Error(
-        `forge.accountServer must use https:// (got ${parsed.protocol}//${parsed.hostname}). ` +
-          "Plain http is only allowed for localhost during development."
+        "forge.accountServer must use HTTPS, or literal loopback HTTP for local development, without URL credentials."
       );
     }
     return url;
@@ -242,11 +240,10 @@ class ForgeAuth {
       `&code_challenge_method=S256&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&state=${encodeURIComponent(state)}`;
 
-    this.log(`auth: opening browser for sign-in (loopback :${port})`);
-    await vscode.env.openExternal(vscode.Uri.parse(authUrl));
-
     let code;
     try {
+      this.log(`auth: opening browser for sign-in (loopback :${port})`);
+      await openApprovedExternal(authUrl);
       code = await waitForCode(5 * 60 * 1000);
     } finally {
       close();
@@ -267,7 +264,7 @@ class ForgeAuth {
     const start = await this._postJson("/api/desktop/device/start", {});
     // Open the verification page WITHOUT the code in the URL (anti-phishing).
     // The user must type the code they see below, proving THEY initiated this.
-    await vscode.env.openExternal(vscode.Uri.parse(start.verification_uri));
+    await openApprovedExternal(start.verification_uri);
     await vscode.window.showInformationMessage(
       `Ollamax sign-in: type this code in the browser to finish:\n\n${start.user_code}`,
       { modal: true }

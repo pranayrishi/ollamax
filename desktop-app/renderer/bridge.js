@@ -83,7 +83,14 @@
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
-      if (!res.ok || !res.body) throw new Error(`request failed (HTTP ${res.status})`);
+      if (!res.ok || !res.body) {
+        let detail = "";
+        try {
+          const payload = await res.json();
+          detail = payload && (payload.error || payload.message) ? `: ${payload.error || payload.message}` : "";
+        } catch (_) {}
+        throw new Error(`request failed (HTTP ${res.status})${detail}`);
+      }
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -163,7 +170,7 @@
           // The local server returns provider details (including its endpoint)
           // in-band, so do not collapse an Ollama failure into a generic error.
           if (m.error) {
-            post({ type: "backendError", message: `Failed to list models from Ollama: ${m.error}` });
+            post({ type: "backendError", message: `Could not list installed Ollama models; configured local endpoints remain available: ${m.error}` });
           }
         } catch (_) {
           post({ type: "backendError", message: "could not reach the local engine" });
@@ -216,7 +223,14 @@
         } else if (msg.mode === "team") {
           streamPost(
             "/api/team",
-            { id, task: msg.text, model: msg.model, context, autonomy: msg.autonomy || "confirm" },
+            {
+              id,
+              task: msg.text,
+              model: msg.model,
+              context,
+              autonomy: msg.autonomy || "confirm",
+              parallel_scouts: !!msg.parallelScouts,
+            },
             id
           );
         } else if (msg.mode === "build") {

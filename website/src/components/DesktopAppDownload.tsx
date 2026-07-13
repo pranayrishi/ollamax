@@ -60,12 +60,14 @@ export function DesktopAppDownload() {
         {info && <span className="text-xs text-muted-foreground">Detected: {info.label}</span>}
       </div>
       <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        The full desktop app — engine, on-device voice, and sign-in built in. Nothing else to set up
-        but a local{" "}
+        The source-tree desktop app includes the local engine, optional local voice, a visual-only cursor cue,
+        screen-region controls, and sign-in. The public v0.2.0 installers are intentionally not offered here
+        because they predate those features. Install a local{" "}
         <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" className="text-link">
           Ollama
         </a>
-        .
+        . Whisper is used only when a package has staged it or you configure it locally; when it is absent,
+        the app explains local setup rather than sending audio to a cloud service.
       </p>
 
       {/* primary action */}
@@ -92,9 +94,8 @@ export function DesktopAppDownload() {
           <div className="surface-subtle px-5 py-4 text-sm text-foreground/85">
             The desktop app for{" "}
             <strong className="text-foreground">{info?.label ?? "your platform"}</strong> is{" "}
-            <strong className="text-foreground">coming soon</strong>. Meanwhile, get the same Ollamax
-            experience in your own editor with the{" "}
-            <a href="#one-line" className="text-link">one-line installer below</a>.
+            <strong className="text-foreground">being verified for the next release</strong>. Meanwhile, wait for
+            the matching package rather than downloading the older v0.2.0 build.
           </div>
         )}
       </div>

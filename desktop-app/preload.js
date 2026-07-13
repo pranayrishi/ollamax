@@ -18,6 +18,39 @@ contextBridge.exposeInMainWorld("forgeNative", {
   pickFiles: () => ipcRenderer.invoke("forge:pickFiles"),
   openExternal: (url) => ipcRenderer.invoke("forge:openExternal", url),
   signIn: (opts) => ipcRenderer.invoke("forge:signIn", opts),
+  // Explicit, one-shot local voice operations. The renderer never gains a
+  // shell, microphone recording is initiated in the renderer after a gesture,
+  // and neither operation falls back to a hosted speech service.
+  voice: {
+    status: () => ipcRenderer.invoke("voice:status"),
+    transcribe: (wavBase64) => ipcRenderer.invoke("voice:transcribe", wavBase64),
+    speak: (text) => ipcRenderer.invoke("voice:speak", text),
+  },
+  // Starts a transient, explicit lasso overlay. It returns only a capped crop
+  // and textual selection metadata; full-screen captures never reach chat.
+  spatial: {
+    select: () => ipcRenderer.invoke("spatial:select"),
+  },
+  // A display-only cursor companion. It can request neither screen capture
+  // nor OS actions. `point` accepts a bounded normalized visual cue only; the
+  // privileged process independently validates it before it reaches the
+  // click-through overlay.
+  buddy: {
+    setState: (state) => ipcRenderer.invoke("buddy:setState", state),
+    point: (directive) => ipcRenderer.invoke("buddy:point", directive),
+    onVoiceToggle: (callback) => {
+      if (typeof callback !== "function") return () => {};
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("buddy:voiceToggle", listener);
+      return () => ipcRenderer.removeListener("buddy:voiceToggle", listener);
+    },
+    onShortcutStatus: (callback) => {
+      if (typeof callback !== "function") return () => {};
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on("buddy:shortcutStatus", listener);
+      return () => ipcRenderer.removeListener("buddy:shortcutStatus", listener);
+    },
+  },
   // Central Hub (#2): catalog read from the account server; activation writes
   // local rules/skills; starring is opt-in (browser review), never automatic.
   hub: {

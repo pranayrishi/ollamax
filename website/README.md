@@ -6,6 +6,10 @@ deployable from the Rust crate — nothing here touches `cargo`.
 
 > **Identity / distribution only.** This backend never receives, proxies, logs,
 > or stores prompts, code, or inference. There is no table for any of that.
+> Marketing copy must distinguish a feature present in the source tree from one
+> present in a published installer. In particular, the public `v0.2.0` download
+> predates the local voice, spatial-context, and expanded-model work; do not
+> advertise those as available in that artifact.
 
 ## What's here
 
@@ -61,8 +65,68 @@ with `openssl rand -base64 32`.
 | `AUTH_GITHUB_SECRET` | GitHub OAuth **client secret** | **server only — never client** |
 | `APP_JWT_SECRET` | signs desktop app tokens (separate from `AUTH_SECRET`) | server only |
 | `DATABASE_URL` | Postgres connection string | server only |
-| `NEXT_PUBLIC_DOWNLOAD_{MACOS,WINDOWS,LINUX}` | per-OS installer URLs (optional) | client-safe |
+| `NEXT_PUBLIC_RELEASES_REPO` | public releases-repository base URL (optional; asset names are fixed in `src/lib/downloads.ts`) | client-safe |
 | `NEXT_PUBLIC_GITHUB_REPO` | repo link in footer | client-safe |
+
+## Publish download links only after the complete release
+
+The desktop release is deliberately two-stage. First, an `app-vX.Y.Z` tag runs
+the Electron packaging workflow and attaches native installers to a draft in
+the public releases repository. After that workflow succeeds, the matching
+`vX.Y.Z` tag builds the CLI/VS Code bundles, verifies the full asset contract,
+and publishes that draft:
+
+```bash
+git tag app-vX.Y.Z && git push origin app-vX.Y.Z
+# Wait for release-app to finish successfully.
+git tag vX.Y.Z && git push origin vX.Y.Z
+```
+
+Only then flip `published` to `true` for each verified asset in
+`src/lib/downloads.ts` and deploy the site. Keep Intel macOS disabled until its
+own native artifact exists. `app-v*` is staging, not a public download version.
+Do not point `latest` or promotional copy at an app-only draft, and do not
+back-port current source-tree claims to the public `v0.2.0` downloads.
+
+For a build based on the current source tree, consumer-local inference uses
+Ollama-local Qwen, Gemma 4, and DeepSeek-R1 models. DeepSeek V4 and MiniMax M3
+are cataloged as separately operated, server-class local OpenAI-compatible
+options, never as one-click Ollama downloads or cloud fallbacks. An operator
+can configure a literal-loopback `/v1` endpoint and named served models, then
+explicitly select `local:<endpoint>/<model>` in Chat, Agent, Research, or Team.
+Auto routing never chooses it, and Build/Orchestrator remains Ollama-only. A
+local-server bearer token, if needed, is named by `api_key_env`; its value is
+not stored in the configuration or surfaced to the site.
+
+The generic compatibility path is deliberately narrow: text plus images only
+for a model the operator explicitly declares vision-capable. It does not enable
+DeepSeek V4's model-specific encoding/reasoning channel, MiniMax M3 video,
+native tools, or structured reasoning. Do not promote a declared `thinking`
+flag as support for those provider-specific features. MiniMax M3 also carries
+its own licensing/notice obligations.
+
+## Desktop voice, lasso, and cursor cue disclosure
+
+The Electron source uses local `whisper.cpp` only when a local runtime is
+configured or a particular release has staged and validated it. Its checked-in
+manifest deliberately declares the Whisper binary and GGML model **unbundled**.
+For an `app-v*` release, CI builds pinned `whisper.cpp` v1.9.1 natively,
+validates the reviewed `ggml-base.en.bin` size and SHA-256, stages the license,
+and flips the manifest to `bundled: true` only in its disposable packaging
+workspace. A package must still be checked rather than assumed to contain those
+assets until its matching public workflow has passed. When unavailable, the
+voice control explains local setup and has no AssemblyAI, ElevenLabs, or other
+hosted STT/TTS fallback. Optional speech output is an operating-system voice or
+an explicitly configured local command.
+
+Screen-region context is an explicit lasso action. The full display capture is
+kept in memory only long enough to make a bounded selected crop, then is
+discarded; only that crop is sent to a local vision model. Agent and Team turn
+the crop into an untrusted transient visual brief, exclude it from memory and
+replay, and disable web tools for that visual turn. A small transparent,
+click-through cursor cue reports fixed local voice/selection states near the
+pointer. It cannot inspect the screen or windows, see prompts/transcripts or
+pixels, move/click the mouse, or use accessibility APIs.
 
 ### 4. Vercel project
 - Import the repo; set **Root Directory = `website`**.

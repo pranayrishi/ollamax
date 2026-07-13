@@ -3,15 +3,9 @@ import { Nav } from "@/components/Nav";
 import { Footer } from "@/components/Footer";
 import { DownloadGrid } from "@/components/DownloadGrid";
 import { DesktopAppDownload } from "@/components/DesktopAppDownload";
-import { CopyCommand } from "@/components/CopyCommand";
 import { FirstLaunchGuide } from "@/components/FirstLaunchGuide";
 
 export const metadata: Metadata = { title: "Download" };
-
-const RELEASES_REPO =
-  process.env.NEXT_PUBLIC_RELEASES_REPO || "https://github.com/pranayrishi/ollamax-releases";
-const SH_URL = `${RELEASES_REPO.replace(/\/$/, "")}/releases/latest/download/install.sh`;
-const PS_URL = `${RELEASES_REPO.replace(/\/$/, "")}/releases/latest/download/install.ps1`;
 
 export default function DownloadPage() {
   return (
@@ -20,9 +14,9 @@ export default function DownloadPage() {
       <main id="main" className="page-frame max-w-3xl">
         <h1 className="page-title">Download Ollamax</h1>
         <p className="page-lede">
-          Free and open source. Get the <strong className="text-foreground">Ollamax desktop app</strong>{" "}
-          below — engine, on-device voice, and sign-in built in — or use the same experience inside
-          your own editor with the one-line installer.
+          Free and open source. The source tree adds optional local voice, a visual-only cursor cue, screen-region
+          context, explicit loopback model endpoints, and an updated model catalog. The public v0.2.0 downloads do
+          not include those changes, so all package controls remain disabled until replacement artifacts are verified.
         </p>
 
         {/* PRIMARY: the standalone desktop app */}
@@ -30,43 +24,34 @@ export default function DownloadPage() {
           <DesktopAppDownload />
         </div>
 
-        {/* SECONDARY: use it in your own editor (no security warning). */}
+        {/* Keep stale CLI/editor commands off the page until a complete matching release exists. */}
         <section id="one-line" className="surface mt-10 scroll-mt-24">
           <h2 className="eyebrow">
-            Or · use it in your own editor (no warning)
+            Editor bundle · awaiting the matching verified release
           </h2>
-          <div className="mt-4 space-y-4">
-            <CopyCommand label="macOS / Linux" command={`curl -fsSL ${SH_URL} | sh`} />
-            <CopyCommand label="Windows (PowerShell)" command={`irm ${PS_URL} | iex`} />
-          </div>
-          <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
-            Why no warning? Files fetched with <code>curl</code>/<code>irm</code> aren&rsquo;t flagged
-            &ldquo;downloaded from the internet,&rdquo; so Gatekeeper/SmartScreen never trigger. The
-            script is plain text — read it first at{" "}
-            <a href={SH_URL} target="_blank" rel="noopener noreferrer" className="text-link">
-              install.sh
-            </a>{" "}
-            /{" "}
-            <a href={PS_URL} target="_blank" rel="noopener noreferrer" className="text-link">
-              install.ps1
-            </a>
-            . It detects your OS/arch, installs <code>forge</code> to your PATH, adds the editor panel
-            if <code>code</code> is present, and checks for Ollama.
+          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+            The CLI and VS Code bundle will be enabled only when the matching release has passed its complete
+            desktop/CLI asset check. The site intentionally does not show a <code>latest</code> install command
+            that could fetch the older public v0.2.0 build instead of these source-tree changes.
           </p>
         </section>
 
         <p className="mt-5 text-sm text-muted-foreground">
-          Signed one-click installers are coming; for now this is the smoothest way in.
+          Replacement installers and editor bundles are enabled only after their matching public release is visible
+          and its checksums have been verified.
         </p>
 
         {/* Prerequisite */}
         <div className="surface-subtle mt-8 p-5 text-sm leading-relaxed text-muted-foreground">
-          <strong className="text-foreground">Requires Ollama</strong> (the local model engine) — install
+          <strong className="text-foreground">Ollama is the default local model engine</strong> — install
           from{" "}
           <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" className="text-link">
             ollama.com/download
           </a>
-          ; the installer checks for it and suggests a model your hardware can run.
+          ; the installer checks for it and suggests a model your hardware can run. An advanced, separately operated
+          server may instead be configured at a literal loopback endpoint; no cloud provider is chosen automatically.
+          Local voice recognition additionally needs a local Whisper runtime unless a particular package has staged
+          one; the app shows setup rather than using a hosted speech provider when it is absent.
         </div>
 
         {/* PROMINENT first-launch guidance — visible, per-OS, visual (not buried). */}
@@ -80,9 +65,8 @@ export default function DownloadPage() {
             Prefer a manual download? (advanced)
           </summary>
           <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-            A browser-downloaded bundle <em>is</em> flagged by your OS (the one-liner above avoids
-            this). It&rsquo;s safe to run — the build just isn&rsquo;t code-signed yet. The exact
-            one-time step for your OS is in{" "}
+            A browser-downloaded bundle may be flagged by your OS because the current packages are not
+            code-signed. Once a verified package is enabled, the exact one-time step for your OS is in{" "}
             <a href="#first-launch" className="text-link">First launch</a> above,
             and appears again the moment you start a download.
           </p>
@@ -90,8 +74,8 @@ export default function DownloadPage() {
             <DownloadGrid />
           </div>
           <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
-            Each bundle has a SHA-256 link to verify it. Unpack and run the included{" "}
-            <code>install.sh</code> / <code>install.ps1</code> — see <code>README-FIRST.md</code> inside.
+            Every enabled bundle will have a SHA-256 link. Do not treat a disabled card or an older
+            public asset as the source-tree release described above.
           </p>
         </details>
       </main>

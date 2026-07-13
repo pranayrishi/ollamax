@@ -76,6 +76,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Assert macOS bundle is built on Apple Silicon
+        if: matrix.label == 'macos-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          [[ "$arch" == "arm64" ]] || {
+            echo "expected an arm64 macOS runner for ollama-forge-macos-arm64, got $arch" >&2
+            exit 1
+          }
+
+      - name: Assert Linux bundle is built on x64
+        if: matrix.label == 'linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          [[ "$arch" == "x86_64" ]] || {
+            echo "expected an x86_64 Linux runner for ollama-forge-linux-x64, got $arch" >&2
+            exit 1
+          }
+
+      - name: Assert Windows bundle is built on x64
+        if: matrix.label == 'windows-x64'
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_ARCH -ne "X64") {
+            throw "expected an X64 Windows runner for ollama-forge-windows-x64, got $env:RUNNER_ARCH"
+          }
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -85,12 +115,45 @@ jobs:
         with:
           node-version: 22
 
+      # Keep the public `v*` tag aligned with every product surface in the
+      # complete release. A mismatch would make the desktop draft and CLI/VSIX
+      # assets appear to belong to the same version when they do not.
+      - name: Assert source release tag matches shipped package versions
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${GITHUB_REF_NAME#v}"
+          node - "$expected" <<'NODE'
+          const fs = require("fs");
+          const expected = process.argv[2];
+          const cargo = fs.readFileSync("Cargo.toml", "utf8");
+          const cargoVersion = /^\s*version\s*=\s*"([^"]+)"\s*$/m.exec(cargo)?.[1];
+          const versions = {
+            "Cargo.toml": cargoVersion,
+            "desktop-app/package.json": JSON.parse(fs.readFileSync("desktop-app/package.json", "utf8")).version,
+            "desktop-app/package-lock.json": JSON.parse(fs.readFileSync("desktop-app/package-lock.json", "utf8")).version,
+            "editor-integrations/forge-vscode/package.json": JSON.parse(fs.readFileSync("editor-integrations/forge-vscode/package.json", "utf8")).version,
+          };
+          const mismatches = Object.entries(versions).filter(([, version]) => version !== expected);
+          if (mismatches.length) {
+            throw new Error(`release tag v${expected} does not match ${mismatches.map(([file, version]) => `${file}=${version ?? "missing"}`).join(", ")}`);
+          }
+          console.log(`verified shipped package versions: ${expected}`);
+          NODE
+
       - name: Package the VS Code extension (.vsix)
         working-directory: editor-integrations/forge-vscode
         shell: bash
         # Pack it locally on each native runner so every bundle is self-contained
         # and the release does not depend on Actions artifact storage.
-        run: npx --yes @vscode/vsce@3 package --no-dependencies --allow-missing-repository -o "$GITHUB_WORKSPACE/forge-vscode.vsix"
+        run: |
+          node --test src/external-url.test.js src/workspace-preview-paths.test.js
+          node --check src/auth.js
+          node --check src/hub.js
+          node --check src/chatViewProvider.js
+          node --check src/workspace-preview-paths.js
+          npx --yes @vscode/vsce@3 package --no-dependencies --allow-missing-repository -o "$GITHUB_WORKSPACE/forge-vscode.vsix"
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -172,7 +235,9 @@ jobs:
               Windows:      irm https://github.com/pranayrishi/ollamax-releases/releases/latest/download/install.ps1 | iex
 
             Or download a bundle below and verify it against its `.sha256` (first-run
-            notes inside each bundle). Requires a local Ollama daemon (https://ollama.com/download).
+            notes inside each bundle). Ollama is the default local runtime
+            (https://ollama.com/download); an advanced local deployment can use an
+            explicitly configured literal-loopback OpenAI-compatible endpoint.
           files: |
             dist/ollama-forge-${{ matrix.label }}.${{ matrix.ext }}
             dist/ollama-forge-${{ matrix.label }}.${{ matrix.ext }}.sha256
@@ -288,7 +353,9 @@ jobs:
                   "Ollamax desktop apps, CLI bundles, and the VS Code panel. Every\n"
                   "platform artifact was built and tested natively before this release\n"
                   "was published. Desktop installers are unsigned; verify the matching\n"
-                  "SHA-256 sidecar before opening them. Ollama is required:\n"
+                  "SHA-256 sidecar before opening them. Desktop installers include the\n"
+                  "CI-staged, checksummed local Whisper runtime; source checkouts do not\n"
+                  "imply that it is present. Ollama is the default local runtime:\n"
                   "https://ollama.com/download"
               ),
           }))

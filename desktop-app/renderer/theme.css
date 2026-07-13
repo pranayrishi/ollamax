@@ -143,9 +143,16 @@ pre.code, code { font-family: var(--font-mono); font-size: var(--text-ui); }
   background: transparent; border: 1px solid var(--border);
   border-radius: var(--r-2); color: var(--ink-600); padding: var(--space-1) var(--space-2);
 }
-.attachrow { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
+.attachrow { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-2); align-items: center; }
 .attach { border-radius: var(--r-2); font-size: var(--text-ui); color: var(--ink-700); border: 1px solid var(--border); background: transparent; padding: var(--space-1) var(--space-3); }
 .attach:hover { background: var(--ink-150); }
+.voice-control { border-radius: var(--r-2); font-size: var(--text-ui); color: var(--ink-700); border: 1px solid var(--border); background: transparent; padding: var(--space-1) var(--space-3); cursor: pointer; }
+.voice-control:hover:not(:disabled), .voice-control.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.voice-control:disabled { cursor: not-allowed; opacity: .55; }
+.voice-option { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--ink-600); font-size: var(--text-caption); white-space: nowrap; }
+.voice-option input { accent-color: var(--accent); }
+.voice-status { min-height: 16px; margin: calc(var(--space-2) * -1) 0 var(--space-2); color: var(--ink-600); font-size: var(--text-caption); line-height: var(--lh-caption); }
+.voice-status.bad { color: var(--warn); }
 
 /* App shell: left rail + swappable Chat / Hub views (separate panels) */
 #shell { display: flex; height: 100vh; }

@@ -24,7 +24,7 @@ over a local HTTP/SSE API; it never does inference itself and never bypasses
 2. **Ollama running** with at least one model:
    ```bash
    ollama serve                 # in another terminal
-   ollama pull qwen2.5-coder:7b
+   ollama pull qwen3.5:4b
    ```
 
 ## Run it (no install, no npm)

@@ -23,7 +23,7 @@ export default function PrivacyPage() {
             <h2 className="text-3xl leading-none tracking-[-0.02em] text-foreground">The one-sentence version</h2>
             <p className="mt-4 leading-relaxed text-muted-foreground">
               <strong className="text-foreground">Your code stays on your machine.</strong> Inference
-              runs locally (Ollama) or goes directly from your machine to a provider you chose — never
+              runs through local Ollama or an explicitly configured loopback self-hosted server — never
               through us. We collect <strong className="text-foreground">anonymous usage metadata</strong>{" "}
               (counts and categories, no content) to power your usage dashboard, and{" "}
               <strong className="text-foreground">you can turn it off</strong>.

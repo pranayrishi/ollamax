@@ -25,11 +25,11 @@ export const metadata: Metadata = {
     template: "%s · Ollamax",
   },
   description:
-    "Ollamax is a local-first AI coding app. Chat, an autonomous agent that edits files safely, and on-device voice navigation — all running on your machine through local Ollama. No cloud, no API keys, no telemetry of your code. Open source (MIT).",
+    "Ollamax is a local-first AI coding app. Chat, an approval-gated coding agent, local voice commands, and selected screen-region context use local Ollama or explicitly configured loopback runtimes. Open source (MIT).",
   openGraph: {
     title: "Ollamax — Local-first AI coding",
     description:
-      "Chat, an autonomous coding agent, and on-device voice — running on your own hardware. Your code never leaves your machine.",
+      "Chat, an approval-gated coding agent, local voice, and selected screen-region context — on your own hardware, without a cloud-inference route.",
     type: "website",
     url: siteUrl,
   },

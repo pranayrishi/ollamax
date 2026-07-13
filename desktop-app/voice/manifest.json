@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "privacy": "on-device-only",
+  "recognition": {
+    "engine": "whisper.cpp",
+    "binary": "whisper-cli",
+    "defaultModel": "ggml-base.en.bin",
+    "bundled": false,
+    "version": "v1.9.1",
+    "modelSha256": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+    "modelBytes": 147964211,
+    "licenseFile": "WHISPER_CPP_LICENSE.txt",
+    "windowsRuntimeFiles": [],
+    "license": "MIT",
+    "source": "https://github.com/ggml-org/whisper.cpp",
+    "notes": "This source manifest intentionally remains bundled:false. release-app CI alone builds whisper.cpp v1.9.1 natively, verifies and stages the pinned official ggml-base.en.bin, then flips bundled:true only in its disposable packaging workspace. Until a verified release stage runs, the app reports setup as required and never falls back to a hosted transcription API."
+  },
+  "speechOutput": {
+    "default": "operating-system voice",
+    "optionalLocalCommandEnv": "OLLAMAX_TTS_PATH",
+    "notes": "macOS uses say, Windows uses local SAPI, and Linux uses espeak-ng when available. No hosted TTS API is used."
+  }
+}

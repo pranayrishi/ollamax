@@ -19,6 +19,18 @@
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
+  // Hub responses are data, not markup. Keep every value that reaches an
+  // innerHTML template either escaped text or an integer we derived locally.
+  // In particular, do not trust an array-like `length` from a remote catalog.
+  function boundedCount(value, max) {
+    const count = Number(value);
+    return Number.isSafeInteger(count) && count >= 0 ? Math.min(count, max) : 0;
+  }
+
+  function items(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
   // #7: search is INTENT-AWARE and runs in the engine (fuzzy + intent expansion),
   // so the grid just renders whatever `categories` the host returned — no brittle
   // client-side exact-keyword filter, no "no matching categories" dead-end on
@@ -32,7 +44,8 @@
       grid.innerHTML = `<p class="muted">No categories matched — try a broader search.</p>`;
       return;
     }
-    for (const c of list) {
+    for (const rawCategory of list) {
+      const c = rawCategory && typeof rawCategory === "object" ? rawCategory : {};
       const card = document.createElement("div");
       card.className = "card";
       card.innerHTML =
@@ -40,7 +53,10 @@
         `<button class="add" title="Activate this package">+</button></div>` +
         `<p class="card-desc">${esc(c.description)}</p>` +
         // The engine sends `exampleRepos` (array), not `repoCount` (review #13/#22).
-        `<div class="card-foot">${(c.exampleRepos || []).length ? (c.exampleRepos.length + " example repos") : "browse →"}</div>`;
+        `<div class="card-foot">${(() => {
+          const count = boundedCount(items(c.exampleRepos).length, 10_000);
+          return count ? `${count} example repos` : "browse →";
+        })()}</div>`;
       card.querySelector(".add").addEventListener("click", (e) => {
         e.stopPropagation();
         vscode.postMessage({ type: "activate", slug: c.slug });
@@ -51,10 +67,14 @@
   }
 
   function renderDetail(pkg) {
+    pkg = pkg && typeof pkg === "object" ? pkg : {};
     current = pkg;
     grid.hidden = true;
     detail.hidden = false;
-    const refs = pkg.references || [];
+    const refs = items(pkg.references);
+    const counts = pkg && typeof pkg.counts === "object" && pkg.counts ? pkg.counts : {};
+    const ruleCount = boundedCount(counts.rules, 10_000);
+    const skillCount = boundedCount(counts.skills, 10_000);
     detail.innerHTML = `
       <button id="back" class="back">← all categories</button>
       <h2>${esc(pkg.name)}</h2>
@@ -62,8 +82,8 @@
       <div class="what">
         <strong>Activating injects (transparent steering):</strong>
         <ul>
-          <li>${pkg.counts.rules} best-practice <b>rules</b> → your rules dir</li>
-          <li>${pkg.counts.skills} scaffold <b>skills</b> → your skills dir</li>
+          <li>${ruleCount} best-practice <b>rules</b> → your rules dir</li>
+          <li>${skillCount} scaffold <b>skills</b> → your skills dir</li>
           <li>${refs.length} curated <b>references</b> (links only)</li>
         </ul>
         <p class="muted small">Generic, license-safe conventions — not copied source code. Reversible (delete the files).</p>
@@ -75,8 +95,10 @@
         <ul class="reflist">
           ${refs
             .map(
-              (r) =>
-                `<li><span class="rn">${esc(r.full_name)}</span>${r.license ? `<span class="lic">${esc(r.license)}</span>` : ""}</li>`
+              (rawReference) => {
+                const r = rawReference && typeof rawReference === "object" ? rawReference : {};
+                return `<li><span class="rn">${esc(r.full_name)}</span>${r.license ? `<span class="lic">${esc(r.license)}</span>` : ""}</li>`;
+              }
             )
             .join("")}
         </ul>
@@ -92,7 +114,10 @@
         vscode.postMessage({
           type: "support",
           slug: pkg.slug,
-          repos: refs.map((r) => ({ full_name: r.full_name, html_url: r.html_url, license_spdx: r.license })),
+          repos: refs.map((rawReference) => {
+            const r = rawReference && typeof rawReference === "object" ? rawReference : {};
+            return { full_name: r.full_name, html_url: r.html_url, license_spdx: r.license };
+          }),
         })
       );
     }

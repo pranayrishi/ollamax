@@ -47,6 +47,13 @@
   // permission dial). Ask remains one click away for read-only discussion.
   let mode = "agent";
   let model = null;
+  // Picker metadata from `/api/models`. Configured self-hosted local models
+  // declare capabilities explicitly, so never guess from their served name.
+  let modelEntries = new Map();
+  // Ollama exposes capabilities from `/api/model_info` rather than its compact
+  // installed-model list. Cache that authoritative response per model so an
+  // image attachment does not fall back to a brittle model-name heuristic.
+  let modelCapabilities = new Map();
   let streaming = false;
   let chatHistory = []; // {role, content} — chat mode only, for multi-turn
   let contextItems = []; // {path, content, label}
@@ -70,10 +77,17 @@
   const refreshBtn = $("#refresh");
   const modelHintEl = $("#modelhint");
   const accountEl = $("#account");
+  const teamParallelScoutsEl = $("#team-parallel-scouts");
+  const teamParallelScoutsOption = $("#team-parallel-option");
 
   // ----- helpers -----
   function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   // Minimal Markdown: fenced code blocks + inline code + line breaks.
@@ -199,10 +213,15 @@
 
     let raw = "";
     let thinkingRaw = "";
+    // A desktop-only finalizer may remove local control markup from the answer
+    // after the terminal stream event. Keep the original raw text for the
+    // genuine thinking disclosure while rendering/persisting the cleaned body.
+    let answerOverride = null;
     let statusTimer = null;
 
     function renderContent() {
-      const { thinking: think, answer } = splitThinking(raw);
+      const { thinking: think, answer: rawAnswer } = splitThinking(raw);
+      const answer = answerOverride === null ? rawAnswer : answerOverride;
       if (think) {
         thinking.hidden = false;
         if (!thinking.open) thinking.open = true;
@@ -240,6 +259,7 @@
       },
       appendToken(t) {
         this.stopStatus();
+        answerOverride = null;
         raw += t;
         renderContent();
       },
@@ -256,15 +276,22 @@
       },
       setAnswerText(t) {
         this.stopStatus();
+        answerOverride = null;
         raw = t;
         renderContent();
       },
       appendNote(t) {
+        answerOverride = null;
         raw += t;
         renderContent();
       },
+      setFinalAnswerText(t) {
+        this.stopStatus();
+        answerOverride = typeof t === "string" ? t : "";
+        renderContent();
+      },
       getAnswer() {
-        return splitThinking(raw).answer;
+        return answerOverride === null ? splitThinking(raw).answer : answerOverride;
       },
       showWarnings(list) {
         if (!list || list.length === 0) return;
@@ -477,7 +504,17 @@
     if (!text) return;
     inputEl.value = "";
     const autonomyEl = $("#autonomy");
-    const item = { text, mode, model, context: contextItems.slice(), autonomy: autonomyEl ? autonomyEl.value : "confirm" };
+    const item = {
+      text,
+      mode,
+      model,
+      context: contextItems.slice(),
+      autonomy: autonomyEl ? autonomyEl.value : "confirm",
+      // Parallelism is deliberately limited to the two read-only scout lanes.
+      // The server still owns the hardware/configuration gate and retains one
+      // writer, deterministic verifier, and bounded repair loop.
+      parallelScouts: mode === "team" && !!(teamParallelScoutsEl && teamParallelScoutsEl.checked),
+    };
     if (mode === "agent" || mode === "team") lastAutonomy = item.autonomy;
     contextItems = []; // consumed by this message
     renderContext();
@@ -511,6 +548,7 @@
       mode: item.mode,
       model: item.model,
       autonomy: item.autonomy,
+      parallelScouts: item.parallelScouts,
       text: item.text,
       // Strip UI-only fields (thumb/isImage) so we don't send the image twice;
       // the server reads `image` (base64) for vision + `content` for text. For
@@ -520,6 +558,10 @@
         label: c.label,
         content: c.content,
         image: c.image,
+        // Preserve the trusted desktop lasso marker so the server can offer
+        // optional visual-only POINT cues for a real spatial selection, never
+        // for an ordinary image attachment.
+        spatial: c.spatial === true,
       })),
     };
     if (item.mode === "chat") {
@@ -546,6 +588,31 @@
     setStreaming(false);
     active = null;
     maybeAdvanceQueue();
+  }
+
+  // POINT directives are desktop-only local visual cues. A host may install a
+  // synchronous finalizer before this shared UI loads; invoke it only after a
+  // genuine terminal `done`, never for partial streaming, cancellation, or an
+  // error. The returned text may only remove content, so a host cannot inject
+  // additional rendered output through this hook.
+  function finalizeActiveAssistantResponse() {
+    if (!active) return;
+    let text = active.getAnswer();
+    const finalizer = typeof window.__ollamaxFinalizeAssistantResponse === "function"
+      ? window.__ollamaxFinalizeAssistantResponse
+      : null;
+    if (finalizer) {
+      try {
+        const cleaned = finalizer(text);
+        if (typeof cleaned === "string" && cleaned.length <= text.length) {
+          if (cleaned !== text) active.setFinalAnswerText(cleaned);
+          text = cleaned;
+        }
+      } catch (_) {}
+    }
+    try {
+      window.dispatchEvent(new CustomEvent("ollamax:assistant-final", { detail: { text } }));
+    } catch (_) {}
   }
 
   function maybeAdvanceQueue() {
@@ -715,6 +782,7 @@
         );
         break;
       case "done":
+        finalizeActiveAssistantResponse();
         finishTurn();
         break;
       case "cancelled":
@@ -928,15 +996,35 @@
     // Images are only honored on the Chat path — Agent can't analyze them,
     // so warn instead of silently dropping the image (review #7/#8).
     if (mode === "agent" || mode === "team") {
-      setStatus("🖼 Images only work in Chat mode — switch to Chat to analyze an image.");
+      const hasSpatialImage = contextItems.some((item) => item && item.isImage && item.spatial);
+      setStatus(
+        hasSpatialImage
+          ? "⌁ Spatial reference attached — use a local vision model; the agent will turn it into a visual brief before workspace work."
+          : "🖼 Images only work in Chat mode — switch to Chat to analyze an image."
+      );
       return;
     }
-    const m = (model || "").toLowerCase();
-    const looksVision = /llava|vision|bakllava|moondream|qwen2\.?5?-?vl|minicpm-v|gemma3/.test(m);
     if (!model) {
       // #17: no model resolved yet — still tell the user vision needs a vision model.
       setStatus("🖼 Image attached — pick a vision model (llava, llama3.2-vision) to analyze it.");
-    } else if (model !== "auto" && !looksVision) {
+      return;
+    }
+    if (model === "auto") return;
+
+    const entry = modelEntries.get(model);
+    const capabilities = modelCapabilities.get(model);
+    const supportsVision = entry && typeof entry.vision === "boolean"
+      ? entry.vision
+      : capabilities
+        ? capabilities.has("vision")
+        : null;
+
+    if (supportsVision === null) {
+      // A model may have just been selected, so its capability request can
+      // still be in flight. Ask the local engine rather than treating a family
+      // name as evidence; the incoming modelInfo response populates the cache.
+      requestModelInfo(model);
+    } else if (!supportsVision) {
       setStatus(
         "🖼 Image attached — your model may not support vision. Pick a vision model (llava, llama3.2-vision) or use Auto."
       );
@@ -979,9 +1067,11 @@
   // ----- models / status -----
   function setModels(models, def) {
     modelSel.innerHTML = "";
+    modelEntries = new Map((models || []).filter((m) => m && m.name).map((m) => [m.name, m]));
+    modelCapabilities = new Map();
     if (!models || models.length === 0) {
       const o = document.createElement("option");
-      o.textContent = "(no models — `ollama pull …`)";
+      o.textContent = "(no local models — install Ollama or configure a local endpoint)";
       o.value = "";
       modelSel.appendChild(o);
       model = null;
@@ -998,7 +1088,10 @@
     for (const m of models) {
       const o = document.createElement("option");
       o.value = m.name;
-      o.textContent = `${m.name}  (${m.sizeHuman || ""})`;
+      o.textContent = `${m.displayName || m.name}  (${m.sizeHuman || ""})`;
+      if (m.runtime === "openai-compatible-local") {
+        o.title = "Explicitly configured loopback self-hosted endpoint";
+      }
       modelSel.appendChild(o);
     }
     model = "auto";
@@ -1019,6 +1112,15 @@
   // Render the local-only context-window + capability hint for the selected
   // model. Flags `thinking`-capable models (ties into the real reasoning view).
   function renderModelHint(info) {
+    // Installed Ollama entries do not include capability flags in /api/models.
+    // Remember a successful local model-info lookup even when the user changes
+    // the selection before its response arrives.
+    if (info && typeof info.name === "string" && !info.error && Array.isArray(info.capabilities)) {
+      modelCapabilities.set(
+        info.name,
+        new Set(info.capabilities.filter((capability) => typeof capability === "string"))
+      );
+    }
     if (model === "auto") return; // auto hint is set in requestModelInfo
     if (!info || info.name !== model || info.error) {
       modelHintEl.hidden = true;
@@ -1036,13 +1138,18 @@
     const interesting = caps.filter((c) =>
       ["tools", "thinking", "vision", "insert", "embedding"].includes(c)
     );
-    let html = "🔒 local · " + bits.join(" · ");
+    const entry = modelEntries.get(model);
+    const locality = entry && entry.runtime === "openai-compatible-local"
+      ? "🔒 local endpoint"
+      : "🔒 local";
+    let html = locality + " · " + bits.join(" · ");
     for (const c of interesting) {
       const cls = c === "thinking" ? "cap thinking" : "cap";
       html += ` <span class="${cls}">${escapeHtml(c)}</span>`;
     }
     modelHintEl.innerHTML = html;
     modelHintEl.hidden = false;
+    if (contextItems.some((item) => item && item.isImage)) maybeWarnVision();
   }
 
   // Account chip (identity only — never affects local inference availability).
@@ -1102,6 +1209,13 @@
   }
 
   // ----- wire up DOM -----
+  function updateModeControls() {
+    const teamMode = mode === "team";
+    if (teamParallelScoutsOption) teamParallelScoutsOption.hidden = !teamMode;
+    // A switch to another mode cannot accidentally queue a Team run with an
+    // old parallel preference. Keep the user's Team choice while it is hidden.
+  }
+
   document.querySelectorAll(".mode").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".mode").forEach((b) => b.classList.remove("active"));
@@ -1110,6 +1224,7 @@
       // The Autonomy Dial applies to both workspace-writing modes.
       const dial = $("#autonomy");
       if (dial) dial.hidden = mode !== "agent" && mode !== "team";
+      updateModeControls();
       inputEl.placeholder =
         mode === "agent"
           ? "Tell the agent what to do — it uses tools, memory & skills and edits files (asks first)…"
@@ -1118,6 +1233,7 @@
             : "Ask anything — conversational, read-only, runs locally on your hardware…";
     });
   });
+  updateModeControls();
 
   document.querySelectorAll(".attach").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1190,6 +1306,7 @@
         break;
       case "context":
         addContext(msg.items || []);
+        if ((msg.items || []).some((item) => item && item.isImage)) maybeWarnVision();
         break;
       case "restoreHistory":
         // #3 Re-render this project's saved chat history on reopen.

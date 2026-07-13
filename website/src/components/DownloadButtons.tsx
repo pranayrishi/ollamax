@@ -1,14 +1,12 @@
-// Homepage per-OS download buttons → real bundle assets on the public releases
-// repo (see src/lib/downloads.ts). Each download is a CLI + VS Code extension
-// bundle with a quick setup (labelled honestly), not a one-click app. macOS
-// defaults to Apple Silicon; Intel + checksums live on the /download page.
+// Kept as a reusable status panel for pages that need a compact package callout.
+// It deliberately does not point at `releases/latest`: the source-tree feature
+// set is not represented by the older public v0.2.0 assets.
 import Link from "next/link";
-import { assetUrl } from "@/lib/downloads";
 
 const primary = [
-  { os: "macOS", sub: "Apple Silicon", asset: "ollama-forge-macos-arm64.tar.gz" },
-  { os: "Windows", sub: "x64", asset: "ollama-forge-windows-x64.zip" },
-  { os: "Linux", sub: "x64", asset: "ollama-forge-linux-x64.tar.gz" },
+  { os: "macOS", sub: "Apple Silicon" },
+  { os: "Windows", sub: "x64" },
+  { os: "Linux", sub: "x64" },
 ];
 
 export function DownloadButtons({ compact = false }: { compact?: boolean }) {
@@ -16,23 +14,19 @@ export function DownloadButtons({ compact = false }: { compact?: boolean }) {
     <div>
       <div className={compact ? "flex flex-wrap gap-3" : "grid gap-3 sm:grid-cols-3"}>
         {primary.map((t) => (
-          <a
+          <Link
             key={t.os}
-            href={assetUrl(t.asset)}
+            href="/download"
             className="surface-subtle flex items-center justify-between gap-3 px-4 py-3 text-sm transition-colors hover:bg-secondary"
           >
-            <span className="font-medium text-foreground">Download for {t.os}</span>
+            <span className="font-medium text-foreground">Package status · {t.os}</span>
             <span className="text-xs text-muted-foreground">{t.sub}</span>
-          </a>
+          </Link>
         ))}
       </div>
       <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-        These are direct (unsigned) downloads — there&rsquo;s a{" "}
-        <Link href="/download#first-launch" className="text-link">one-time step to open it →</Link>.
-        For zero warnings, use the{" "}
-        <Link href="/download" className="text-link">one-line installer</Link>{" "}
-        · needs{" "}
-        <a href="https://ollama.com/download" className="text-link" target="_blank" rel="noopener noreferrer">Ollama</a>.
+        Replacement packages are withheld until their matching public release and checksums are verified. See the{" "}
+        <Link href="/download" className="text-link">download status →</Link>.
       </p>
     </div>
   );

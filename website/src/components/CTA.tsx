@@ -11,8 +11,9 @@ export function CTA() {
             Get Ollamax
           </h2>
           <p className="mx-auto mt-5 max-w-xl text-center leading-relaxed text-muted-foreground">
-            Free and open source. Requires a local Ollama daemon. Sign in with GitHub only when you
-            want account features — your code, prompts, and files still never leave your machine.
+            Free and open source. Ollama is the default local runtime; advanced users may explicitly configure
+            their own loopback self-hosted server. Sign in with GitHub only when you want account features —
+            your code, prompts, and files never pass through our servers.
           </p>
 
           <div className="mt-8">

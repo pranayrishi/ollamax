@@ -58,7 +58,13 @@
           <div class="attachrow">
             <button class="attach" data-attach="pick" title="Attach files for context">+ files</button>
             <button class="attach" data-attach="image" title="Attach an image (needs a vision-capable model)">+ image</button>
+            <button id="spatial-select" class="attach" type="button" title="Explicitly select a screen region to attach as local visual context">⌁ region</button>
+            <button id="voice-push-to-talk" class="voice-control" type="button" aria-pressed="false" title="Hold to record a local voice command with whisper.cpp">🎙 Hold to talk</button>
+            <label class="voice-option" title="Release-to-send keeps normal Agent approval requirements in effect"><input id="voice-send-after" type="checkbox" checked /> Send voice command</label>
+            <label class="voice-option" title="Speak completed responses with an on-device voice"><input id="voice-speak-answers" type="checkbox" /> Speak answers</label>
+            <label id="team-parallel-option" class="voice-option" hidden title="Runs only the two read-only scout roles in parallel when your local hardware configuration permits it. The writer remains single-file and approval-gated."><input id="team-parallel-scouts" type="checkbox" /> Parallel scouts</label>
           </div>
+          <div id="voice-status" class="voice-status" aria-live="polite"></div>
           <div class="inputrow">
             <textarea id="input" rows="3" placeholder="Open a folder, then tell the agent what to change — it asks before edits. ⏎ to send, ⇧⏎ for newline."></textarea>
             <div class="btns">
@@ -104,6 +110,10 @@
        run unchanged on top. -->
   <script src="vscode-shim.js"></script>
   <script src="bridge.js"></script>
+  <script src="point-directives.js"></script>
+  <script src="desktop-points.js"></script>
+  <script src="desktop-voice.js"></script>
+  <script src="desktop-spatial.js"></script>
   <script src="hub-bridge.js"></script>
   <script src="app-shell.js"></script>
   <script src="ide.js"></script>

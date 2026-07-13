@@ -12,9 +12,9 @@ const features = [
     icon: "✎",
   },
   {
-    title: "Voice navigation, on-device",
-    body: "Press a key, speak, and jump straight to the code you mean. Speech-to-text runs locally with a bundled whisper.cpp model — your audio never leaves the machine.",
-    icon: "🎙",
+    title: "Voice, lasso, + a private cursor cue",
+    body: "Hold to speak only when a local whisper.cpp runtime is configured; a package may not include one. A small click-through cue reports local voice or selection state without seeing transcripts or pixels. A lasso sends only a bounded crop to a local vision request; screen-derived briefs are not kept in memory or replay, and neither speech nor vision falls back to a hosted API.",
+    icon: "⌁",
   },
   {
     title: "Per-project memory",
@@ -22,8 +22,8 @@ const features = [
     icon: "◉",
   },
   {
-    title: "Hardware-aware model selection",
-    body: "Detects your RAM/VRAM and recommends an Ollama model that actually fits, with context-window and capability hints. Pick any installed model from the picker.",
+    title: "Hardware-aware local model routing",
+    body: "Ollama is the default path, with current local Qwen, Gemma 4, and DeepSeek recommendations. Advanced users can explicitly select a configured loopback self-hosted endpoint in Chat, Agent, Research, and Team; DeepSeek V4 and MiniMax M3 remain server-class deployments, not automatic downloads or cloud fallbacks.",
     icon: "⚙",
   },
   {
@@ -40,7 +40,7 @@ export function Features() {
       <SectionHeading
         eyebrow="The Ollamax studio"
         title="A real coding assistant, held quietly on your own machine."
-        subtitle="Everything a cloud assistant gives you, without your code ever leaving your hardware."
+        subtitle="Local inference, local visual context, and explicit approval for workspace changes."
       />
       <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {features.map((f) => (

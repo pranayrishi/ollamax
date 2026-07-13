@@ -7,7 +7,7 @@
 // + Hub UI, which talks to that local server. Inference stays local
 // (app → forge serve → Ollama). Modeled on the Sattva AI desktop app.
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, screen, session, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -16,6 +16,34 @@ const crypto = require("crypto");
 const http = require("http");
 const https = require("https");
 const { URL } = require("url");
+const {
+  resolveTtsRuntime,
+  resolveWhisperRuntime,
+  speakText,
+  transcribeWavBase64,
+} = require("./lib/voice-runtime");
+const {
+  assertBoundedLassoInput,
+  buildPaddedSelectionBounds,
+  mapDipRectToScreenshotPixels,
+  normalizeLassoSamples,
+  planCappedCrop,
+} = require("./spatial-selection");
+const {
+  cursorBuddyBounds,
+  cursorBuddyCueBounds,
+  cursorBuddyState,
+  normalizedPointToDisplayPoint,
+} = require("./cursor-buddy-state");
+const { validatePointDirective } = require("./renderer/point-directives");
+const {
+  isAudioOnlyPermissionCheck,
+  isAudioOnlyPermissionRequest,
+  isExactFileUrl,
+  safeExternalUrl,
+  isTrustedMainWebContents,
+} = require("./lib/desktop-security");
+const { resolveWorkspacePath } = require("./lib/workspace-paths");
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
@@ -27,6 +55,23 @@ let workspaceRoot = null;
 let forgeWorkspaceRoot = null;
 let forgeRestartQueue = Promise.resolve();
 let forgeStartAbort = null;
+let spatialSession = null;
+let cursorBuddyWindow = null;
+let cursorBuddyReady = false;
+let cursorBuddyStateKey = "idle";
+let cursorBuddyPoint = null;
+let cursorBuddyTimer = null;
+let cursorBuddyCue = null;
+let cursorBuddyCueQueue = [];
+const MAX_CURSOR_BUDDY_CUE_QUEUE = 2;
+let voiceShortcutRegistered = false;
+let lastVoiceShortcutAt = 0;
+// A Whisper process loads a non-trivial local model.  One trusted renderer is
+// enough to request transcription, but it must not be able to start a pile of
+// concurrent native processes if a button is double-clicked or a renderer
+// script misbehaves.
+let voiceTranscriptionInFlight = false;
+const VOICE_TOGGLE_ACCELERATOR = "CommandOrControl+Alt+Space";
 // Private capability shared only with the bundled engine process and this
 // trusted Electron shell. It prevents arbitrary web content from driving the
 // loopback agent API.
@@ -35,6 +80,9 @@ const forgeApiToken = crypto.randomBytes(32).toString("hex");
 // Account server for sign-in + the Central Hub (identity only; never inference).
 // Configurable; empty disables account features gracefully.
 const ACCOUNT_SERVER = process.env.FORGE_ACCOUNT_SERVER || "";
+const MAIN_RENDERER_PATH = path.join(__dirname, "renderer", "index.html");
+const CURSOR_BUDDY_RENDERER_PATH = path.join(__dirname, "renderer", "cursor-buddy.html");
+const SPATIAL_OVERLAY_RENDERER_PATH = path.join(__dirname, "renderer", "spatial-overlay.html");
 
 function logFile(msg) {
   try {
@@ -43,6 +91,339 @@ function logFile(msg) {
       `${new Date().toISOString()} ${msg}\n`
     );
   } catch (_) {}
+}
+
+// Every window in the app is a fixed local document. A renderer must never
+// keep its preload bridge after navigating to web content or spawn a second
+// BrowserWindow with inherited privileges. External links use the explicit,
+// separately validated shell bridge instead.
+function lockWindowToLocalFile(win, allowedFile) {
+  const contents = win && win.webContents;
+  if (!contents) return;
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  const rejectUnexpectedNavigation = (event, details) => {
+    const url = details && typeof details === "object" ? details.url : details;
+    const isMainFrame = !details || typeof details !== "object" || details.isMainFrame !== false;
+    if (!isMainFrame || !isExactFileUrl(url, allowedFile)) event.preventDefault();
+  };
+  contents.on("will-navigate", rejectUnexpectedNavigation);
+  contents.on("will-frame-navigate", rejectUnexpectedNavigation);
+  contents.on("will-attach-webview", (event) => event.preventDefault());
+}
+
+// Electron's default permission behaviour is intentionally not an application
+// policy. Deny every renderer-granted capability except primary-frame audio
+// capture in the exact bundled main document. Screen selection uses
+// main-process desktopCapturer after an explicit IPC request, so renderer
+// display capture remains denied.
+function installDesktopSecurityPolicy() {
+  const desktopSession = session.defaultSession;
+  desktopSession.setPermissionCheckHandler((contents, permission, _origin, details) => {
+    return (
+      isTrustedMainWebContents(contents, mainWindow, MAIN_RENDERER_PATH) &&
+      isAudioOnlyPermissionCheck(permission, details)
+    );
+  });
+  desktopSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const allowed =
+      isTrustedMainWebContents(contents, mainWindow, MAIN_RENDERER_PATH) &&
+      isAudioOnlyPermissionRequest(permission, details);
+    callback(allowed);
+  });
+  // No HID/USB/serial device gets an implicit in-memory grant. The app has no
+  // device feature, so a future renderer change must add an explicit policy.
+  desktopSession.setDevicePermissionHandler(() => false);
+  // A compromised page must not reach the system picker through
+  // getDisplayMedia. The approved lasso path is the only screen-capture flow.
+  desktopSession.setDisplayMediaRequestHandler((_request, callback) => callback({}));
+}
+
+async function openValidatedExternal(candidate) {
+  const url = safeExternalUrl(candidate);
+  if (!url) throw new Error("only HTTPS or literal-loopback HTTP links may be opened externally");
+  await shell.openExternal(url);
+  return url;
+}
+
+// ---------------------------------------------------------------------
+// Local cursor companion
+// ---------------------------------------------------------------------
+// This is intentionally a visual status surface, not an agent-control layer.
+// It receives only a closed set of short state labels (defined in
+// cursor-buddy-state.js), is transparent/click-through, and has no OS-control
+// API. The sole model-derived datum it can receive is an independently
+// validated, capped POINT label for a temporary visual cue.
+function clearCursorBuddyTimer() {
+  if (cursorBuddyTimer) clearTimeout(cursorBuddyTimer);
+  cursorBuddyTimer = null;
+}
+
+function currentCursorPoint() {
+  try {
+    return screen.getCursorScreenPoint();
+  } catch (_) {
+    return { x: 0, y: 0 };
+  }
+}
+
+function positionCursorBuddy(win, point, cue = null) {
+  if (!win || win.isDestroyed()) return null;
+  const cursor = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+    ? point
+    : currentCursorPoint();
+  try {
+    const display = screen.getDisplayNearestPoint(cursor) || screen.getPrimaryDisplay();
+    const displayBounds = display && display.bounds;
+    const workArea = (display && display.workArea) || displayBounds;
+    if (!workArea || !displayBounds) return null;
+    const bounds = cue
+      ? cursorBuddyCueBounds(cursor, displayBounds)
+      : cursorBuddyBounds(cursor, workArea);
+    win.setBounds(bounds);
+    if (!cue) return null;
+    return {
+      x: Math.max(0, Math.min(bounds.width - 1, Math.round(cursor.x - bounds.x))),
+      y: Math.max(0, Math.min(bounds.height - 1, Math.round(cursor.y - bounds.y))),
+    };
+  } catch (error) {
+    logFile(`cursor buddy position failed: ${String((error && error.message) || error)}`);
+    return null;
+  }
+}
+
+function publishCursorBuddyState() {
+  const win = cursorBuddyWindow;
+  const state = cursorBuddyState(cursorBuddyStateKey);
+  if (!win || win.isDestroyed() || !cursorBuddyReady || !state) return;
+  if (state.key === "idle") {
+    win.webContents.send("cursor-buddy:state", { label: "", detail: "", cue: null });
+    win.hide();
+    return;
+  }
+  const cue = state.key === "pointing" ? cursorBuddyCue : null;
+  const cuePosition = positionCursorBuddy(win, cursorBuddyPoint, cue);
+  win.webContents.send("cursor-buddy:state", {
+    label: state.label,
+    detail: cue ? cue.label : state.detail,
+    cue: cue && cuePosition ? cuePosition : null,
+  });
+  win.showInactive();
+  try {
+    win.moveTop();
+  } catch (_) {}
+}
+
+function createCursorBuddyWindow() {
+  if (cursorBuddyWindow && !cursorBuddyWindow.isDestroyed()) return cursorBuddyWindow;
+  if (!app.isReady()) return null;
+  const win = new BrowserWindow({
+    width: 264,
+    height: 84,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    focusable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "cursor-buddy-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      // This window has no need for Node-capable renderer primitives. Its
+      // preload uses only Electron's contextBridge/ipcRenderer APIs, which are
+      // supported by Electron's sandboxed preload environment.
+      sandbox: true,
+    },
+  });
+  lockWindowToLocalFile(win, CURSOR_BUDDY_RENDERER_PATH);
+  cursorBuddyWindow = win;
+  cursorBuddyReady = false;
+  try {
+    win.setIgnoreMouseEvents(true, { forward: true });
+  } catch (error) {
+    // Never leave a visual-only overlay able to intercept input on a platform
+    // that cannot provide click-through behavior.
+    logFile(`cursor buddy click-through is unavailable: ${String((error && error.message) || error)}`);
+    if (cursorBuddyWindow === win) cursorBuddyWindow = null;
+    cursorBuddyReady = false;
+    win.destroy();
+    return null;
+  }
+  try {
+    win.setAlwaysOnTop(true, "screen-saver");
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  } catch (_) {}
+  win.once("closed", () => {
+    if (cursorBuddyWindow === win) {
+      cursorBuddyWindow = null;
+      cursorBuddyReady = false;
+    }
+  });
+  win.webContents.once("did-finish-load", () => {
+    if (cursorBuddyWindow !== win || win.isDestroyed()) return;
+    cursorBuddyReady = true;
+    publishCursorBuddyState();
+  });
+  win.loadFile(CURSOR_BUDDY_RENDERER_PATH).catch((error) => {
+    logFile(`cursor buddy failed to load: ${String((error && error.message) || error)}`);
+    if (!win.isDestroyed()) win.destroy();
+  });
+  return win;
+}
+
+function setCursorBuddyState(name, point, cue = null) {
+  const state = cursorBuddyState(name);
+  if (!state) return false;
+  if (
+    state.key === "pointing" &&
+    (!cue || typeof cue.label !== "string" || !Number.isFinite(cue.point && cue.point.x) || !Number.isFinite(cue.point && cue.point.y))
+  ) {
+    return false;
+  }
+  clearCursorBuddyTimer();
+  cursorBuddyStateKey = state.key;
+  cursorBuddyPoint = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+    ? { x: point.x, y: point.y }
+    : currentCursorPoint();
+  if (state.key === "pointing") {
+    cursorBuddyCue = { label: cue.label, point: { ...cursorBuddyPoint } };
+  } else {
+    cursorBuddyCue = null;
+    cursorBuddyCueQueue = [];
+  }
+  if (state.key === "idle") {
+    publishCursorBuddyState();
+    return true;
+  }
+  if (!createCursorBuddyWindow()) {
+    // If Electron cannot guarantee a click-through surface, do not retain a
+    // hidden pointer state or claim that a visual cue was shown.
+    cursorBuddyStateKey = "idle";
+    cursorBuddyPoint = null;
+    cursorBuddyCue = null;
+    cursorBuddyCueQueue = [];
+    return false;
+  }
+  publishCursorBuddyState();
+  if (state.durationMs > 0) {
+    cursorBuddyTimer = setTimeout(() => {
+      if (cursorBuddyStateKey !== state.key) return;
+      if (state.key === "pointing" && cursorBuddyCueQueue.length > 0) {
+        const nextCue = cursorBuddyCueQueue.shift();
+        setCursorBuddyState("pointing", nextCue.point, nextCue);
+        return;
+      }
+      setCursorBuddyState("idle");
+    }, state.durationMs);
+  }
+  return true;
+}
+
+function destroyCursorBuddy() {
+  clearCursorBuddyTimer();
+  cursorBuddyStateKey = "idle";
+  cursorBuddyPoint = null;
+  cursorBuddyCue = null;
+  cursorBuddyCueQueue = [];
+  const win = cursorBuddyWindow;
+  cursorBuddyWindow = null;
+  cursorBuddyReady = false;
+  if (win && !win.isDestroyed()) win.destroy();
+}
+
+// Convert a renderer-supplied, already-parsed directive into a display point.
+// This revalidates every field in the privileged process and deliberately has
+// no `setCursorPos`, accessibility, click, keyboard, or window-control call.
+function localPointCueFromDirective(value) {
+  const directive = validatePointDirective(value);
+  if (!directive) return null;
+  try {
+    const displays = screen.getAllDisplays();
+    if (!Array.isArray(displays) || displays.length === 0) return null;
+    const display = directive.screenIndex === null
+      ? (screen.getDisplayNearestPoint(currentCursorPoint()) || screen.getPrimaryDisplay())
+      : displays[directive.screenIndex];
+    if (!display || !display.bounds) return null;
+    const point = normalizedPointToDisplayPoint(directive, display.bounds);
+    if (!point) return null;
+    return { point, label: directive.label };
+  } catch (error) {
+    logFile(`local point cue could not resolve a display: ${String((error && error.message) || error)}`);
+    return null;
+  }
+}
+
+function enqueueCursorBuddyCue(cue) {
+  if (!cue) return false;
+  if (cursorBuddyStateKey === "pointing" && cursorBuddyCue) {
+    // A final response can carry a few ordered cues. Bound the queue so an
+    // untrusted renderer cannot turn the visual overlay into a long-running
+    // attention-grabbing loop.
+    if (cursorBuddyCueQueue.length >= MAX_CURSOR_BUDDY_CUE_QUEUE) return false;
+    cursorBuddyCueQueue.push(cue);
+    return true;
+  }
+  cursorBuddyCueQueue = [];
+  return setCursorBuddyState("pointing", cue.point, cue);
+}
+
+function isTrustedMainRenderer(event) {
+  return !!(event && isTrustedMainWebContents(event.sender, mainWindow, MAIN_RENDERER_PATH));
+}
+
+function publishVoiceShortcutStatus() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("buddy:shortcutStatus", {
+      registered: voiceShortcutRegistered,
+      accelerator: VOICE_TOGGLE_ACCELERATOR,
+    });
+  }
+}
+
+function requestVoiceToggleFromShortcut() {
+  // Some platforms repeat a global shortcut while keys are held. Treat it as
+  // one explicit toggle rather than starting and immediately stopping capture.
+  const now = Date.now();
+  if (now - lastVoiceShortcutAt < 350) return;
+  lastVoiceShortcutAt = now;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    setCursorBuddyState("voice_window_unavailable");
+    return;
+  }
+  setCursorBuddyState("voice_starting");
+  // The renderer owns microphone permission and the actual push-to-talk
+  // session. This event asks it to start/stop; it grants no new OS authority.
+  mainWindow.webContents.send("buddy:voiceToggle", { accelerator: VOICE_TOGGLE_ACCELERATOR });
+}
+
+function registerVoiceToggleShortcut() {
+  if (voiceShortcutRegistered) return true;
+  try {
+    voiceShortcutRegistered = globalShortcut.register(VOICE_TOGGLE_ACCELERATOR, requestVoiceToggleFromShortcut);
+  } catch (error) {
+    voiceShortcutRegistered = false;
+    logFile(`could not register ${VOICE_TOGGLE_ACCELERATOR}: ${String((error && error.message) || error)}`);
+  }
+  if (!voiceShortcutRegistered) {
+    logFile(`could not register ${VOICE_TOGGLE_ACCELERATOR}; another application may own it`);
+    setCursorBuddyState("shortcut_unavailable");
+  }
+  publishVoiceShortcutStatus();
+  return voiceShortcutRegistered;
+}
+
+function unregisterVoiceToggleShortcut() {
+  try {
+    globalShortcut.unregister(VOICE_TOGGLE_ACCELERATOR);
+  } catch (_) {}
+  voiceShortcutRegistered = false;
 }
 
 // Resolve the bundled engine binary: prod = inside the .app Resources/bin;
@@ -230,18 +611,42 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Keep a Chromium renderer compromise from gaining unsandboxed process
+      // access. All legitimate native operations flow through the narrow,
+      // validated preload bridge below.
+      sandbox: true,
     },
   });
-  mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+  lockWindowToLocalFile(mainWindow, MAIN_RENDERER_PATH);
+  mainWindow.loadFile(MAIN_RENDERER_PATH);
   if (isDev) mainWindow.webContents.openDevTools({ mode: "detach" });
-  mainWindow.on("closed", () => (mainWindow = null));
+  mainWindow.webContents.once("did-finish-load", publishVoiceShortcutStatus);
+  mainWindow.on("closed", () => {
+    // A hidden companion is still an Electron BrowserWindow. Destroy it (do
+    // not merely hide it) so it cannot keep the app alive or block macOS's
+    // normal activate-to-reopen behavior. The same applies to every lasso
+    // overlay and its in-memory capture if the main app is closed mid-select.
+    if (spatialSession) {
+      finishSpatialSession(
+        spatialSession,
+        null,
+        new Error("Screen-region selection cancelled because Ollamax was closed.")
+      );
+    }
+    destroyCursorBuddy();
+    mainWindow = null;
+  });
 }
 
 // --- IPC: things the renderer can't do itself (Node/Electron only) --------
 
-ipcMain.handle("forge:config", () => forgeConfig());
+ipcMain.handle("forge:config", (event) => {
+  if (!isTrustedMainRenderer(event)) return null;
+  return forgeConfig();
+});
 
-ipcMain.handle("forge:pickFiles", async () => {
+ipcMain.handle("forge:pickFiles", async (event) => {
+  if (!isTrustedMainRenderer(event)) return [];
   const r = await dialog.showOpenDialog(mainWindow, {
     properties: ["openFile", "multiSelections"],
   });
@@ -255,18 +660,414 @@ ipcMain.handle("forge:pickFiles", async () => {
   });
 });
 
-ipcMain.handle("forge:openExternal", (_e, url) => shell.openExternal(url));
+ipcMain.handle("forge:openExternal", async (event, url) => {
+  if (!isTrustedMainRenderer(event)) {
+    return { ok: false, error: "untrusted external-link request" };
+  }
+  try {
+    await openValidatedExternal(url);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String((error && error.message) || error) };
+  }
+});
+
+// The main renderer may update only an enumerated, display-only companion
+// state. Reject calls from every other webContents and reject arbitrary text.
+// `pointing` is internal-only; a pointer cue must go through the separately
+// validated `buddy:point` path below.
+ipcMain.handle("buddy:setState", (event, state) => {
+  if (!isTrustedMainRenderer(event)) {
+    return { ok: false, error: "untrusted cursor companion request" };
+  }
+  if (state === "pointing") return { ok: false, error: "pointing requires a validated local directive" };
+  return setCursorBuddyState(state) ? { ok: true } : { ok: false, error: "invalid local state" };
+});
+
+// The desktop POINT cue is strictly visual. The renderer can supply only
+// normalized coordinates, an optional indexed display, and a short validated
+// label. The main process maps it to a transient click-through overlay; it
+// never moves the pointer or performs an OS/UI action.
+ipcMain.handle("buddy:point", (event, directive) => {
+  if (!isTrustedMainRenderer(event)) {
+    return { ok: false, error: "untrusted local point request" };
+  }
+  const cue = localPointCueFromDirective(directive);
+  return enqueueCursorBuddyCue(cue)
+    ? { ok: true }
+    : { ok: false, error: "invalid or unavailable local point cue" };
+});
+
+// ---------------------------------------------------------------------
+// Local voice (explicit push-to-talk only)
+// ---------------------------------------------------------------------
+// The renderer can ask for a one-shot transcription or optional spoken answer,
+// but it never receives filesystem/process access.  No captured audio or text
+// is logged, persisted, or sent to an API from this shell.
+function localVoiceOptions() {
+  return {
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    env: process.env,
+  };
+}
+
+function publicVoiceStatus() {
+  const options = localVoiceOptions();
+  const whisper = resolveWhisperRuntime(options);
+  const tts = resolveTtsRuntime(options);
+  return {
+    whisper: { available: whisper.available, reason: whisper.reason || null, source: whisper.source || null },
+    tts: { available: tts.available, reason: tts.reason || null, kind: tts.kind || null },
+    // This is an important product contract: local voice has no cloud fallback.
+    localOnly: true,
+  };
+}
+
+ipcMain.handle("voice:status", (event) => {
+  if (!isTrustedMainRenderer(event)) {
+    return {
+      whisper: { available: false, reason: "untrusted local voice request", source: null },
+      tts: { available: false, reason: "untrusted local voice request", kind: null },
+      localOnly: true,
+    };
+  }
+  return publicVoiceStatus();
+});
+
+ipcMain.handle("voice:transcribe", async (event, wavBase64) => {
+  if (!isTrustedMainRenderer(event)) {
+    return { ok: false, error: "untrusted local voice request" };
+  }
+  if (voiceTranscriptionInFlight) {
+    return { ok: false, error: "A local transcription is already in progress." };
+  }
+  voiceTranscriptionInFlight = true;
+  try {
+    const transcript = await transcribeWavBase64(wavBase64, localVoiceOptions());
+    return { ok: true, transcript };
+  } catch (error) {
+    return { ok: false, error: String((error && error.message) || error) };
+  } finally {
+    voiceTranscriptionInFlight = false;
+  }
+});
+
+ipcMain.handle("voice:speak", async (event, text) => {
+  if (!isTrustedMainRenderer(event)) {
+    return { ok: false, error: "untrusted local voice request" };
+  }
+  try {
+    await speakText(text, localVoiceOptions());
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String((error && error.message) || error) };
+  }
+});
+
+// ---------------------------------------------------------------------
+// Spatial context (explicit lasso selection only)
+// ---------------------------------------------------------------------
+// A screen image is captured only after the user presses the region button. It
+// stays in memory, is cropped before it reaches the local engine, and is
+// discarded as soon as the selection resolves or is cancelled. The overlay is
+// not a click-through controller: it describes visual context, never grants
+// mouse, accessibility, shell, or filesystem authority.
+// Leaves room below the engine's 4 MiB JSON request cap for the base64
+// expansion, user prompt, and any ordinary attached context.
+const SPATIAL_MAX_ENCODED_BYTES = 2_000_000;
+// The lasso crop is capped below 1.4 MP, so a 2048-pixel thumbnail retains
+// more than enough source detail without holding one 4K-sized image per
+// monitor in RAM. Only the user-chosen display is retained or serialized to an
+// overlay.
+const SPATIAL_THUMBNAIL_BOUND = 2_048;
+
+function desktopCaptureDisplayId(source) {
+  const direct = source && (source.display_id || source.displayId);
+  if (direct != null && String(direct)) return String(direct);
+  const match = source && /^screen:([^:]+):/i.exec(String(source.id || ""));
+  return match ? match[1] : null;
+}
+
+async function chooseDisplayForSpatialSelection() {
+  const displays = screen.getAllDisplays();
+  if (!displays.length) throw new Error("No display is available for a spatial selection.");
+  if (displays.length === 1) return displays[0];
+
+  const nearest = screen.getDisplayNearestPoint(currentCursorPoint());
+  const defaultId = nearest ? String(nearest.id) : "";
+  const buttons = displays.map((display, index) => {
+    const selected = String(display.id) === defaultId ? " (current)" : "";
+    return `Display ${index + 1} · ${Math.round(display.bounds.width)} × ${Math.round(display.bounds.height)}${selected}`;
+  });
+  buttons.push("Cancel");
+  const options = {
+    type: "question",
+    title: "Choose a display",
+    message: "Choose the display containing the region you want to attach.",
+    detail: "Only the display you choose is captured, and only your lassoed crop is sent to the local model.",
+    buttons,
+    defaultId: Math.max(0, displays.findIndex((display) => String(display.id) === defaultId)),
+    cancelId: displays.length,
+    noLink: true,
+  };
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const selection = parent
+    ? await dialog.showMessageBox(parent, options)
+    : await dialog.showMessageBox(options);
+  if (selection.response === displays.length) return null;
+  return displays[selection.response] || null;
+}
+
+async function captureDisplayForSpatialSelection(display) {
+  if (!display || display.id == null) throw new Error("No display was selected for a spatial selection.");
+  let sources;
+  try {
+    sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      fetchWindowIcons: false,
+      thumbnailSize: { width: SPATIAL_THUMBNAIL_BOUND, height: SPATIAL_THUMBNAIL_BOUND },
+    });
+  } catch (error) {
+    throw new Error(`Screen capture is unavailable. Grant screen-recording permission and try again. (${String((error && error.message) || error)})`);
+  }
+  const displays = screen.getAllDisplays();
+  let source = sources.find((candidate) => desktopCaptureDisplayId(candidate) === String(display.id));
+  // Electron versions that do not expose display_id are unambiguous only on a
+  // one-display machine. Do not guess a source on a multi-display desktop.
+  if (!source && displays.length === 1 && sources.length) source = sources[0];
+  if (!source || !source.thumbnail || source.thumbnail.isEmpty()) {
+    throw new Error("No readable capture was returned for the selected display. Grant screen-recording permission and try again.");
+  }
+  const imageSize = source.thumbnail.getSize();
+  if (!imageSize.width || !imageSize.height) {
+    throw new Error("The selected display capture has no usable image size.");
+  }
+  return { display, thumbnail: source.thumbnail, imageSize };
+}
+
+function finishSpatialSession(session, result, error) {
+  if (!session || spatialSession !== session || session.finished) return;
+  session.finished = true;
+  spatialSession = null;
+  for (const overlay of session.overlays.values()) {
+    if (!overlay.isDestroyed()) overlay.destroy();
+  }
+  session.overlays.clear();
+  // Drop screenshots and their base64 data immediately after the only selected
+  // crop has been encoded. The result carries the crop, not the full display.
+  session.captures.clear();
+  if (error) {
+    const message = String((error && error.message) || error).toLowerCase();
+    setCursorBuddyState(message.includes("cancel") ? "spatial_cancelled" : "spatial_error");
+    session.reject(error instanceof Error ? error : new Error(String(error)));
+  } else {
+    session.resolve(result);
+  }
+}
+
+function compactSpatialImage(image) {
+  let current = image;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const quality = Math.max(52, 84 - attempt * 8);
+    const bytes = current.toJPEG(quality);
+    if (bytes.length <= SPATIAL_MAX_ENCODED_BYTES) {
+      const base64 = bytes.toString("base64");
+      return { image: base64, thumb: `data:image/jpeg;base64,${base64}` };
+    }
+    const size = current.getSize();
+    const factor = Math.max(0.45, Math.sqrt(SPATIAL_MAX_ENCODED_BYTES / bytes.length) * 0.9);
+    const width = Math.max(1, Math.floor(size.width * factor));
+    const height = Math.max(1, Math.floor(size.height * factor));
+    if (width === size.width && height === size.height) break;
+    current = current.resize({ width, height, quality: "best" });
+  }
+  throw new Error("The selected screen region is too detailed to attach safely. Select a smaller region.");
+}
+
+function makeSpatialContextItem(capture, samples) {
+  const localPoints = normalizeLassoSamples(assertBoundedLassoInput(samples), {
+    minDistance: 0.5,
+    maxSamples: 512,
+  });
+  const points = localPoints.map((point) => ({
+    x: point.x + capture.display.bounds.x,
+    y: point.y + capture.display.bounds.y,
+  }));
+  const selection = buildPaddedSelectionBounds(points, capture.display.bounds, {
+    padding: 12,
+    minWidth: 28,
+    minHeight: 28,
+  });
+  if (!selection) throw new Error("Draw a region on the displayed screen to attach it.");
+  const pixelRect = mapDipRectToScreenshotPixels(selection, {
+    ...capture.display.bounds,
+    scaleFactor: capture.display.scaleFactor,
+  }, capture.imageSize);
+  if (!pixelRect) throw new Error("That region is outside the captured display.");
+  const plan = planCappedCrop(pixelRect, capture.imageSize, {
+    maxWidth: 1_400,
+    maxHeight: 1_400,
+    maxPixels: 1_400_000,
+  });
+  if (!plan) throw new Error("That screen region could not be cropped.");
+  const cropped = capture.thumbnail.crop(plan.sourceRect);
+  const scaled = plan.downscaled
+    ? cropped.resize({ width: plan.outputSize.width, height: plan.outputSize.height, quality: "best" })
+    : cropped;
+  const encoded = compactSpatialImage(scaled);
+  const normalized = {
+    x: Number(((selection.x - capture.display.bounds.x) / capture.display.bounds.width).toFixed(4)),
+    y: Number(((selection.y - capture.display.bounds.y) / capture.display.bounds.height).toFixed(4)),
+    width: Number((selection.width / capture.display.bounds.width).toFixed(4)),
+    height: Number((selection.height / capture.display.bounds.height).toFixed(4)),
+  };
+  return {
+    path: `screen-region-${Date.now()}.jpg`,
+    label: "Selected screen region",
+    image: encoded.image,
+    thumb: encoded.thumb,
+    isImage: true,
+    spatial: true,
+    content: [
+      "Spatial visual context: the user explicitly lasso-selected this visible screen region.",
+      `Normalized region: x=${normalized.x}, y=${normalized.y}, width=${normalized.width}, height=${normalized.height}.`,
+      "Treat the image as a visual reference only. Do not assume it authorizes controlling the operating system, clicking UI, reading outside this crop, or editing files. If asked to replicate it, identify observable components and then propose or make only the workspace changes authorized by the current autonomy setting.",
+    ].join("\n"),
+  };
+}
+
+async function startSpatialSelection() {
+  if (spatialSession) throw new Error("A screen-region selection is already active.");
+  // Choosing the display happens before capture. We retain and serialize only
+  // that display's thumbnail, not one full image per monitor.
+  const display = await chooseDisplayForSpatialSelection();
+  if (!display) throw new Error("Screen-region selection cancelled.");
+  const capture = await captureDisplayForSpatialSelection(display);
+
+  return new Promise((resolve, reject) => {
+    const displayId = String(capture.display.id);
+    const session = {
+      id: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"),
+      captures: new Map([[displayId, capture]]),
+      overlays: new Map(),
+      resolve,
+      reject,
+      finished: false,
+    };
+    spatialSession = session;
+    const bounds = capture.display.bounds;
+    const overlay = new BrowserWindow({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      frame: false,
+      transparent: false,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      closable: true,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      fullscreenable: false,
+      hasShadow: false,
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, "spatial-preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        // The overlay receives an in-memory screenshot and must remain a
+        // sandboxed, one-purpose drawing surface.
+        sandbox: true,
+      },
+    });
+    lockWindowToLocalFile(overlay, SPATIAL_OVERLAY_RENDERER_PATH);
+    session.overlays.set(displayId, overlay);
+    overlay.setAlwaysOnTop(true, "screen-saver");
+    overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    overlay.on("closed", () => {
+      if (!session.finished) finishSpatialSession(session, null, new Error("Screen-region selection cancelled."));
+    });
+    overlay.webContents.once("did-finish-load", () => {
+      if (session.finished || overlay.isDestroyed()) return;
+      // This base64 image is sent only to the one local overlay rendering the
+      // display the user explicitly chose; it is cleared with the session.
+      overlay.webContents.send("spatial:init", {
+        sessionId: session.id,
+        displayId,
+        image: capture.thumbnail.toDataURL(),
+      });
+      overlay.show();
+      overlay.focus();
+      // Keep the visual-only local-state bubble above the selector without
+      // taking focus or intercepting the lasso. Its click-through surface
+      // makes this safe even while the user is drawing a region.
+      if (cursorBuddyStateKey === "spatial_selecting") publishCursorBuddyState();
+    });
+    overlay.loadFile(SPATIAL_OVERLAY_RENDERER_PATH).catch((error) => {
+      finishSpatialSession(session, null, new Error(`Could not open screen selector: ${error.message}`));
+    });
+  });
+}
+
+ipcMain.handle("spatial:select", async (event) => {
+  if (!isTrustedMainRenderer(event)) {
+    return { ok: false, error: "untrusted spatial selection request" };
+  }
+  setCursorBuddyState("spatial_selecting");
+  try {
+    const item = await startSpatialSelection();
+    return { ok: true, item };
+  } catch (error) {
+    setCursorBuddyState("spatial_error");
+    return { ok: false, error: String((error && error.message) || error) };
+  }
+});
+
+ipcMain.on("spatial:cancel", (event, payload) => {
+  const session = spatialSession;
+  if (!session || !payload || payload.sessionId !== session.id) return;
+  const overlay = session.overlays.get(String(payload.displayId));
+  if (!overlay || overlay.isDestroyed() || overlay.webContents.id !== event.sender.id) return;
+  finishSpatialSession(session, null, new Error("Screen-region selection cancelled."));
+});
+
+ipcMain.on("spatial:complete", (event, payload) => {
+  const session = spatialSession;
+  if (!session || !payload || payload.sessionId !== session.id) return;
+  const displayId = String(payload.displayId || "");
+  const overlay = session.overlays.get(displayId);
+  const capture = session.captures.get(displayId);
+  if (!overlay || !capture || overlay.isDestroyed() || overlay.webContents.id !== event.sender.id) return;
+  try {
+    const item = makeSpatialContextItem(capture, payload.points);
+    finishSpatialSession(session, item, null);
+    // The pointer-up position is within the region the user just drew, so it
+    // is a safe local anchor for a short confirmation bubble. No crop details
+    // or screen text are exposed to that bubble.
+    setCursorBuddyState("spatial_attached", currentCursorPoint());
+  } catch (error) {
+    finishSpatialSession(session, null, error);
+  }
+});
 
 // Desktop sign-in: open the account server's desktop auth in the system browser
 // (the existing GitHub/Google OAuth loopback + PKCE flow). The loopback server
 // that receives the token is started by the engine; here we just open the URL.
-ipcMain.handle("forge:signIn", async (_e, { device } = {}) => {
+ipcMain.handle("forge:signIn", async (event, { device } = {}) => {
+  if (!isTrustedMainRenderer(event)) return { ok: false, error: "untrusted sign-in request" };
   if (!ACCOUNT_SERVER) return { ok: false, error: "no_account_server" };
   const startUrl = device
     ? `${ACCOUNT_SERVER}/desktop/activate`
     : `${ACCOUNT_SERVER}/api/desktop/start?redirect_uri=http://127.0.0.1:0`;
-  await shell.openExternal(startUrl);
-  return { ok: true };
+  try {
+    await openValidatedExternal(startUrl);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String((error && error.message) || error) };
+  }
 });
 
 // =====================================================================
@@ -290,6 +1091,10 @@ const safeBase = (s) => {
   return /^[\w.-]+$/.test(b) && b !== "." && b !== ".." ? b : null;
 };
 const within = (dir, file) => path.resolve(dir, file).startsWith(path.resolve(dir) + path.sep);
+const safeHubSlug = (value) => {
+  const slug = typeof value === "string" ? value.trim() : "";
+  return /^[a-z0-9][a-z0-9_-]{0,80}$/i.test(slug) ? slug : null;
+};
 
 function hubHttp(method, urlStr, body, bearer) {
   return new Promise((resolve, reject) => {
@@ -324,7 +1129,8 @@ function hubHttp(method, urlStr, body, bearer) {
   });
 }
 
-ipcMain.handle("hub:categories", async () => {
+ipcMain.handle("hub:categories", async (event) => {
+  if (!isTrustedMainRenderer(event)) return { error: "untrusted Hub request" };
   if (!ACCOUNT_SERVER) return { needsServer: true };
   try {
     const d = await hubHttp("GET", `${ACCOUNT_SERVER}/api/hub/categories`);
@@ -334,7 +1140,10 @@ ipcMain.handle("hub:categories", async () => {
   }
 });
 
-ipcMain.handle("hub:package", async (_e, slug) => {
+ipcMain.handle("hub:package", async (event, slug) => {
+  if (!isTrustedMainRenderer(event)) return { error: "untrusted Hub request" };
+  slug = safeHubSlug(slug);
+  if (!slug) return { error: "invalid Hub package" };
   if (!ACCOUNT_SERVER) return { needsServer: true };
   try {
     return { pkg: await hubHttp("GET", `${ACCOUNT_SERVER}/api/hub/package/${encodeURIComponent(slug)}`) };
@@ -345,7 +1154,10 @@ ipcMain.handle("hub:package", async (_e, slug) => {
 
 // Apply a package = write its rules + skills into the local config dirs the
 // engine reads. Transparent, inspectable, reversible (delete the files).
-ipcMain.handle("hub:activate", async (_e, slug) => {
+ipcMain.handle("hub:activate", async (event, slug) => {
+  if (!isTrustedMainRenderer(event)) return { error: "untrusted Hub request" };
+  slug = safeHubSlug(slug);
+  if (!slug) return { error: "invalid Hub package" };
   if (!ACCOUNT_SERVER) return { needsServer: true };
   let pkg;
   try {
@@ -356,7 +1168,7 @@ ipcMain.handle("hub:activate", async (_e, slug) => {
   try {
     fs.mkdirSync(rulesDir(), { recursive: true });
     fs.mkdirSync(skillsDir(), { recursive: true });
-    const rulesFile = `hub-${safeBase(slug) || "package"}.md`;
+    const rulesFile = `hub-${slug}.md`;
     if (within(rulesDir(), rulesFile)) {
       fs.writeFileSync(path.join(rulesDir(), rulesFile), pkg.rules || "", "utf8");
     }
@@ -383,13 +1195,18 @@ ipcMain.handle("hub:activate", async (_e, slug) => {
 // Opt-in "support maintainers": create a star intent, open the browser for the
 // user to review + consciously star. NEVER automatic. Needs the app token; if
 // sign-in isn't wired/available yet, ask the user to sign in.
-ipcMain.handle("hub:support", async (_e, { slug, repos, token } = {}) => {
+ipcMain.handle("hub:support", async (event, { slug, repos, token } = {}) => {
+  if (!isTrustedMainRenderer(event)) return { ok: false, error: "untrusted support request" };
+  slug = safeHubSlug(slug);
+  if (!slug || !Array.isArray(repos) || repos.length > 100 || typeof token !== "string" || token.length > 8_192) {
+    return { ok: false, error: "invalid support request" };
+  }
   if (!ACCOUNT_SERVER) return { needsServer: true };
   if (!token) return { needsSignIn: true };
   try {
     const res = await hubHttp("POST", `${ACCOUNT_SERVER}/api/star/intent`, { repos, category: slug }, token);
     if (res.url) {
-      await shell.openExternal(res.url);
+      await openValidatedExternal(res.url);
       return { ok: true };
     }
     return { error: "Could not create the support request." };
@@ -407,15 +1224,6 @@ ipcMain.handle("hub:support", async (_e, { slug, repos, token } = {}) => {
 // =====================================================================
 const IGNORE_DIRS = new Set([".git", "node_modules", "target", "dist", ".next", "release", ".cache"]);
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
-
-function isWithinWorkspace(root, target) {
-  const rel = path.relative(root, target);
-  return rel === "" || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
-}
-
-function inWorkspace(p) {
-  return !!workspaceRoot && typeof p === "string" && isWithinWorkspace(workspaceRoot, path.resolve(p));
-}
 
 function canonicalWorkspaceRoot(p) {
   const resolved = path.resolve(p);
@@ -460,7 +1268,8 @@ async function switchWorkspace(nextRoot) {
   }
 }
 
-ipcMain.handle("ide:openFolder", async () => {
+ipcMain.handle("ide:openFolder", async (event) => {
+  if (!isTrustedMainRenderer(event)) return null;
   const r = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
   if (r.canceled || !r.filePaths[0]) return null;
   let nextRoot;
@@ -476,14 +1285,19 @@ ipcMain.handle("ide:openFolder", async () => {
 });
 
 // One directory level (lazy tree expansion). Dirs first, then files, sorted.
-ipcMain.handle("ide:readDir", async (_e, dir) => {
-  const target = dir ? path.resolve(dir) : workspaceRoot;
-  if (!target || !inWorkspace(target)) return { error: "outside workspace" };
+// Every direct-IDE path rejects symlink components just like the agent preview
+// path, so an in-root symlink cannot become a bridge to another location.
+ipcMain.handle("ide:readDir", async (event, dir) => {
+  if (!isTrustedMainRenderer(event)) return { error: "untrusted IDE request" };
+  const resolved = resolveWorkspacePath(workspaceRoot, dir || workspaceRoot, { allowRoot: true });
+  if (resolved.error) return { error: resolved.error };
   try {
-    const ents = fs.readdirSync(target, { withFileTypes: true });
+    const stat = fs.lstatSync(resolved.target);
+    if (!stat.isDirectory()) return { error: "path is not a directory" };
+    const ents = fs.readdirSync(resolved.target, { withFileTypes: true });
     const out = ents
-      .filter((e) => !(e.isDirectory() && IGNORE_DIRS.has(e.name)) && !e.name.startsWith("."))
-      .map((e) => ({ name: e.name, path: path.join(target, e.name), dir: e.isDirectory() }))
+      .filter((e) => !e.isSymbolicLink() && !(e.isDirectory() && IGNORE_DIRS.has(e.name)) && !e.name.startsWith("."))
+      .map((e) => ({ name: e.name, path: path.join(resolved.target, e.name), dir: e.isDirectory() }))
       .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
     return { entries: out };
   } catch (e) {
@@ -491,21 +1305,46 @@ ipcMain.handle("ide:readDir", async (_e, dir) => {
   }
 });
 
-ipcMain.handle("ide:readFile", async (_e, p) => {
-  if (!inWorkspace(p)) return { error: "outside workspace" };
+ipcMain.handle("ide:readFile", async (event, p) => {
+  if (!isTrustedMainRenderer(event)) return { error: "untrusted IDE request" };
+  const resolved = resolveWorkspacePath(workspaceRoot, p);
+  if (resolved.error) return { error: resolved.error };
   try {
-    const st = fs.statSync(p);
+    const st = fs.lstatSync(resolved.target);
+    if (!st.isFile()) return { error: "path is not a regular file" };
     if (st.size > MAX_FILE_BYTES) return { error: "file too large to open in-editor" };
-    return { content: fs.readFileSync(p, "utf8"), path: p };
+    return { content: fs.readFileSync(resolved.target, "utf8"), path: resolved.target };
   } catch (e) {
     return { error: e.message };
   }
 });
 
-ipcMain.handle("ide:writeFile", async (_e, { path: p, content }) => {
-  if (!inWorkspace(p)) return { error: "outside workspace" };
+ipcMain.handle("ide:writeFile", async (event, { path: p, content } = {}) => {
+  if (!isTrustedMainRenderer(event)) return { error: "untrusted IDE request" };
+  if (typeof content !== "string" || Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) {
+    return { error: "file content must be text no larger than 2 MiB" };
+  }
+  const resolved = resolveWorkspacePath(workspaceRoot, p, { allowMissingFinal: true });
+  if (resolved.error) return { error: resolved.error };
   try {
-    fs.writeFileSync(p, content, "utf8");
+    try {
+      const stat = fs.lstatSync(resolved.target);
+      if (!stat.isFile()) return { error: "path is not a regular file" };
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error;
+    }
+    const flags =
+      fs.constants.O_WRONLY |
+      fs.constants.O_CREAT |
+      fs.constants.O_TRUNC |
+      (fs.constants.O_NOFOLLOW || 0);
+    const fd = fs.openSync(resolved.target, flags, 0o666);
+    try {
+      if (!fs.fstatSync(fd).isFile()) return { error: "path is not a regular file" };
+      fs.writeFileSync(fd, content, "utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
     return { ok: true };
   } catch (e) {
     return { error: e.message };
@@ -519,40 +1358,10 @@ function previewWorkspacePath(rel) {
   if (!workspaceRoot || forgeWorkspaceRoot !== workspaceRoot || !baseUrl) {
     return { error: "opened workspace is not ready for agent edits" };
   }
-  if (typeof rel !== "string" || !rel.trim() || rel.includes("\0")) {
-    return { error: "a non-empty relative path is required" };
-  }
-  if (
-    path.isAbsolute(rel) ||
-    path.win32.isAbsolute(rel) ||
-    path.posix.isAbsolute(rel) ||
-    /^[a-zA-Z]:/.test(rel) ||
-    rel.split(/[\\/]+/).some((part) => part === "..")
-  ) {
-    return { error: "path must stay inside the opened workspace" };
-  }
-  const target = path.resolve(workspaceRoot, rel);
-  if (target === workspaceRoot || !isWithinWorkspace(workspaceRoot, target)) {
-    return { error: "path must name a file inside the opened workspace" };
-  }
-
-  // Match the engine's defense-in-depth symlink policy for both existing files
-  // and newly proposed nested files (stop once the first new component appears).
-  const relative = path.relative(workspaceRoot, target);
-  let current = workspaceRoot;
-  for (const part of relative.split(path.sep)) {
-    if (!part) continue;
-    current = path.join(current, part);
-    try {
-      if (fs.lstatSync(current).isSymbolicLink()) {
-        return { error: "paths containing symlinks cannot be reviewed or changed" };
-      }
-    } catch (e) {
-      if (e && e.code === "ENOENT") break;
-      return { error: `could not inspect proposed path: ${e.message}` };
-    }
-  }
-  return { target, relative: relative.replace(/\\/g, "/") };
+  return resolveWorkspacePath(workspaceRoot, rel, {
+    allowMissingFinal: true,
+    requireRelative: true,
+  });
 }
 
 function lineCount(text) {
@@ -641,7 +1450,8 @@ function prepareEditPreview(tool, args) {
   };
 }
 
-ipcMain.handle("ide:previewEdit", async (_e, { tool, args } = {}) => {
+ipcMain.handle("ide:previewEdit", async (event, { tool, args } = {}) => {
+  if (!isTrustedMainRenderer(event)) return { decision: false, reason: "untrusted IDE request" };
   const preview = prepareEditPreview(tool, args);
   if (preview.error) {
     logFile(`blocked agent preview: ${preview.error}`);
@@ -670,7 +1480,15 @@ ipcMain.handle("ide:previewEdit", async (_e, { tool, args } = {}) => {
 // Integrated terminal via node-pty (a NATIVE module — guarded so the app still
 // runs if it isn't rebuilt; the terminal panel then shows an install hint).
 let ptyProc = null;
-ipcMain.handle("pty:start", async (_e, { cols, rows } = {}) => {
+function ptyDimension(value, fallback, minimum, maximum) {
+  const rounded = Number.isFinite(value) ? Math.round(value) : fallback;
+  return Math.max(minimum, Math.min(maximum, rounded));
+}
+
+ipcMain.handle("pty:start", async (event, size = {}) => {
+  if (!isTrustedMainRenderer(event)) return { ok: false, error: "untrusted terminal request" };
+  const cols = ptyDimension(size && size.cols, 80, 20, 500);
+  const rows = ptyDimension(size && size.rows, 24, 5, 200);
   let nodePty;
   try {
     nodePty = require("node-pty");
@@ -684,8 +1502,8 @@ ipcMain.handle("pty:start", async (_e, { cols, rows } = {}) => {
     const shell = process.platform === "win32" ? "powershell.exe" : process.env.SHELL || "/bin/zsh";
     ptyProc = nodePty.spawn(shell, [], {
       name: "xterm-color",
-      cols: cols || 80,
-      rows: rows || 24,
+      cols,
+      rows,
       cwd: workspaceRoot || app.getPath("home"),
       env: process.env,
     });
@@ -699,16 +1517,24 @@ ipcMain.handle("pty:start", async (_e, { cols, rows } = {}) => {
     return { ok: false, error: e.message };
   }
 });
-ipcMain.on("pty:write", (_e, data) => ptyProc && ptyProc.write(data));
-ipcMain.on("pty:resize", (_e, { cols, rows }) => {
-  try { ptyProc && ptyProc.resize(cols, rows); } catch (_) {}
+ipcMain.on("pty:write", (event, data) => {
+  if (!isTrustedMainRenderer(event) || typeof data !== "string" || Buffer.byteLength(data, "utf8") > 64 * 1024) return;
+  if (ptyProc) ptyProc.write(data);
 });
-ipcMain.handle("pty:kill", async () => {
+ipcMain.on("pty:resize", (event, size = {}) => {
+  if (!isTrustedMainRenderer(event)) return;
+  try {
+    ptyProc && ptyProc.resize(ptyDimension(size.cols, 80, 20, 500), ptyDimension(size.rows, 24, 5, 200));
+  } catch (_) {}
+});
+ipcMain.handle("pty:kill", async (event) => {
+  if (!isTrustedMainRenderer(event)) return { ok: false, error: "untrusted terminal request" };
   if (ptyProc) { try { ptyProc.kill(); } catch (_) {} ptyProc = null; }
   return { ok: true };
 });
 
 app.whenReady().then(async () => {
+  installDesktopSecurityPolicy();
   try {
     await startForgeServe();
   } catch (e) {
@@ -716,12 +1542,25 @@ app.whenReady().then(async () => {
     dialog.showErrorBox("Ollamax", `Could not start the local engine:\n${e.message}`);
   }
   createWindow();
+  registerVoiceToggleShortcut();
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+      registerVoiceToggleShortcut();
+    }
   });
 });
 
 function shutdown() {
+  if (spatialSession) {
+    finishSpatialSession(
+      spatialSession,
+      null,
+      new Error("Screen-region selection cancelled because Ollamax is shutting down.")
+    );
+  }
+  unregisterVoiceToggleShortcut();
+  destroyCursorBuddy();
   if (forgeProc) {
     try {
       forgeProc.kill();

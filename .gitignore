@@ -43,6 +43,9 @@ desktop/code-oss/
 
 # Bundled voice assets (whisper.cpp binary + ggml model) — built/downloaded locally
 desktop/vendor/
+/desktop-app/voice/ggml-*.bin
+/desktop-app/voice/whisper-cli
+/desktop-app/voice/WHISPER_CPP_LICENSE.txt
 
 # Release artifacts (large; published to releases repo, not committed)
 dist/

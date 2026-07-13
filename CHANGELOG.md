@@ -4,6 +4,37 @@ All notable changes to Ollama-Forge are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project does
 **not** yet follow semantic versioning — every 0.x release may break things.
 
+## [0.2.1] - 2026-07-13
+
+### Added
+
+- Added a hardware-aware catalog for current local Ollama Qwen 3.5, Gemma 4,
+  and DeepSeek-R1 options, plus explicit self-hosted local endpoint support for
+  DeepSeek V4 and MiniMax M3. Server-class models require an operator-provided
+  literal-loopback OpenAI-compatible server and are never presented as a laptop
+  Ollama pull.
+- Added role-aware Team orchestration: two bounded read-only scouts can run in
+  parallel while planning, writing, verification, and review remain controlled
+  lanes. All model calls and role budgets are recorded for the run.
+- Added explicit local voice controls using Whisper.cpp and local operating
+  system speech, an opt-in screen-region lasso, and a visual-only cursor cue.
+  Screen crops are bounded, sent only to a local vision runtime, and never grant
+  pointer or OS-control authority.
+- Added release staging for verified, per-platform Whisper.cpp runtimes and
+  a package-content contract that prevents a release installer from omitting
+  the voice, spatial, or security modules.
+
+### Changed
+
+- Cloud-tagged Ollama models are rejected before automatic routing, preload,
+  Build execution, catalog reconciliation, and local vision selection. They
+  cannot be mistaken for local quantized tags.
+- Preloads and generations now share one executor-wide capacity semaphore, so
+  concurrent builds cannot exceed the configured RAM/VRAM work budget.
+- Hardened Electron and VS Code privileged bridges: renderer trust is checked
+  before desktop IDE/terminal/Hub operations; direct IDE paths reject symlink
+  components; remote Hub count data and external URLs are validated.
+
 ## [0.2.0]
 
 ### Added

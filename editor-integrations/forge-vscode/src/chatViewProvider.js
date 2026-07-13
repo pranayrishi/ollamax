@@ -6,6 +6,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { languageFromExt } = require("./telemetry");
+const { resolveWorkspacePreviewPath } = require("./workspace-preview-paths");
 
 // Infer language from the first attached file's EXTENSION only (metadata).
 function langFromContext(context) {
@@ -203,23 +204,35 @@ class ChatViewProvider {
       vscode.window.showWarningMessage("Open a folder before letting the Agent edit files.");
       return;
     }
-    const rel = String((args && args.path) || "");
-    // Path-traversal guard (defense-in-depth; the engine sandbox also guards).
-    const abs = path.resolve(root, rel);
-    const inside = abs === root || abs.startsWith(root + path.sep);
-    if (!rel || path.isAbsolute(rel) || !inside) {
+    const requestedPath = String((args && args.path) || "");
+    const resolved = resolveWorkspacePreviewPath(root, requestedPath, {
+      // fs_write creates missing parent directories through the engine's
+      // descriptor-relative workspace capability. Allow its preview to show
+      // a new nested file after we verified the existing path prefix.
+      allowMissing: tool === "fs_write",
+    });
+    if (resolved.error) {
       await this._approve(false, approvalId);
-      vscode.window.showWarningMessage(`Ollamax blocked an unsafe file path from the Agent: ${rel || "(empty)"}`);
+      vscode.window.showWarningMessage(
+        `Ollamax blocked a proposed file preview: ${requestedPath || "(empty)"} (${resolved.error}).`
+      );
       return;
     }
+    const abs = resolved.target;
+    const rel = resolved.relative;
 
     let current = "";
-    let isNew = true;
-    try {
-      current = fs.readFileSync(abs, "utf8");
-      isNew = false;
-    } catch {
-      /* new file */
+    const isNew = !resolved.exists;
+    if (!isNew) {
+      try {
+        current = fs.readFileSync(abs, "utf8");
+      } catch (error) {
+        await this._approve(false, approvalId);
+        vscode.window.showWarningMessage(
+          `Ollamax could not read the proposed edit target ${rel}: ${error && error.message ? error.message : error}`
+        );
+        return;
+      }
     }
 
     let proposed;
@@ -391,8 +404,8 @@ class ChatViewProvider {
         this.post({
           type: "backendError",
           message:
-            `Ollama could not be reached at the configured local endpoint. ${models.error} ` +
-            "On Windows, verify the Ollama app/service is running and run `Invoke-RestMethod http://127.0.0.1:11434/api/tags`.",
+            `Ollama could not be reached at its configured endpoint. ${models.error} ` +
+            "Explicitly configured loopback local endpoints remain selectable. On Windows, verify the Ollama app/service is running and run `Invoke-RestMethod http://127.0.0.1:11434/api/tags`.",
         });
       }
     } catch (e) {
@@ -481,6 +494,7 @@ class ChatViewProvider {
         model: msg.model,
         context,
         autonomy: msg.autonomy || "confirm",
+        parallel_scouts: !!msg.parallelScouts,
       };
     } else {
       // TWO TABS (Build removed): Chat = "Ask" — PURE-LOCAL, zero-egress,

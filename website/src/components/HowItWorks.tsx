@@ -4,7 +4,7 @@ const steps = [
   {
     n: "1",
     title: "Install Ollama + Ollamax",
-    body: "Download the app and have a local Ollama running. Ollamax detects your hardware and recommends a model that actually fits your machine.",
+    body: "Ollama is the default local runtime. Ollamax detects your hardware and recommends a model that actually fits your machine; a separately run local endpoint is an explicit advanced setup, never an automatic cloud route.",
   },
   {
     n: "2",
@@ -13,8 +13,8 @@ const steps = [
   },
   {
     n: "3",
-    title: "Chat, edit, and navigate by voice",
-    body: "Open the side panel, pick a model, and work. Ask questions, let the agent edit files (you approve each diff), or jump around your code by voice — all running locally via Ollama.",
+    title: "Chat, edit, speak, or select a region",
+    body: "Open the app, pick a local model, and work. Hold to send a local voice command or lasso a screen region; a visual-only cursor cue confirms local status, and screen-derived briefs stay transient before an agent proposes edits for approval.",
   },
 ];
 
