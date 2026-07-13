@@ -107,9 +107,13 @@ jobs:
           npm run prepare-assets
           node --check main.js
           node --check preload.js
+          node --check lib/attachment-preview.js
+          node --check lib/desktop-auth.js
           node --check lib/desktop-security.js
           node --check lib/workspace-paths.js
           node --check spatial-preload.js
+          node --check renderer/bridge.js
+          node --check renderer/hub-bridge.js
           node --check renderer/hub.js
           node --check renderer/desktop-points.js
           node --check renderer/desktop-voice.js

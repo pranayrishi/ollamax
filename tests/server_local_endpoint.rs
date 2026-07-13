@@ -152,7 +152,10 @@ async fn configured_loopback_endpoint_is_listed_and_receives_its_served_model() 
                 label: Some("Test local endpoint".to_string()),
                 vision: false,
                 thinking: true,
-                context_window_tokens: Some(16_384),
+                // Intentionally below the server's minimum hardware budget:
+                // this proves the declared endpoint ceiling, rather than host
+                // hardware, controls the server-side history budget.
+                context_window_tokens: Some(512),
             }],
         }],
         ..Config::default()
@@ -182,11 +185,18 @@ async fn configured_loopback_endpoint_is_listed_and_receives_its_served_model() 
     assert_eq!(exposed["local"], true);
     assert_eq!(exposed["servedModel"], SERVED_MODEL);
     assert_eq!(exposed["endpoint"], "lab");
+    assert_eq!(exposed["contextLength"], 512);
+
+    let stale_history = format!("STALE-HISTORY-MARKER {}", "old turn ".repeat(800));
+    let recent_history = "RECENT-HISTORY-MARKER keep this turn";
 
     let chat = json!({
         "id": "configured-local-chat",
         "model": SELECTOR,
-        "prompt": "Reply from the configured local endpoint."
+        "messages": [
+            {"role": "user", "content": stale_history.clone()},
+            {"role": "assistant", "content": recent_history},
+        ]
     });
     let chat_response = tokio::time::timeout(
         Duration::from_secs(10),
@@ -214,6 +224,10 @@ async fn configured_loopback_endpoint_is_listed_and_receives_its_served_model() 
         "response: {chat_response}"
     );
     assert!(
+        chat_response.contains("\"numCtx\":512") && chat_response.contains("\"trimmed\":1"),
+        "configured endpoint cap should drive host-side chat history budgeting: {chat_response}"
+    );
+    assert!(
         chat_response.contains("\"type\":\"token\"")
             && chat_response.contains("local endpoint answer"),
         "response: {chat_response}"
@@ -230,4 +244,10 @@ async fn configured_loopback_endpoint_is_listed_and_receives_its_served_model() 
     assert_eq!(endpoint_request["model"], SERVED_MODEL);
     assert_eq!(endpoint_request["stream"], false);
     assert!(endpoint_request["messages"].is_array());
+    let request_text = endpoint_request.to_string();
+    assert!(request_text.contains(recent_history));
+    assert!(!request_text.contains(&stale_history));
+    // `num_ctx` is an Ollama-only control, so the compatible request stays
+    // standard while the server performs the truncation before this boundary.
+    assert!(endpoint_request.get("num_ctx").is_none());
 }

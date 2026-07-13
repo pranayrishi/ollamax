@@ -312,6 +312,7 @@ impl LocalEndpointRegistry {
             endpoint.permits.clone(),
             model.served_model.clone(),
             provider_name,
+            model.context_window_tokens,
         ));
 
         Ok(ConfiguredLocalModel {
@@ -460,6 +461,11 @@ struct BoundedLlmProvider {
     permits: Arc<Semaphore>,
     served_model: String,
     provider_name: String,
+    /// Operator-declared ceiling for this exact served model. This normalizes
+    /// the internal `num_ctx` hint for current and future providers; the
+    /// server's host-side prompt budget remains authoritative because the
+    /// standard OpenAI-compatible wire has no `num_ctx` field.
+    context_window_tokens: Option<usize>,
 }
 
 impl BoundedLlmProvider {
@@ -468,12 +474,14 @@ impl BoundedLlmProvider {
         permits: Arc<Semaphore>,
         served_model: String,
         provider_name: String,
+        context_window_tokens: Option<usize>,
     ) -> Self {
         Self {
             inner,
             permits,
             served_model,
             provider_name,
+            context_window_tokens,
         }
     }
 
@@ -483,6 +491,13 @@ impl BoundedLlmProvider {
                 "configured local endpoint request limiter was closed before a request could start"
             )
         })
+    }
+
+    fn cap_context(&self, requested: Option<usize>) -> Option<usize> {
+        let Some(limit) = self.context_window_tokens.filter(|limit| *limit > 0) else {
+            return requested;
+        };
+        Some(requested.unwrap_or(limit).min(limit))
     }
 }
 
@@ -495,12 +510,14 @@ impl LlmProvider for BoundedLlmProvider {
     async fn generate(&self, mut options: GenerateOptions) -> Result<LlmResponse> {
         let _permit = self.acquire().await?;
         options.model.clone_from(&self.served_model);
+        options.num_ctx = self.cap_context(options.num_ctx);
         self.inner.generate(options).await
     }
 
     async fn chat(&self, mut options: ChatOptions) -> Result<LlmResponse> {
         let _permit = self.acquire().await?;
         options.model.clone_from(&self.served_model);
+        options.num_ctx = self.cap_context(options.num_ctx);
         self.inner.chat(options).await
     }
 
@@ -673,7 +690,7 @@ mod tests {
     struct CountingProvider {
         active: AtomicUsize,
         peak: AtomicUsize,
-        observed_models: std::sync::Mutex<Vec<String>>,
+        observed_requests: std::sync::Mutex<Vec<(String, Option<usize>)>>,
     }
 
     impl CountingProvider {
@@ -694,10 +711,10 @@ mod tests {
         }
 
         async fn generate(&self, options: GenerateOptions) -> Result<LlmResponse> {
-            self.observed_models
+            self.observed_requests
                 .lock()
                 .unwrap()
-                .push(options.model.clone());
+                .push((options.model.clone(), options.num_ctx));
             self.note_active();
             sleep(Duration::from_millis(25)).await;
             self.finish();
@@ -724,7 +741,7 @@ mod tests {
         let inner = Arc::new(CountingProvider {
             active: AtomicUsize::new(0),
             peak: AtomicUsize::new(0),
-            observed_models: std::sync::Mutex::new(Vec::new()),
+            observed_requests: std::sync::Mutex::new(Vec::new()),
         });
         let limiter = Arc::new(Semaphore::new(2));
         let first = BoundedLlmProvider::new(
@@ -732,12 +749,14 @@ mod tests {
             limiter.clone(),
             "served-A".to_string(),
             "test-endpoint".to_string(),
+            Some(1_024),
         );
         let second = BoundedLlmProvider::new(
             inner.clone(),
             limiter,
             "served-B".to_string(),
             "test-endpoint".to_string(),
+            Some(2_048),
         );
 
         let mut tasks = Vec::new();
@@ -762,11 +781,51 @@ mod tests {
         }
 
         assert_eq!(inner.peak.load(Ordering::SeqCst), 2);
-        let seen = inner.observed_models.lock().unwrap().clone();
+        let seen = inner.observed_requests.lock().unwrap().clone();
         assert_eq!(seen.len(), 8);
         assert!(seen
             .iter()
-            .all(|model| model == "served-A" || model == "served-B"));
-        assert!(!seen.iter().any(|model| model.starts_with("local:")));
+            .all(|(model, _)| model == "served-A" || model == "served-B"));
+        assert!(!seen.iter().any(|(model, _)| model.starts_with("local:")));
+        assert!(seen.iter().all(|(model, num_ctx)| match model.as_str() {
+            "served-A" => *num_ctx == Some(1_024),
+            "served-B" => *num_ctx == Some(2_048),
+            _ => false,
+        }));
+    }
+
+    #[tokio::test]
+    async fn configured_context_ceiling_caps_explicit_and_missing_requests() {
+        let inner = Arc::new(CountingProvider {
+            active: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+            observed_requests: std::sync::Mutex::new(Vec::new()),
+        });
+        let provider = BoundedLlmProvider::new(
+            inner.clone(),
+            Arc::new(Semaphore::new(1)),
+            "served-model".to_string(),
+            "test-endpoint".to_string(),
+            Some(1_024),
+        );
+
+        for requested in [Some(8_192), None] {
+            provider
+                .generate(GenerateOptions {
+                    model: "local:lab/ignored".to_string(),
+                    num_ctx: requested,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(
+            inner.observed_requests.lock().unwrap().as_slice(),
+            [
+                ("served-model".to_string(), Some(1_024)),
+                ("served-model".to_string(), Some(1_024)),
+            ]
+        );
     }
 }

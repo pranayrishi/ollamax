@@ -7,14 +7,23 @@
 // + Hub UI, which talks to that local server. Inference stays local
 // (app → forge serve → Ollama). Modeled on the Sattva AI desktop app.
 
-const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, screen, session, shell } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  safeStorage,
+  screen,
+  session,
+  shell,
+} = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const cp = require("child_process");
 const crypto = require("crypto");
-const http = require("http");
-const https = require("https");
 const { URL } = require("url");
 const {
   resolveTtsRuntime,
@@ -43,6 +52,8 @@ const {
   safeExternalUrl,
   isTrustedMainWebContents,
 } = require("./lib/desktop-security");
+const { DesktopAuth, DesktopAuthError, normalizeAccountServer } = require("./lib/desktop-auth");
+const { readAttachmentPreview } = require("./lib/attachment-preview");
 const { resolveWorkspacePath } = require("./lib/workspace-paths");
 
 const isDev = !app.isPackaged;
@@ -78,8 +89,12 @@ const VOICE_TOGGLE_ACCELERATOR = "CommandOrControl+Alt+Space";
 const forgeApiToken = crypto.randomBytes(32).toString("hex");
 
 // Account server for sign-in + the Central Hub (identity only; never inference).
-// Configurable; empty disables account features gracefully.
+// Configurable; empty disables account features gracefully. The raw environment
+// value is never used for requests: it is canonicalized once after Electron's
+// OS credential service is available.
 const ACCOUNT_SERVER = process.env.FORGE_ACCOUNT_SERVER || "";
+let accountServer = "";
+let desktopAuth = null;
 const MAIN_RENDERER_PATH = path.join(__dirname, "renderer", "index.html");
 const CURSOR_BUDDY_RENDERER_PATH = path.join(__dirname, "renderer", "cursor-buddy.html");
 const SPATIAL_OVERLAY_RENDERER_PATH = path.join(__dirname, "renderer", "spatial-overlay.html");
@@ -143,6 +158,41 @@ async function openValidatedExternal(candidate) {
   if (!url) throw new Error("only HTTPS or literal-loopback HTTP links may be opened externally");
   await shell.openExternal(url);
   return url;
+}
+
+// Construct this only after app.whenReady(): Electron safeStorage may not be
+// initialized before then. A malformed account URL simply disables optional
+// account/Hub features; it never affects local inference.
+function initializeDesktopAuth() {
+  desktopAuth = null;
+  accountServer = "";
+  if (!ACCOUNT_SERVER.trim()) return;
+  try {
+    accountServer = normalizeAccountServer(ACCOUNT_SERVER);
+    desktopAuth = new DesktopAuth({
+      accountServer,
+      storageDir: app.getPath("userData"),
+      safeStorage,
+      openExternal: openValidatedExternal,
+      log: (message) => logFile(`account: ${message}`),
+    });
+  } catch (error) {
+    accountServer = "";
+    const message = error instanceof Error ? error.message : "invalid account configuration";
+    logFile(`account server disabled: ${message}`);
+  }
+}
+
+function accountError(error) {
+  if (error instanceof DesktopAuthError) {
+    return { ok: false, error: error.code, message: error.message };
+  }
+  logFile(`account operation failed: ${String((error && error.message) || error)}`);
+  return { ok: false, error: "account_error", message: "The account operation could not be completed." };
+}
+
+function accountReady() {
+  return !!desktopAuth && !!accountServer;
 }
 
 // ---------------------------------------------------------------------
@@ -445,7 +495,7 @@ function forgeConfig() {
   const workspaceReady = !!baseUrl && !!workspaceRoot && forgeWorkspaceRoot === workspaceRoot;
   return {
     baseUrl,
-    accountServer: ACCOUNT_SERVER,
+    accountEnabled: accountReady(),
     apiToken: forgeApiToken,
     workspace: workspaceRoot ? { root: workspaceRoot, ready: workspaceReady } : null,
     workspaceReady,
@@ -651,13 +701,7 @@ ipcMain.handle("forge:pickFiles", async (event) => {
     properties: ["openFile", "multiSelections"],
   });
   if (r.canceled) return [];
-  return r.filePaths.map((p) => {
-    let content = "";
-    try {
-      content = fs.readFileSync(p, "utf8").slice(0, 200_000);
-    } catch (_) {}
-    return { path: p, label: path.basename(p), content };
-  });
+  return r.filePaths.map((p) => ({ path: p, label: path.basename(p), content: readAttachmentPreview(p) }));
 });
 
 ipcMain.handle("forge:openExternal", async (event, url) => {
@@ -1053,20 +1097,64 @@ ipcMain.on("spatial:complete", (event, payload) => {
   }
 });
 
-// Desktop sign-in: open the account server's desktop auth in the system browser
-// (the existing GitHub/Google OAuth loopback + PKCE flow). The loopback server
-// that receives the token is started by the engine; here we just open the URL.
-ipcMain.handle("forge:signIn", async (event, { device } = {}) => {
-  if (!isTrustedMainRenderer(event)) return { ok: false, error: "untrusted sign-in request" };
-  if (!ACCOUNT_SERVER) return { ok: false, error: "no_account_server" };
-  const startUrl = device
-    ? `${ACCOUNT_SERVER}/desktop/activate`
-    : `${ACCOUNT_SERVER}/api/desktop/start?redirect_uri=http://127.0.0.1:0`;
+// Account IPC is intentionally separate from the forge engine bridge. It is
+// callable only from the exact bundled renderer, and returns public identity
+// state only—never OAuth codes, access tokens, refresh tokens, or device codes.
+ipcMain.handle("account:status", async (event) => {
+  if (!isTrustedMainRenderer(event)) return { enabled: false, user: null, error: "untrusted account request" };
+  if (!accountReady()) return { enabled: false, user: null, sessionPersistence: "none" };
   try {
-    await openValidatedExternal(startUrl);
-    return { ok: true };
+    return await desktopAuth.status();
   } catch (error) {
-    return { ok: false, error: String((error && error.message) || error) };
+    logFile(`account status failed: ${String((error && error.message) || error)}`);
+    return { enabled: true, user: null, sessionPersistence: "memory" };
+  }
+});
+
+function showDeviceCode({ userCode, verificationUri, expiresIn }) {
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  // Do not wait for this dialog to close: device polling must continue while
+  // the user reads the code and completes the approval in their browser.
+  void dialog
+    .showMessageBox(parent, {
+      type: "info",
+      title: "Complete Ollamax sign-in",
+      message: "Enter this code in the browser Ollamax opened:",
+      detail:
+        `${userCode}\n\nFor your security, type the code yourself; it is not included in the browser link. ` +
+        `The code expires in about ${Math.ceil(expiresIn / 60)} minute(s).`,
+      buttons: ["Continue"],
+      defaultId: 0,
+      noLink: true,
+    })
+    .catch((error) => logFile(`could not show device sign-in code: ${String((error && error.message) || error)}`));
+  // verificationUri is validated by DesktopAuth before the browser opens. Keep
+  // this reference only for diagnostic clarity; never log the code or tokens.
+  void verificationUri;
+}
+
+ipcMain.handle("account:signIn", async (event, options = {}) => {
+  if (!isTrustedMainRenderer(event)) return { ok: false, error: "untrusted_account_request", message: "Untrusted account request." };
+  if (!accountReady()) return { ok: false, error: "no_account_server", message: "Sign-in needs a valid account server." };
+  try {
+    const result = options && options.device === true
+      ? await desktopAuth.signInDevice({ onDeviceCode: showDeviceCode })
+      : await desktopAuth.signIn();
+    return { ok: true, user: result.user, sessionPersistence: result.sessionPersistence };
+  } catch (error) {
+    return accountError(error);
+  }
+});
+
+ipcMain.handle("account:signOut", async (event) => {
+  if (!isTrustedMainRenderer(event)) return { ok: false, error: "untrusted_account_request", message: "Untrusted account request." };
+  if (!accountReady()) return { ok: true, user: null };
+  try {
+    return { ok: true, ...(await desktopAuth.signOut()) };
+  } catch (error) {
+    // A local sign-out should still clear memory/persistent credentials even
+    // if the optional server revoke request had a transient failure.
+    return accountError(error);
   }
 });
 
@@ -1096,44 +1184,32 @@ const safeHubSlug = (value) => {
   return /^[a-z0-9][a-z0-9_-]{0,80}$/i.test(slug) ? slug : null;
 };
 
-function hubHttp(method, urlStr, body, bearer) {
-  return new Promise((resolve, reject) => {
-    const url = new URL(urlStr);
-    const lib = url.protocol === "https:" ? https : http;
-    const data = body ? JSON.stringify(body) : null;
-    const headers = {};
-    if (data) {
-      headers["Content-Type"] = "application/json";
-      headers["Content-Length"] = Buffer.byteLength(data);
-    }
-    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
-    const req = lib.request(
-      { method, hostname: url.hostname, port: url.port || (url.protocol === "https:" ? 443 : 80), path: url.pathname + url.search, headers },
-      (res) => {
-        let raw = "";
-        res.setEncoding("utf8");
-        res.on("data", (c) => (raw += c));
-        res.on("end", () => {
-          if ((res.statusCode || 0) >= 400) return reject(new Error(`HTTP ${res.statusCode}`));
-          try {
-            resolve(raw ? JSON.parse(raw) : {});
-          } catch (_) {
-            reject(new Error("bad JSON"));
-          }
-        });
-      }
-    );
-    req.on("error", reject);
-    if (data) req.write(data);
-    req.end();
-  });
+async function hubHttp(method, apiPath, body) {
+  if (!accountReady()) throw new Error("account server is unavailable");
+  const response = await desktopAuth.requestPublic(method, apiPath, body);
+  if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status || 0}`);
+  return response.body;
+}
+
+function supportReviewUrl(value) {
+  const approved = safeExternalUrl(value);
+  if (!approved || !accountServer) return null;
+  try {
+    const candidate = new URL(approved);
+    const origin = new URL(accountServer).origin;
+    return candidate.origin === origin && /^\/star\/[A-Za-z0-9_-]{12,}$/.test(candidate.pathname) && !candidate.search && !candidate.hash
+      ? candidate.toString()
+      : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 ipcMain.handle("hub:categories", async (event) => {
   if (!isTrustedMainRenderer(event)) return { error: "untrusted Hub request" };
-  if (!ACCOUNT_SERVER) return { needsServer: true };
+  if (!accountReady()) return { needsServer: true };
   try {
-    const d = await hubHttp("GET", `${ACCOUNT_SERVER}/api/hub/categories`);
+    const d = await hubHttp("GET", "/api/hub/categories");
     return { categories: d.categories || [] };
   } catch (e) {
     return { error: `Could not load Hub catalog: ${e.message}` };
@@ -1144,9 +1220,9 @@ ipcMain.handle("hub:package", async (event, slug) => {
   if (!isTrustedMainRenderer(event)) return { error: "untrusted Hub request" };
   slug = safeHubSlug(slug);
   if (!slug) return { error: "invalid Hub package" };
-  if (!ACCOUNT_SERVER) return { needsServer: true };
+  if (!accountReady()) return { needsServer: true };
   try {
-    return { pkg: await hubHttp("GET", `${ACCOUNT_SERVER}/api/hub/package/${encodeURIComponent(slug)}`) };
+    return { pkg: await hubHttp("GET", `/api/hub/package/${encodeURIComponent(slug)}`) };
   } catch (e) {
     return { error: `Could not load package: ${e.message}` };
   }
@@ -1158,10 +1234,10 @@ ipcMain.handle("hub:activate", async (event, slug) => {
   if (!isTrustedMainRenderer(event)) return { error: "untrusted Hub request" };
   slug = safeHubSlug(slug);
   if (!slug) return { error: "invalid Hub package" };
-  if (!ACCOUNT_SERVER) return { needsServer: true };
+  if (!accountReady()) return { needsServer: true };
   let pkg;
   try {
-    pkg = await hubHttp("GET", `${ACCOUNT_SERVER}/api/hub/package/${encodeURIComponent(slug)}`);
+    pkg = await hubHttp("GET", `/api/hub/package/${encodeURIComponent(slug)}`);
   } catch (e) {
     return { error: `Activate failed: ${e.message}` };
   }
@@ -1193,20 +1269,25 @@ ipcMain.handle("hub:activate", async (event, slug) => {
 });
 
 // Opt-in "support maintainers": create a star intent, open the browser for the
-// user to review + consciously star. NEVER automatic. Needs the app token; if
-// sign-in isn't wired/available yet, ask the user to sign in.
-ipcMain.handle("hub:support", async (event, { slug, repos, token } = {}) => {
+// user to review + consciously star. NEVER automatic. Its bearer token is
+// retrieved only inside the main process; a renderer cannot supply or read it.
+ipcMain.handle("hub:support", async (event, { slug, repos } = {}) => {
   if (!isTrustedMainRenderer(event)) return { ok: false, error: "untrusted support request" };
   slug = safeHubSlug(slug);
-  if (!slug || !Array.isArray(repos) || repos.length > 100 || typeof token !== "string" || token.length > 8_192) {
+  let encodedRepos = "";
+  try {
+    encodedRepos = JSON.stringify(repos);
+  } catch (_) {}
+  if (!slug || !Array.isArray(repos) || repos.length > 100 || Buffer.byteLength(encodedRepos, "utf8") > 256 * 1024) {
     return { ok: false, error: "invalid support request" };
   }
-  if (!ACCOUNT_SERVER) return { needsServer: true };
-  if (!token) return { needsSignIn: true };
+  if (!accountReady()) return { needsServer: true };
   try {
-    const res = await hubHttp("POST", `${ACCOUNT_SERVER}/api/star/intent`, { repos, category: slug }, token);
-    if (res.url) {
-      await openValidatedExternal(res.url);
+    const res = await desktopAuth.authenticatedRequest("POST", "/api/star/intent", { repos, category: slug });
+    if (!res.authenticated) return { needsSignIn: true };
+    const reviewUrl = res.body && supportReviewUrl(res.body.url);
+    if (res.status >= 200 && res.status < 300 && reviewUrl) {
+      await openValidatedExternal(reviewUrl);
       return { ok: true };
     }
     return { error: "Could not create the support request." };
@@ -1535,6 +1616,7 @@ ipcMain.handle("pty:kill", async (event) => {
 
 app.whenReady().then(async () => {
   installDesktopSecurityPolicy();
+  initializeDesktopAuth();
   try {
     await startForgeServe();
   } catch (e) {
@@ -1580,6 +1662,3 @@ app.on("window-all-closed", () => {
 });
 app.on("before-quit", shutdown);
 process.on("exit", shutdown);
-
-// Keep a reference so http isn't tree-shaken (used by the health probe path).
-void http;

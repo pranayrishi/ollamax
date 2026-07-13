@@ -37,10 +37,37 @@ download contains those assets until the matching public workflow has passed;
 when they are absent the app shows actionable local setup instead of falling
 back to cloud speech.
 
-- **No rewrite of the AI:** `main.js` (the chat UI) runs unchanged; `bridge.js`
-  is the same logic `chatViewProvider.js` used, pointed at `forge serve`.
-- **Sign-in** reuses the existing desktop OAuth (GitHub/Google loopback) via the
-  account server (`FORGE_ACCOUNT_SERVER`).
+- **No rewrite of the AI:** the shared `media/main.js` chat UI is generated
+  into the desktop renderer; `bridge.js` adapts the same panel protocol to
+  `forge serve`.
+- **Sign-in** is optional identity for the account/Hub surface; it never gates
+  local inference, local models, voice, spatial context, or workspace tools.
+
+## Optional account sign-in
+
+Set `FORGE_ACCOUNT_SERVER` to the HTTPS origin of the deployed account site
+(or literal-loopback HTTP only for local development). The app rejects URLs
+with credentials, paths, queries, fragments, remote cleartext HTTP, and custom
+schemes before it opens a browser or sends an account request.
+
+The normal flow is Authorization Code + PKCE: Electron's **main process**
+binds a one-shot `127.0.0.1` callback, generates a verifier/state, opens the
+approved account URL, verifies the exact callback and state, then exchanges the
+code. If loopback sign-in is unsuitable, the **Use device code** control starts
+the account server's device flow, opens its verification page without embedding
+the code, and shows the code in a native app dialog while polling privately.
+
+Access and refresh tokens never reach the renderer, preload bridge, local
+engine, prompts, logs, or Hub messages. When Electron's OS-backed
+`safeStorage` encryption is available, the app persists one encrypted,
+owner-only credential record in its user-data directory. If encryption is not
+available or writing that record fails, Ollamax deliberately stores nothing in
+plaintext: the signed-in session remains memory-only and ends when the app
+closes; the app reports that state after sign-in. In particular, Electron's
+Linux `basic_text` backend is treated as unavailable rather than as encrypted
+storage. Sign-out attempts server-side
+revocation and always clears the local credential record. The optional Hub
+support action retrieves its bearer token only in the main process.
 
 ## Local model runtimes
 
@@ -141,14 +168,18 @@ workflow succeeds, push the matching `v*` tag so `.github/workflows/release.yml`
 can verify the complete CLI/VS Code/desktop asset contract and publish it:
 
 ```bash
-git tag app-vX.Y.Z && git push origin app-vX.Y.Z
+release_commit="$(git rev-parse HEAD)"
+git tag -a app-vX.Y.Z "$release_commit" -m "Stage Ollamax vX.Y.Z desktop installers"
+git push origin app-vX.Y.Z
 # Wait for release-app to succeed and attach the installers to the draft.
-git tag vX.Y.Z && git push origin vX.Y.Z
+git tag -a vX.Y.Z "$release_commit" -m "Release Ollamax vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
 Do not label `app-v*` itself as a public download and do not claim that the
 currently published `v0.2.0` installers include this source-tree voice or
-spatial work.
+spatial work. The two tags must resolve to the same source commit; the release
+workflows record and re-check that provenance before publishing.
 
 > The standalone app re-introduces the unsigned first-launch warning that the
 > curl one-liner avoided (a browser-downloaded `.app` is quarantined). A truly

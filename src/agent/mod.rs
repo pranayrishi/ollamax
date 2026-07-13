@@ -19,6 +19,7 @@
 //! time. Schema-constrained decoding (Ollama's `format` parameter) makes
 //! the loop reliable on small models, which is the entire point.
 
+use crate::context::estimate_tokens;
 use crate::providers::{GenerateOptions, LlmProvider};
 use crate::replay::{quick_hash, ReplayLog, ReplayRecord};
 use crate::tools::{ToolRegistry, ToolResult};
@@ -203,13 +204,17 @@ impl Agent {
     /// caller explicitly requires plan approval, an unavailable or empty plan
     /// is an error: execution must not bypass the promised approval gate.
     async fn generate_plan(&self, task: &str) -> Result<(String, u32, usize)> {
+        let (system, prompt) = budget_model_input(
+            Some("You are planning before acting. Be concise and concrete."),
+            &format!("Task:\n{task}\n\n"),
+            "List the concrete steps you will take, as a short numbered list (2-6 steps). Plain text only — no preamble, no code.",
+            self.num_ctx,
+            0,
+        )?;
         let opts = GenerateOptions {
             model: self.model.clone(),
-            prompt: format!(
-                "Task: {task}\n\nList the concrete steps you will take, as a short numbered \
-                 list (2-6 steps). Plain text only — no preamble, no code."
-            ),
-            system: Some("You are planning before acting. Be concise and concrete.".to_string()),
+            prompt,
+            system,
             temperature: Some(0.2),
             num_ctx: Some(self.num_ctx),
             stream: false,
@@ -260,9 +265,20 @@ impl Agent {
         // gives the model enough freedom to actually populate args.
         // We then parse and validate by hand below.
         let format_param = serde_json::json!("json");
+        // OpenAI-compatible servers receive this as response-format metadata
+        // rather than prompt text, but it still consumes request/context
+        // capacity on several local runtimes. Reserve its BPE estimate before
+        // composing every agent turn.
+        let format_reserved_tokens = estimate_tokens(&format_param.to_string());
 
+        // Keep the initial task separate from the mutable transcript so the
+        // host-side budgeter can retain it while dropping old tool evidence.
+        // This matters for OpenAI-compatible local runtimes: their standard
+        // wire protocol has no `num_ctx` control, so a provider hint alone
+        // cannot keep a long-running agent request inside an endpoint's
+        // declared context ceiling.
+        let task_prefix = format!("User task: {task}\n\n");
         let mut transcript = String::new();
-        transcript.push_str(&format!("User task: {task}\n\n"));
 
         let mut trace = AgentTrace {
             task: task.to_string(),
@@ -306,11 +322,18 @@ impl Agent {
                 ""
             };
 
-            let prompt = format!("{transcript}{suffix}\n\nYour turn.");
+            let prompt_tail = format!("{transcript}{suffix}\n\nYour turn.");
+            let (system, prompt) = budget_model_input(
+                Some(&system_prompt),
+                &task_prefix,
+                &prompt_tail,
+                self.num_ctx,
+                format_reserved_tokens,
+            )?;
             let opts = GenerateOptions {
                 model: self.model.clone(),
                 prompt,
-                system: Some(system_prompt.clone()),
+                system,
                 temperature: Some(0.2),
                 num_ctx: Some(self.num_ctx),
                 stream: false,
@@ -542,6 +565,214 @@ fn record_step<F>(
     ));
 }
 
+/// Reserve roughly 30% of a model's context for its completion, matching the
+/// server chat path. This budget is enforced before every Agent request so a
+/// configured OpenAI-compatible endpoint stays within its declared total
+/// context even though the standard wire protocol has no `num_ctx` field.
+const INPUT_CONTEXT_NUMERATOR: usize = 7;
+const INPUT_CONTEXT_DENOMINATOR: usize = 10;
+/// OpenAI-compatible chat requests carry role/message/template framing beyond
+/// the literal system and user text. Keep a small, deterministic reserve so
+/// host-side budgeting does not spend the entire input share on text alone.
+pub(crate) const MODEL_REQUEST_FRAMING_TOKENS: usize = 32;
+const CONTEXT_OMISSION_MARKER: &str =
+    "\n[... earlier context omitted to fit the model budget ...]\n";
+
+/// Token room available for literal system/prompt text after reserving the
+/// response share and the protocol/model framing that a local runtime needs.
+/// Callers with a grammar or response-format payload pass its measured token
+/// cost through `additional_reserved_tokens`.
+pub(crate) fn model_input_payload_budget(
+    num_ctx: usize,
+    additional_reserved_tokens: usize,
+) -> Result<usize> {
+    let input_budget = num_ctx
+        .saturating_mul(INPUT_CONTEXT_NUMERATOR)
+        .saturating_div(INPUT_CONTEXT_DENOMINATOR)
+        .max(1);
+    let reserved = MODEL_REQUEST_FRAMING_TOKENS.saturating_add(additional_reserved_tokens);
+    if reserved >= input_budget {
+        anyhow::bail!(
+            "configured context ceiling ({num_ctx} tokens) is too small for the agent request framing; choose a larger endpoint context window"
+        );
+    }
+    Ok(input_budget - reserved)
+}
+
+/// Fit a system message and a structured prompt inside the input share of a
+/// model context window. `prompt_prefix` is the durable task/instructions and
+/// `prompt_tail` is the newest transcript/evidence; when truncation is needed
+/// we retain both ends rather than silently dropping the current task.
+///
+/// This is `pub(crate)` so Team's direct planner/reviewer calls use exactly
+/// the same host-side contract as Agent calls.
+pub(crate) fn budget_model_input(
+    system: Option<&str>,
+    prompt_prefix: &str,
+    prompt_tail: &str,
+    num_ctx: usize,
+    additional_reserved_tokens: usize,
+) -> Result<(Option<String>, String)> {
+    let input_budget = model_input_payload_budget(num_ctx, additional_reserved_tokens)?;
+    let system = system.filter(|text| !text.is_empty()).unwrap_or_default();
+    let full_prompt = format!("{prompt_prefix}{prompt_tail}");
+
+    if estimate_tokens(system).saturating_add(estimate_tokens(&full_prompt)) <= input_budget {
+        return Ok((
+            (!system.is_empty()).then(|| system.to_string()),
+            full_prompt,
+        ));
+    }
+
+    // Preserve room for the user task and most recent evidence even when a
+    // tool-rich system prompt is larger than a small endpoint's context. If
+    // the system text is naturally small, its unused allocation goes back to
+    // the prompt rather than being wasted.
+    let prompt_reserve = input_budget.div_ceil(2);
+    let system_budget = if system.is_empty() {
+        0
+    } else {
+        input_budget.saturating_sub(prompt_reserve)
+    };
+    let bounded_system = truncate_to_token_budget(system, system_budget, false);
+    let prompt_budget = input_budget.saturating_sub(estimate_tokens(&bounded_system));
+    let bounded_prompt = budget_prompt_parts(prompt_prefix, prompt_tail, prompt_budget);
+
+    debug_assert!(
+        estimate_tokens(&bounded_system).saturating_add(estimate_tokens(&bounded_prompt))
+            <= input_budget,
+        "agent request must fit its host-side input budget"
+    );
+    Ok((
+        (!bounded_system.is_empty()).then_some(bounded_system),
+        bounded_prompt,
+    ))
+}
+
+fn budget_prompt_parts(prefix: &str, tail: &str, budget: usize) -> String {
+    let full = format!("{prefix}{tail}");
+    if estimate_tokens(&full) <= budget {
+        return full;
+    }
+    if budget == 0 {
+        return String::new();
+    }
+
+    let marker_tokens = estimate_tokens(CONTEXT_OMISSION_MARKER);
+    let separator = (marker_tokens < budget).then_some(CONTEXT_OMISSION_MARKER);
+    let content_budget = budget.saturating_sub(separator.map_or(0, estimate_tokens));
+
+    // A very long task should not crowd out the newest tool result, but a
+    // short task receives all the room it needs. The prefix helper preserves
+    // both the beginning and the end of a genuinely oversized task.
+    let reserved_for_tail = estimate_tokens(tail).min(content_budget / 2);
+    let prefix_budget =
+        estimate_tokens(prefix).min(content_budget.saturating_sub(reserved_for_tail));
+    let bounded_prefix = truncate_middle_to_token_budget(prefix, prefix_budget);
+    let tail_budget = content_budget.saturating_sub(estimate_tokens(&bounded_prefix));
+    let bounded_tail = truncate_to_token_budget(tail, tail_budget, true);
+
+    match (
+        bounded_prefix.is_empty(),
+        bounded_tail.is_empty(),
+        separator,
+    ) {
+        (true, true, _) => String::new(),
+        (false, true, _) => bounded_prefix,
+        (true, false, _) => bounded_tail,
+        (false, false, Some(separator)) => {
+            format!("{bounded_prefix}{separator}{bounded_tail}")
+        }
+        (false, false, None) => format!("{bounded_prefix}{bounded_tail}"),
+    }
+}
+
+/// Return a prefix or suffix whose BPE estimate stays within `budget`.
+fn truncate_to_token_budget(text: &str, budget: usize, keep_tail: bool) -> String {
+    if budget == 0 || text.is_empty() {
+        return String::new();
+    }
+    if estimate_tokens(text) <= budget {
+        return text.to_string();
+    }
+
+    let marker_tokens = estimate_tokens(CONTEXT_OMISSION_MARKER);
+    if marker_tokens >= budget {
+        return take_text_with_token_budget(text, budget, keep_tail);
+    }
+    let retained = take_text_with_token_budget(text, budget - marker_tokens, keep_tail);
+    if retained.is_empty() {
+        return CONTEXT_OMISSION_MARKER.to_string();
+    }
+    if keep_tail {
+        format!("{CONTEXT_OMISSION_MARKER}{retained}")
+    } else {
+        format!("{retained}{CONTEXT_OMISSION_MARKER}")
+    }
+}
+
+/// Preserve both the leading task label and its final details if one task is
+/// itself larger than the context allocation.
+fn truncate_middle_to_token_budget(text: &str, budget: usize) -> String {
+    if budget == 0 || text.is_empty() {
+        return String::new();
+    }
+    if estimate_tokens(text) <= budget {
+        return text.to_string();
+    }
+
+    let marker_tokens = estimate_tokens(CONTEXT_OMISSION_MARKER);
+    if marker_tokens >= budget {
+        return take_text_with_token_budget(text, budget, false);
+    }
+    let content_budget = budget - marker_tokens;
+    let leading = take_text_with_token_budget(text, content_budget.div_ceil(2), false);
+    let trailing_budget = content_budget.saturating_sub(estimate_tokens(&leading));
+    let trailing = take_text_with_token_budget(text, trailing_budget, true);
+    match (leading.is_empty(), trailing.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => leading,
+        (true, false) => trailing,
+        (false, false) => format!("{leading}{CONTEXT_OMISSION_MARKER}{trailing}"),
+    }
+}
+
+/// BPE-aware character-boundary slice. The estimator is deterministic, and a
+/// binary search avoids repeatedly tokenizing every character of a large tool
+/// result while never splitting UTF-8 text.
+fn take_text_with_token_budget(text: &str, budget: usize, keep_tail: bool) -> String {
+    if budget == 0 || text.is_empty() {
+        return String::new();
+    }
+    if estimate_tokens(text) <= budget {
+        return text.to_string();
+    }
+
+    let mut boundaries: Vec<usize> = text.char_indices().map(|(index, _)| index).collect();
+    boundaries.push(text.len());
+    let character_count = boundaries.len() - 1;
+    let mut low = 0usize;
+    let mut high = character_count;
+    while low < high {
+        let candidate_count = (low + high).div_ceil(2);
+        let candidate = if keep_tail {
+            &text[boundaries[character_count - candidate_count]..]
+        } else {
+            &text[..boundaries[candidate_count]]
+        };
+        if estimate_tokens(candidate) <= budget {
+            low = candidate_count;
+        } else {
+            high = candidate_count - 1;
+        }
+    }
+    if keep_tail {
+        text[boundaries[character_count - low]..].to_string()
+    } else {
+        text[..boundaries[low]].to_string()
+    }
+}
+
 fn build_system_prompt(tools: &ToolRegistry) -> String {
     let mut s = String::new();
     s.push_str(
@@ -747,5 +978,38 @@ mod tests {
         assert!(s.contains("fs_list"));
         assert!(!s.contains("\"tool\":\"web_search\""));
         assert!(!s.contains("\"tool\":\"fetch_url\""));
+    }
+
+    #[test]
+    fn model_input_budget_preserves_task_and_latest_evidence() {
+        let system = "system instruction ".repeat(800);
+        let task = "User task: TASK-MARKER keep this requested outcome.\n\n";
+        let tail = format!(
+            "STALE-EVIDENCE-MARKER {}\nLATEST-EVIDENCE-MARKER",
+            "old tool output ".repeat(2_000),
+        );
+
+        let (bounded_system, bounded_prompt) =
+            budget_model_input(Some(&system), task, &tail, 512, 0).unwrap();
+        let used = bounded_system
+            .as_deref()
+            .map(estimate_tokens)
+            .unwrap_or_default()
+            .saturating_add(estimate_tokens(&bounded_prompt));
+
+        assert!(
+            used + MODEL_REQUEST_FRAMING_TOKENS
+                <= 512 * INPUT_CONTEXT_NUMERATOR / INPUT_CONTEXT_DENOMINATOR
+        );
+        assert!(bounded_prompt.contains("TASK-MARKER"));
+        assert!(bounded_prompt.contains("LATEST-EVIDENCE-MARKER"));
+        assert!(!bounded_prompt.contains("STALE-EVIDENCE-MARKER"));
+    }
+
+    #[test]
+    fn model_input_budget_rejects_a_ceiling_too_small_for_request_framing() {
+        let error = budget_model_input(Some("system"), "task", "latest", 32, 8)
+            .expect_err("format and protocol framing must not exceed a tiny endpoint ceiling");
+        assert!(format!("{error:#}").contains("too small for the agent request framing"));
     }
 }

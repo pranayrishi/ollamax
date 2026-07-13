@@ -5,7 +5,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("forgeNative", {
-  // { baseUrl, accountServer, apiToken, workspace, workspaceReady }
+  // { baseUrl, accountEnabled, apiToken, workspace, workspaceReady }
   config: () => ipcRenderer.invoke("forge:config"),
   // A workspace switch restarts the local engine on a new ephemeral port.
   onConfigChanged: (cb) => {
@@ -17,7 +17,13 @@ contextBridge.exposeInMainWorld("forgeNative", {
   // Returns [{ path, label, content }] from a native file picker.
   pickFiles: () => ipcRenderer.invoke("forge:pickFiles"),
   openExternal: (url) => ipcRenderer.invoke("forge:openExternal", url),
-  signIn: (opts) => ipcRenderer.invoke("forge:signIn", opts),
+  // Account tokens and OAuth/device codes never cross this bridge. The
+  // renderer can request a flow and receive only public account state.
+  account: {
+    status: () => ipcRenderer.invoke("account:status"),
+    signIn: (opts) => ipcRenderer.invoke("account:signIn", opts),
+    signOut: () => ipcRenderer.invoke("account:signOut"),
+  },
   // Explicit, one-shot local voice operations. The renderer never gains a
   // shell, microphone recording is initiated in the renderer after a gesture,
   // and neither operation falls back to a hosted speech service.

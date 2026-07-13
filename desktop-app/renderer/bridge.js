@@ -9,7 +9,7 @@
 
 (function () {
   let baseUrl = null;
-  let accountServer = "";
+  let accountEnabled = false;
   let apiToken = "";
   let workspaceReady = false;
   let current = null; // { id, ctrl, baseUrl }
@@ -25,7 +25,7 @@
   function applyConfig(cfg) {
     const previousBaseUrl = baseUrl;
     baseUrl = (cfg && cfg.baseUrl) || null;
-    accountServer = (cfg && cfg.accountServer) || "";
+    accountEnabled = !!(cfg && cfg.accountEnabled);
     apiToken = (cfg && cfg.apiToken) || "";
     workspaceReady = !!(cfg && cfg.workspaceReady);
 
@@ -53,6 +53,16 @@
     }
   }
   const ready = init();
+
+  async function refreshAccountState() {
+    const account = window.forgeNative && window.forgeNative.account;
+    if (!account || typeof account.status !== "function") return { enabled: false, user: null };
+    try {
+      return await account.status();
+    } catch (_) {
+      return { enabled: false, user: null };
+    }
+  }
 
   if (window.forgeNative && typeof window.forgeNative.onConfigChanged === "function") {
     window.forgeNative.onConfigChanged(applyConfig);
@@ -158,8 +168,10 @@
         try {
           await refreshConfig();
         } catch (_) {}
-        post({ type: "config", whimsy: true, accountEnabled: !!accountServer });
-        if (msg.type === "ready") post({ type: "account", user: null });
+        const account = await refreshAccountState();
+        post({ type: "config", whimsy: true, accountEnabled: !!(accountEnabled && account.enabled) });
+        post({ type: "account", user: account.user || null });
+        post({ type: "gate", signedIn: !!account.user, user: account.user || null });
         if (!baseUrl) {
           post({ type: "backendError", message: "local engine not running" });
           break;
@@ -280,14 +292,45 @@
         break;
       }
       case "signIn": {
-        const r = await window.forgeNative.signIn({ device: !!msg.device });
-        if (!r.ok && r.error === "no_account_server") {
-          post({ type: "backendError", message: "sign-in needs an account server (FORGE_ACCOUNT_SERVER)" });
+        const account = window.forgeNative && window.forgeNative.account;
+        if (!account || typeof account.signIn !== "function") {
+          post({ type: "backendError", message: "sign-in is unavailable in this app build" });
+          break;
+        }
+        let r;
+        try {
+          r = await account.signIn({ device: !!msg.device });
+        } catch (_) {
+          r = { ok: false, message: "The sign-in request could not be completed." };
+        }
+        if (r && r.ok) {
+          post({ type: "account", user: r.user || null });
+          post({ type: "gate", signedIn: !!r.user, user: r.user || null });
+          if (r.sessionPersistence === "memory") {
+            post({
+              type: "backendError",
+              message: "Signed in for this app session only: encrypted OS credential storage is unavailable.",
+            });
+          }
+        } else {
+          post({ type: "backendError", message: (r && r.message) || "The sign-in could not be completed." });
         }
         break;
       }
       case "signOut": {
-        post({ type: "account", user: null });
+        const account = window.forgeNative && window.forgeNative.account;
+        let r;
+        try {
+          r = account && typeof account.signOut === "function" ? await account.signOut() : { ok: false };
+        } catch (_) {
+          r = { ok: false, message: "The sign-out request could not be completed." };
+        }
+        if (r && r.ok) {
+          post({ type: "account", user: null });
+          post({ type: "gate", signedIn: false, user: null });
+        } else {
+          post({ type: "backendError", message: (r && r.message) || "The sign-out could not be completed." });
+        }
         break;
       }
       default:

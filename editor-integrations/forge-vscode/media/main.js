@@ -1186,10 +1186,15 @@
       const btn = document.createElement("button");
       btn.className = "acct-signin";
       btn.textContent = "Sign in with GitHub";
-      // Use the device-code flow (reliable across deployments; the loopback flow
-      // depends on the account server's redirect handling).
-      btn.addEventListener("click", () => vscode.postMessage({ type: "signIn", device: true }));
+      // Loopback PKCE is the primary desktop flow. It keeps the authorization
+      // code bound to this local app instance.
+      btn.addEventListener("click", () => vscode.postMessage({ type: "signIn" }));
       accountEl.appendChild(btn);
+      const device = document.createElement("button");
+      device.className = "acct-link";
+      device.textContent = "Use device code";
+      device.addEventListener("click", () => vscode.postMessage({ type: "signIn", device: true }));
+      accountEl.appendChild(device);
     }
   }
 
@@ -1270,9 +1275,9 @@
     gate.hidden = !!signedIn;
   }
   const gateSignIn = $("#gate-signin");
-  // Primary sign-in uses the device-code flow (reliable across deployments;
-  // the loopback flow needs the account server's redirect handling).
-  if (gateSignIn) gateSignIn.addEventListener("click", () => vscode.postMessage({ type: "signIn", device: true }));
+  // PKCE loopback is the primary desktop flow; the separate device control is
+  // retained as a fallback for environments where loopback is unavailable.
+  if (gateSignIn) gateSignIn.addEventListener("click", () => vscode.postMessage({ type: "signIn" }));
   const gateSignInDev = $("#gate-signin-device");
   if (gateSignInDev)
     gateSignInDev.addEventListener("click", () => vscode.postMessage({ type: "signIn", device: true }));

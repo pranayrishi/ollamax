@@ -34,13 +34,60 @@ jobs:
   prepare-public-release:
     name: prepare public release
     runs-on: ubuntu-latest
+    outputs:
+      source_commit: ${{ steps.provenance.outputs.source_commit }}
+      provenance_marker: ${{ steps.provenance.outputs.marker }}
     steps:
+      # Pin the build to the immutable event SHA, then independently resolve
+      # the live tag. A later force-push of app-v* must fail rather than let a
+      # runner package a different revision under the same public version.
+      - uses: actions/checkout@v4
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Assert app tag is pinned to this event commit
+        id: provenance
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          checked_commit="$(git rev-parse HEAD^{commit})"
+          [[ "$checked_commit" == "$event_commit" ]] || {
+            echo "checkout resolved $checked_commit, but this tag event resolved $event_commit" >&2
+            exit 1
+          }
+
+          verify_ref="refs/ollamax-release-verify/${GITHUB_REF_NAME}"
+          git fetch --no-tags --force origin "refs/tags/${GITHUB_REF_NAME}:${verify_ref}"
+          tag_commit="$(git rev-parse "${verify_ref}^{commit}")"
+          [[ "$tag_commit" == "$event_commit" ]] || {
+            echo "${GITHUB_REF_NAME} currently resolves to $tag_commit, not this event commit $event_commit" >&2
+            exit 1
+          }
+
+          marker="$(python3 - "$GITHUB_REF_NAME" "$event_commit" <<'PY'
+          import json
+          import sys
+
+          payload = {
+              "schema": 1,
+              "app_tag": sys.argv[1],
+              "source_commit": sys.argv[2],
+          }
+          print("<!-- ollamax-provenance " + json.dumps(payload, separators=(",", ":")) + " -->")
+          PY
+          )"
+          printf 'source_commit=%s\n' "$event_commit" >> "$GITHUB_OUTPUT"
+          printf 'marker=%s\n' "$marker" >> "$GITHUB_OUTPUT"
+
       # A previous Windows PowerShell invocation stripped the `app-` prefix
       # incorrectly, creating a public `app-v*` release. It is never a valid
-      # download target. Also remove a published base release that has no CLI
-      # bundle at all: that is necessarily an interrupted app-only publish.
-      # Existing drafts and published complete releases are deliberately kept.
-      - name: Remove stale or incomplete public releases
+      # download target. Never delete or reuse a base-version public release:
+      # source provenance must be checked explicitly before any draft changes.
+      - name: Remove stale app-prefixed public releases
         if: startsWith(github.ref, 'refs/tags/app-v')
         shell: bash
         env:
@@ -81,26 +128,57 @@ jobs:
               ;;
           esac
 
-          fetch_release "$base_tag"
+      - name: Require a matching draft provenance record
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        shell: bash
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          SOURCE_COMMIT: ${{ steps.provenance.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          base_tag="${GITHUB_REF_NAME#app-}"
+          response="$(mktemp)"
+          code="$(curl -sS -o "$response" -w '%{http_code}' \
+            -H "Authorization: Bearer ${RELEASES_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${RELEASES_REPO}/releases/tags/${base_tag}")"
           case "$code" in
             404) exit 0 ;;
             200) ;;
             *)
-              echo "could not inspect base release (HTTP $code)" >&2
+              echo "could not inspect base release ${base_tag} (HTTP $code)" >&2
               sed -n '1,80p' "$response" >&2
               exit 1
               ;;
           esac
 
-          read -r is_draft cli_bundle_count < <(python3 -c '
-          import json, sys
-          release = json.load(sys.stdin)
-          count = sum(asset.get("name", "").startswith("ollama-forge-") for asset in release.get("assets", []))
-          print(str(bool(release.get("draft"))).lower(), count)
-          ' < "$response")
-          if [[ "$is_draft" == false && "$cli_bundle_count" == 0 ]]; then
-            delete_response_release
-          fi
+          python3 - "$response" "$base_tag" "$GITHUB_REF_NAME" "$SOURCE_COMMIT" <<'PY'
+          import json
+          import re
+          import sys
+
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          tag, app_tag, source_commit = sys.argv[2:]
+          if release.get("tag_name") != tag:
+              raise SystemExit("release lookup returned an unexpected tag")
+          if not release.get("draft"):
+              raise SystemExit("refusing to modify an already-published base release")
+
+          matches = re.findall(r"<!-- ollamax-provenance (\{[^<>]*\}) -->", release.get("body") or "")
+          if len(matches) != 1:
+              raise SystemExit("existing draft must contain exactly one Ollamax provenance marker")
+          try:
+              marker = json.loads(matches[0])
+          except json.JSONDecodeError as error:
+              raise SystemExit(f"existing draft has invalid provenance JSON: {error}")
+          expected = {
+              "schema": 1,
+              "app_tag": app_tag,
+              "source_commit": source_commit,
+          }
+          if marker != expected:
+              raise SystemExit(f"existing draft provenance does not match this app tag: {marker!r}")
+          PY
 
   build:
     name: app (${{ matrix.label }})
@@ -121,6 +199,10 @@ jobs:
             label: linux-x64
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build from the tag-push event snapshot, not a tag that may move
+          # while this serialized native matrix is still running.
+          ref: ${{ github.sha }}
 
       - name: Assert the macOS artifact is built on Apple Silicon
         if: matrix.label == 'macos-arm64'
@@ -420,6 +502,8 @@ jobs:
             code-signed yet). Verify against the matching .sha256. This release
             workflow stages a verified local Whisper runtime; Ollama is the
             default local runtime (https://ollama.com/download).
+
+            ${{ needs.prepare-public-release.outputs.provenance_marker }}
           files: |
             dist/*
           fail_on_unmatched_files: true

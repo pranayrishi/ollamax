@@ -189,6 +189,11 @@ test("rejects a package missing the click-through cursor companion preload", () 
 test("package contract includes the local POINT parser and desktop bridge", () => {
   assert.ok(REQUIRED_APP_FILES.includes("renderer/point-directives.js"));
   assert.ok(REQUIRED_APP_FILES.includes("renderer/desktop-points.js"));
+  assert.ok(REQUIRED_APP_FILES.includes("renderer/bridge.js"));
+  assert.ok(REQUIRED_APP_FILES.includes("renderer/hub-bridge.js"));
+  assert.ok(REQUIRED_APP_FILES.includes("renderer/main.js"));
+  assert.ok(REQUIRED_APP_FILES.includes("lib/attachment-preview.js"));
+  assert.ok(REQUIRED_APP_FILES.includes("lib/desktop-auth.js"));
   assert.ok(REQUIRED_APP_FILES.includes("lib/desktop-security.js"));
   assert.ok(REQUIRED_APP_FILES.includes("lib/workspace-paths.js"));
 });

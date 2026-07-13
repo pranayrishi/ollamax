@@ -165,19 +165,24 @@ feature until both workflows have completed and the public release is visible.
 
 ```bash
 # 1. Build and attach the Electron installers to a draft for this version.
-git tag app-vX.Y.Z
+# Both tags must peel to this exact source commit. The draft records it before
+# installers can be attached or published.
+release_commit="$(git rev-parse HEAD)"
+git tag -a app-vX.Y.Z "$release_commit" -m "Stage Ollamax vX.Y.Z desktop installers"
 git push origin app-vX.Y.Z
 
 # 2. After the app workflow succeeds, build the CLI/VS Code bundles, verify the
 #    complete asset contract, and publish that same draft.
-git tag vX.Y.Z
+git tag -a vX.Y.Z "$release_commit" -m "Release Ollamax vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
 `app-vX.Y.Z` is an internal staging tag, not a public download release. The
 following `vX.Y.Z` tag publishes only after the desktop and CLI/VS Code assets
-are present. This is why the existing public `v0.2.0` assets remain a baseline
-until a newer pair of workflows has passed.
+are present. The workflows also reject moved tags, a draft with missing or
+mismatched source provenance, and a final draft that changes during the native
+builds. This is why the existing public `v0.2.0` assets remain a baseline until
+a newer pair of workflows has passed.
 
 ---
 

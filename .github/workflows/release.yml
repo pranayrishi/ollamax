@@ -46,8 +46,94 @@ env:
   RELEASES_REPO: pranayrishi/ollamax-releases
 
 jobs:
+  # The public release tag lives in a different repository and therefore cannot
+  # point at this source commit. Bind the app draft to a deterministic source
+  # marker before any CLI bundle is uploaded, then carry that marker through
+  # every later draft update and the final publication.
+  verify-app-provenance:
+    name: verify app release provenance
+    runs-on: ubuntu-latest
+    outputs:
+      source_commit: ${{ steps.provenance.outputs.source_commit }}
+      provenance_marker: ${{ steps.provenance.outputs.marker }}
+    steps:
+      - uses: actions/checkout@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Assert matching source tags and draft provenance
+        id: provenance
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          checked_commit="$(git rev-parse HEAD^{commit})"
+          [[ "$checked_commit" == "$event_commit" ]] || {
+            echo "checkout resolved $checked_commit, but this tag event resolved $event_commit" >&2
+            exit 1
+          }
+
+          for tag in "$GITHUB_REF_NAME" "app-${GITHUB_REF_NAME}"; do
+            verify_ref="refs/ollamax-release-verify/${tag}"
+            git fetch --no-tags --force origin "refs/tags/${tag}:${verify_ref}"
+            tag_commit="$(git rev-parse "${verify_ref}^{commit}")"
+            [[ "$tag_commit" == "$event_commit" ]] || {
+              echo "${tag} currently resolves to $tag_commit, not this event commit $event_commit" >&2
+              exit 1
+            }
+          done
+
+          response="$(mktemp)"
+          code="$(curl -sS -o "$response" -w '%{http_code}' \
+            -H "Authorization: Bearer ${RELEASES_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${RELEASES_REPO}/releases/tags/${GITHUB_REF_NAME}")"
+          [[ "$code" == 200 ]] || {
+            echo "expected the matching app draft for ${GITHUB_REF_NAME}, got HTTP $code" >&2
+            sed -n '1,80p' "$response" >&2
+            exit 1
+          }
+
+          marker="$(python3 - "$response" "$GITHUB_REF_NAME" "$event_commit" <<'PY'
+          import json
+          import re
+          import sys
+
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          tag, source_commit = sys.argv[2:]
+          if release.get("tag_name") != tag:
+              raise SystemExit("release lookup returned an unexpected tag")
+          if not release.get("draft"):
+              raise SystemExit("refusing to add CLI assets to an already-published release")
+
+          matches = re.findall(r"<!-- ollamax-provenance (\{[^<>]*\}) -->", release.get("body") or "")
+          if len(matches) != 1:
+              raise SystemExit("draft must contain exactly one Ollamax provenance marker")
+          try:
+              marker = json.loads(matches[0])
+          except json.JSONDecodeError as error:
+              raise SystemExit(f"draft has invalid provenance JSON: {error}")
+          expected = {
+              "schema": 1,
+              "app_tag": f"app-{tag}",
+              "source_commit": source_commit,
+          }
+          if marker != expected:
+              raise SystemExit(f"draft provenance does not match the source tags: {marker!r}")
+          print("<!-- ollamax-provenance " + json.dumps(expected, separators=(",", ":")) + " -->")
+          PY
+          )"
+          printf 'source_commit=%s\n' "$event_commit" >> "$GITHUB_OUTPUT"
+          printf 'marker=%s\n' "$marker" >> "$GITHUB_OUTPUT"
+
   build:
     name: build (${{ matrix.label }})
+    needs: verify-app-provenance
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -75,6 +161,10 @@ jobs:
             ext: zip
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build the immutable tag-push event snapshot instead of any later
+          # movement of a mutable tag while native jobs are in progress.
+          ref: ${{ github.sha }}
 
       - name: Assert macOS bundle is built on Apple Silicon
         if: matrix.label == 'macos-arm64'
@@ -238,6 +328,8 @@ jobs:
             notes inside each bundle). Ollama is the default local runtime
             (https://ollama.com/download); an advanced local deployment can use an
             explicitly configured literal-loopback OpenAI-compatible endpoint.
+
+            ${{ needs.verify-app-provenance.outputs.provenance_marker }}
           files: |
             dist/ollama-forge-${{ matrix.label }}.${{ matrix.ext }}
             dist/ollama-forge-${{ matrix.label }}.${{ matrix.ext }}.sha256
@@ -254,6 +346,10 @@ jobs:
           draft: true
           make_latest: false
           name: Ollama-Forge ${{ github.ref_name }}
+          body: |
+            Ollamax shared CLI installers and the VS Code panel.
+
+            ${{ needs.verify-app-provenance.outputs.provenance_marker }}
           files: |
             forge-vscode.vsix
             desktop/install.sh
@@ -262,10 +358,15 @@ jobs:
 
   publish:
     name: publish complete release
-    needs: build
+    needs: [build, verify-app-provenance]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
       - name: Verify the complete draft asset contract
         id: contract
         shell: bash
@@ -333,11 +434,65 @@ jobs:
           )"
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
+      # The build matrix can run for a long time. Re-resolve both source tags
+      # and the persisted draft marker immediately before the irreversible
+      # public-release PATCH so a tag move or a replaced draft cannot publish.
+      - name: Re-verify source tags and draft provenance before publication
+        shell: bash
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          RELEASE_ID: ${{ steps.contract.outputs.release_id }}
+          SOURCE_COMMIT: ${{ needs.verify-app-provenance.outputs.source_commit }}
+          PROVENANCE_MARKER: ${{ needs.verify-app-provenance.outputs.provenance_marker }}
+        run: |
+          set -euo pipefail
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          checked_commit="$(git rev-parse HEAD^{commit})"
+          [[ "$event_commit" == "$SOURCE_COMMIT" && "$checked_commit" == "$event_commit" ]] || {
+            echo "source checkout no longer matches the verified provenance commit" >&2
+            exit 1
+          }
+
+          for tag in "$GITHUB_REF_NAME" "app-${GITHUB_REF_NAME}"; do
+            verify_ref="refs/ollamax-release-verify/final/${tag}"
+            git fetch --no-tags --force origin "refs/tags/${tag}:${verify_ref}"
+            tag_commit="$(git rev-parse "${verify_ref}^{commit}")"
+            [[ "$tag_commit" == "$event_commit" ]] || {
+              echo "${tag} currently resolves to $tag_commit, not this event commit $event_commit" >&2
+              exit 1
+            }
+          done
+
+          response="$(mktemp)"
+          code="$(curl -sS -o "$response" -w '%{http_code}' \
+            -H "Authorization: Bearer ${RELEASES_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${RELEASES_REPO}/releases/${RELEASE_ID}")"
+          [[ "$code" == 200 ]] || {
+            echo "could not re-read draft release ${RELEASE_ID}, got HTTP $code" >&2
+            sed -n '1,80p' "$response" >&2
+            exit 1
+          }
+
+          python3 - "$response" "$GITHUB_REF_NAME" "$PROVENANCE_MARKER" <<'PY'
+          import json
+          import sys
+
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          tag, marker = sys.argv[2:]
+          body = release.get("body") or ""
+          if release.get("tag_name") != tag or not release.get("draft"):
+              raise SystemExit("draft changed identity or became public before final verification")
+          if body.count(marker) != 1:
+              raise SystemExit("draft provenance marker was lost or duplicated before publication")
+          PY
+
       - name: Publish the complete verified draft
         shell: bash
         env:
           RELEASES_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
           RELEASE_ID: ${{ steps.contract.outputs.release_id }}
+          PROVENANCE_MARKER: ${{ needs.verify-app-provenance.outputs.provenance_marker }}
         run: |
           set -euo pipefail
           payload="$(mktemp)"
@@ -356,7 +511,8 @@ jobs:
                   "SHA-256 sidecar before opening them. Desktop installers include the\n"
                   "CI-staged, checksummed local Whisper runtime; source checkouts do not\n"
                   "imply that it is present. Ollama is the default local runtime:\n"
-                  "https://ollama.com/download"
+                  "https://ollama.com/download\n\n"
+                  + os.environ["PROVENANCE_MARKER"]
               ),
           }))
           PY
@@ -373,11 +529,15 @@ jobs:
             sed -n '1,80p' "$response" >&2
             exit 1
           }
-          python3 - "$response" "$GITHUB_REF_NAME" <<'PY'
+          python3 - "$response" "$GITHUB_REF_NAME" "$PROVENANCE_MARKER" <<'PY'
           import json
           import sys
 
           release = json.load(open(sys.argv[1], encoding="utf-8"))
-          if release.get("draft") or release.get("tag_name") != sys.argv[2]:
+          if (
+              release.get("draft")
+              or release.get("tag_name") != sys.argv[2]
+              or (release.get("body") or "").count(sys.argv[3]) != 1
+          ):
               raise SystemExit("release publish response did not describe the expected public tag")
           PY

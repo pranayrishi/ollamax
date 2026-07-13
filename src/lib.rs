@@ -113,7 +113,10 @@ pub struct LocalEndpointModelConfig {
     /// Explicit model capability declarations; never inferred from a name.
     pub vision: bool,
     pub thinking: bool,
-    /// Operator-provided UI disclosure, not a hardware-fit promise.
+    /// Operator-provided text-context ceiling used for host-side request
+    /// budgeting; it is not a hardware-fit promise. Vision image-token
+    /// accounting remains model/server-specific, so an endpoint marked
+    /// `vision` must still be configured with room for its image encoder.
     pub context_window_tokens: Option<usize>,
 }
 

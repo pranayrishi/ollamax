@@ -35,8 +35,9 @@
       }
       case "support": {
         if (!h) return;
-        // No app token wired yet → the user is asked to sign in (opt-in).
-        const r = await h.support({ slug: msg.slug, repos: msg.repos, token: null });
+        // The main process obtains any bearer token from encrypted account
+        // storage itself. This renderer never receives or supplies one.
+        const r = await h.support({ slug: msg.slug, repos: msg.repos });
         if (r.needsSignIn) post({ type: "needsSignIn" });
         else if (r.error) post({ type: "error", message: r.error });
         // r.ok → the browser opened for conscious, opt-in starring.
