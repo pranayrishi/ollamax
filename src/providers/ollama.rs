@@ -113,6 +113,19 @@ fn normalize_ollama_endpoint(raw_endpoint: &str) -> Result<String> {
         })?;
     }
 
+    // `localhost` is conventionally loopback, but it is still name-resolved
+    // by the OS. Screen crops and microphone-derived context use this endpoint
+    // as a privacy boundary, so pin it to a literal loopback address instead
+    // of trusting a mutable hosts/DNS mapping.
+    let is_localhost = endpoint
+        .host_str()
+        .is_some_and(|host| host.eq_ignore_ascii_case("localhost"));
+    if is_localhost {
+        endpoint.set_host(Some("127.0.0.1")).map_err(|e| {
+            anyhow::anyhow!("replace localhost Ollama host `{raw_endpoint}`: {e:#}")
+        })?;
+    }
+
     let is_bind_all = endpoint
         .host_str()
         .map(|host| host.trim_matches(|c| c == '[' || c == ']'))
@@ -128,17 +141,23 @@ fn normalize_ollama_endpoint(raw_endpoint: &str) -> Result<String> {
     Ok(endpoint.as_str().trim_end_matches('/').to_owned())
 }
 
-fn is_local_ollama_endpoint(endpoint: &str) -> bool {
+/// Whether an already-normalized Ollama endpoint is loopback-only.
+///
+/// This is intentionally public because callers that handle sensitive local
+/// inputs (microphone recordings, screen crops, or workspace evidence) must
+/// be able to fail closed when a user has configured Ollama to point at a
+/// remote machine.  The provider itself permits a deliberate remote endpoint
+/// for ordinary text generation; it must not make that choice on behalf of a
+/// privacy-sensitive feature.
+pub fn is_local_ollama_endpoint(endpoint: &str) -> bool {
     reqwest::Url::parse(endpoint)
         .ok()
         .and_then(|url| url.host_str().map(str::to_owned))
         .map(|host| {
             let host = host.trim_matches(|c| c == '[' || c == ']');
-            host.eq_ignore_ascii_case("localhost")
-                || host
-                    .parse::<IpAddr>()
-                    .map(|address| address.is_loopback())
-                    .unwrap_or(false)
+            host.parse::<IpAddr>()
+                .map(|address| address.is_loopback())
+                .unwrap_or(false)
         })
         .unwrap_or(false)
 }
@@ -162,6 +181,11 @@ fn build_ollama_client(endpoint: &str, bypass_proxy: bool, streaming: bool) -> R
     } else {
         client
     };
+    // Treat a model endpoint as an exact trust boundary. In particular, a
+    // loopback Ollama server must never be able to redirect an attached image
+    // or screen crop to a remote host. Deliberate remote Ollama users also get
+    // clearer failures instead of a silent cross-origin follow-up.
+    let client = client.redirect(reqwest::redirect::Policy::none());
     let kind = if streaming { "streaming" } else { "HTTP" };
     client
         .build()
@@ -632,6 +656,10 @@ impl LlmProvider for OllamaProvider {
         "ollama"
     }
 
+    async fn model_fingerprint(&self, model: &str) -> Option<String> {
+        self.model_digest(model).await
+    }
+
     async fn generate(&self, opts: GenerateOptions) -> Result<LlmResponse> {
         let start = Instant::now();
         let stream = opts.stream;
@@ -895,7 +923,7 @@ mod tests {
     fn endpoint_normalization_accepts_host_only_values_and_removes_trailing_slashes() {
         assert_eq!(
             normalize_ollama_endpoint("localhost").unwrap(),
-            "http://localhost:11434"
+            "http://127.0.0.1:11434"
         );
         assert_eq!(
             normalize_ollama_endpoint("127.0.0.1:11555///").unwrap(),
@@ -962,7 +990,7 @@ mod tests {
     #[test]
     fn only_loopback_endpoints_bypass_proxy_settings() {
         assert!(is_local_ollama_endpoint("http://127.0.0.1:11434"));
-        assert!(is_local_ollama_endpoint("http://localhost:11434"));
+        assert!(!is_local_ollama_endpoint("http://localhost:11434"));
         assert!(is_local_ollama_endpoint("http://[::1]:11434"));
         assert!(!is_local_ollama_endpoint("http://192.168.1.10:11434"));
         assert!(!is_local_ollama_endpoint("https://ollama.example.test"));

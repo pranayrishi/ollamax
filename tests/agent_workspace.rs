@@ -158,24 +158,34 @@ async fn confirm_fake_ollama_with_empty_plan(
                     return;
                 }
                 let request: Value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({}));
+                let path = request_line.split_whitespace().nth(1).unwrap_or("");
                 let prompt = request.get("prompt").and_then(Value::as_str).unwrap_or("");
-                let response_text = if prompt.contains("List the concrete steps") {
-                    if empty_plan {
-                        String::new()
+                let payload = if path == "/api/generate" {
+                    let response_text = if prompt.contains("List the concrete steps") {
+                        if empty_plan {
+                            String::new()
+                        } else {
+                            "1. Update the greeting.\n2. Verify the result.".to_string()
+                        }
+                    } else if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        json!({
+                            "action":"use_tool",
+                            "tool":"fs_edit",
+                            "args":{"path":"src/example.txt","old_string":"hello world","new_string":"hello confirmed"}
+                        })
+                        .to_string()
                     } else {
-                        "1. Update the greeting.\n2. Verify the result.".to_string()
-                    }
-                } else if calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                    json!({
-                        "action":"use_tool",
-                        "tool":"fs_edit",
-                        "args":{"path":"src/example.txt","old_string":"hello world","new_string":"hello confirmed"}
-                    })
-                    .to_string()
+                        json!({"action":"answer","text":"Applied the confirmed change."})
+                            .to_string()
+                    };
+                    json!({"response": response_text, "model":"test-coder", "done":true})
+                } else if path == "/api/tags" {
+                    json!({"models":[{"name":"test-coder","size":1,"modified_at":"now","digest":"test"}]})
                 } else {
-                    json!({"action":"answer","text":"Applied the confirmed change."}).to_string()
+                    // Capability probes are deliberately side-effect free in the
+                    // fake: they must not consume a scripted generation action.
+                    json!({"capabilities":[]})
                 };
-                let payload = json!({"response": response_text, "model":"test-coder", "done":true});
                 let response_body = serde_json::to_string(&payload).unwrap();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",

@@ -3,13 +3,13 @@ version = "1.0"
 
 [ollama]
 url = "http://127.0.0.1:11434"
-default_model = "llama3.2:3b"
-planning_model = "qwen2.5-coder:7b"
+default_model = "qwen3.5:4b"
+planning_model = "deepseek-r1:8b"
 execution_models = [
-    "llama3.2:3b",
-    "qwen2.5-coder:7b",
-    "deepseek-coder-v2:16b",
-    "llama3.3:70b"
+    "qwen3.5:4b",
+    "deepseek-r1:8b",
+    "qwen3.5:9b",
+    "gemma4:12b"
 ]
 
 [execution]

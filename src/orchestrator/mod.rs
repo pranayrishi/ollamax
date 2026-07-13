@@ -1,7 +1,10 @@
 use crate::context::ContextManager;
 use crate::executor::ParallelExecutor;
+use crate::models::{is_offline_ollama_tag, is_ollama_cloud_tag, LocalAvailability, ModelRegistry};
 use crate::monitoring::VramSentinel;
-use crate::providers::{GenerateOptions, LlmProvider, ModelInfo, OllamaProvider};
+use crate::providers::{
+    parse_local_model_selector, GenerateOptions, LlmProvider, ModelInfo, OllamaProvider,
+};
 use crate::router::TaskRouter;
 use crate::security::{AuditReport, SecurityGuard, TddEnforcer};
 use crate::skills::SkillsEngine;
@@ -48,11 +51,12 @@ pub struct OrchestratorConfig {
 impl Default for OrchestratorConfig {
     fn default() -> Self {
         // Must agree with `Config::default` in lib.rs and `STARTER_FORGE_TOML`
-        // in main.rs. Single source of truth via the qwen2.5-coder ladder.
+        // in main.rs. Keep the first-run model laptop-sized; runtime selection
+        // still prefers an installed model over an unavailable configured tag.
         Self {
             ollama_url: crate::providers::ollama::DEFAULT_OLLAMA_ENDPOINT.to_string(),
-            default_model: "qwen2.5-coder:7b".to_string(),
-            planning_model: "qwen2.5-coder:7b".to_string(),
+            default_model: "qwen3.5:4b".to_string(),
+            planning_model: "deepseek-r1:8b".to_string(),
             max_parallel_workers: 4,
             security_enabled: true,
             tdd_enforced: false,
@@ -72,6 +76,8 @@ pub struct SessionState {
 
 impl Orchestrator {
     pub async fn new(config: OrchestratorConfig) -> Result<Self> {
+        validate_ollama_only_build_model("default_model", &config.default_model)?;
+        validate_ollama_only_build_model("planning_model", &config.planning_model)?;
         let ollama = Arc::new(OllamaProvider::new(&config.ollama_url));
 
         if !ollama.health_check().await? {
@@ -138,7 +144,13 @@ impl Orchestrator {
         let health = self.sentinel.check_health(None).await;
         info!("Health check: {:?}", health.hardware_profile);
 
-        let available_models = self.ollama.list_models().await?;
+        let available_models: Vec<ModelInfo> = self
+            .ollama
+            .list_models()
+            .await?
+            .into_iter()
+            .filter(|model| is_offline_ollama_tag(&model.name))
+            .collect();
         if available_models.is_empty() {
             anyhow::bail!(
                 "no models installed in ollama. Pull one first:\n  ollama pull {}",
@@ -307,7 +319,7 @@ impl Orchestrator {
         );
 
         let opts = GenerateOptions {
-            model: "deepseek-coder-v2:16b".to_string(),
+            model: self.config.default_model.clone(),
             prompt: correction_prompt,
             system: Some(
                 "You are a code debugging expert. Fix the error and return corrected code."
@@ -330,7 +342,7 @@ impl Orchestrator {
         );
 
         let opts = GenerateOptions {
-            model: "llama3.3:70b".to_string(),
+            model: self.config.planning_model.clone(),
             prompt: audit_prompt,
             system: Some(
                 "You are a senior code auditor. Review thoroughly and provide actionable feedback."
@@ -347,7 +359,13 @@ impl Orchestrator {
 
     pub async fn get_status(&self) -> Result<StatusReport> {
         let health = self.sentinel.check_health(None).await;
-        let models = self.ollama.list_models().await?;
+        let models = self
+            .ollama
+            .list_models()
+            .await?
+            .into_iter()
+            .filter(|model| is_offline_ollama_tag(&model.name))
+            .collect();
         let context_stats = self.context.stats().await;
         let session = self.session.read().await;
 
@@ -360,6 +378,69 @@ impl Orchestrator {
             uptime_seconds: (chrono::Utc::now() - session.start_time).num_seconds(),
         })
     }
+}
+
+/// The Build/Orchestrator pipeline deliberately shares one Ollama provider
+/// across its router, preload queue, and parallel workers. Agent and Team have
+/// provider-aware paths for configured `local:` endpoints; Build does not yet.
+/// Rejecting such a selector before starting any preload is safer than sending
+/// it to Ollama as though it were a pullable tag.
+fn validate_ollama_only_build_model(field: &str, model: &str) -> Result<()> {
+    if parse_local_model_selector(model)?.is_some() {
+        anyhow::bail!(
+            "forge build does not yet support configured local endpoint selector `{model}` in `{field}`. Use `forge agent`, `forge team`, or the desktop Agent/Team workflow for `local:<endpoint>/<model>` routing."
+        );
+    }
+    if is_ollama_cloud_tag(model) {
+        anyhow::bail!(
+            "forge build cannot use `{model}` in `{field}` because it is a hosted Ollama Cloud tag, not an offline model. Select a pulled local tag instead."
+        );
+    }
+
+    let catalog = ModelRegistry::seed();
+    let exact = |entry: &crate::models::CuratedModel| {
+        (!entry.ollama_tag.is_empty() && entry.ollama_tag.eq_ignore_ascii_case(model))
+            || (!entry.source_ref.is_empty() && entry.source_ref.eq_ignore_ascii_case(model))
+            || entry
+                .installed_aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(model))
+    };
+    let compact_model = compact_catalog_identifier(model);
+    let Some(entry) = catalog
+        .catalog()
+        .find(|entry| entry.local_availability != LocalAvailability::OllamaLocal && exact(entry))
+        .or_else(|| {
+            catalog.catalog().find(|entry| {
+                entry.local_availability != LocalAvailability::OllamaLocal
+                    && compact_catalog_identifier(&entry.family) == compact_model
+            })
+        })
+    else {
+        return Ok(());
+    };
+    if entry.can_pull_from_ollama() {
+        return Ok(());
+    }
+
+    match entry.local_availability {
+        LocalAvailability::SelfHostedLocal => anyhow::bail!(
+            "forge build cannot send `{model}` directly to Ollama: it is a separately self-hosted catalog entry. Configure its loopback server and use a `local:<endpoint>/<model>` selector with Agent or Team instead."
+        ),
+        LocalAvailability::CloudOnly => anyhow::bail!(
+            "forge build cannot use `{model}` because it is cataloged as cloud-only, not an offline Ollama model. {}",
+            entry.caveat
+        ),
+        LocalAvailability::OllamaLocal => Ok(()),
+    }
+}
+
+fn compact_catalog_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -389,4 +470,28 @@ pub struct StatusReport {
     pub context_stats: crate::context::ContextStats,
     pub session_id: String,
     pub uptime_seconds: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_ollama_only_build_model;
+
+    #[test]
+    fn build_rejects_configured_endpoint_and_non_ollama_catalog_models() {
+        let endpoint = validate_ollama_only_build_model("default_model", "local:lab/writer")
+            .expect_err("Build cannot yet route configured endpoint models");
+        assert!(format!("{endpoint:#}").contains("does not yet support"));
+
+        let self_hosted = validate_ollama_only_build_model("planning_model", "DeepSeek-V4-Flash")
+            .expect_err("Build cannot send self-hosted model identifiers to Ollama");
+        assert!(format!("{self_hosted:#}").contains("self-hosted"));
+
+        let cloud = validate_ollama_only_build_model("planning_model", "minimax-m3:cloud")
+            .expect_err("Build cannot send cloud-only model identifiers to Ollama");
+        assert!(format!("{cloud:#}").contains("hosted"));
+
+        assert!(validate_ollama_only_build_model("planning_model", "gemma4:CLOUD").is_err());
+
+        assert!(validate_ollama_only_build_model("default_model", "qwen3.5:4b").is_ok());
+    }
 }

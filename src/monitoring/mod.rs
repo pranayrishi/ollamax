@@ -140,23 +140,26 @@ impl VramSentinel {
 
 /// Map free VRAM (in MB) to a sensible Ollama model tag.
 ///
-/// Tiers were chosen against the [Ollama model library][library] for the
-/// Q4_K_M quantization most users actually pull. Numbers err on the side of
-/// "leave headroom for context and KV cache" — running a 7B at exactly its
-/// minimum quoted VRAM will OOM the moment you ask it to read a long file.
+/// Tiers are conservative Q4/static-weight starting points, with headroom for
+/// runtime and KV cache. They intentionally prefer current visual-capable
+/// local models so screen/spatial workflows do not default to a text-only
+/// model. The registry remains the source of fuller capability/license data.
 ///
 /// [library]: https://ollama.com/library
 pub fn suggest_model(free_vram_mb: usize) -> &'static str {
     match free_vram_mb {
-        v if v >= 48_000 => "llama3.3:70b",
-        v if v >= 24_000 => "qwen2.5-coder:32b",
-        v if v >= 16_000 => "qwen2.5-coder:14b",
-        v if v >= 10_000 => "qwen2.5-coder:7b",
-        v if v >= 6_000 => "qwen2.5-coder:3b",
-        v if v >= 3_000 => "qwen2.5-coder:1.5b",
-        // No GPU detected (or tiny): the user is going to suffer either way,
-        // but a 1.5B is at least usable on CPU. Don't lie about 7B being viable.
-        _ => "qwen2.5-coder:1.5b",
+        v if v >= 36_000 => "qwen3.6:35b",
+        v if v >= 22_000 => "gemma4:31b",
+        v if v >= 18_000 => "gemma4:26b",
+        v if v >= 9_000 => "gemma4:12b",
+        v if v >= 6_000 => "gemma4:e4b",
+        v if v >= 5_000 => "qwen3.5:4b",
+        // No dedicated GPU (or a tiny one): agree with ModelRegistry's
+        // unknown-budget recommendation and choose the smallest reviewed
+        // local model. It is text-only; spatial requests deliberately ask for
+        // a separately installed visual model rather than pretending this can
+        // see a screen region.
+        _ => "deepseek-r1:1.5b",
     }
 }
 
@@ -333,7 +336,8 @@ fn generate_recommendations(profile: &HardwareProfile, vram_status: ResourceStat
     if profile.gpu_kind == GpuKind::Cpu {
         out.push(
             "no GPU detected — running on CPU. Expect ~5-15 tok/s on a small \
-             model. Pull `qwen2.5-coder:1.5b` and use `--num_ctx 4096`."
+             model. Pull `deepseek-r1:1.5b` and use `--num_ctx 4096`. Install \
+             a local vision model separately before using screen-region context."
                 .to_string(),
         );
         return out;

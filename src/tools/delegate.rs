@@ -11,14 +11,14 @@
 
 use super::{truncate_for_model, Tool, ToolRegistry, ToolResult};
 use crate::agent::{Agent, AgentConfig};
-use crate::providers::ollama::OllamaProvider;
+use crate::providers::LlmProvider;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub struct DelegateTool {
-    provider: Arc<OllamaProvider>,
+    provider: Arc<dyn LlmProvider>,
     model: String,
     num_ctx: usize,
     max_iterations: usize,
@@ -28,11 +28,15 @@ pub struct DelegateTool {
     /// Optional event sink (the SSE channel) so the child's steps stream to the
     /// UI's dedicated Sub-agents lane instead of being discarded.
     events: Option<tokio::sync::mpsc::UnboundedSender<Value>>,
+    /// A parent handling an explicit screen region must keep that transient
+    /// visual context out of replay records. Propagate that choice to the
+    /// restricted child instead of silently restoring the default here.
+    replay_enabled: bool,
 }
 
 impl DelegateTool {
     pub fn new(
-        provider: Arc<OllamaProvider>,
+        provider: Arc<dyn LlmProvider>,
         model: impl Into<String>,
         num_ctx: usize,
         child_tools: ToolRegistry,
@@ -44,6 +48,7 @@ impl DelegateTool {
             max_iterations: 6,
             child_tools,
             events: None,
+            replay_enabled: true,
         }
     }
 
@@ -51,6 +56,14 @@ impl DelegateTool {
     /// `subagent_end`) to this sink so the UI can render a Sub-agents lane.
     pub fn with_events(mut self, tx: tokio::sync::mpsc::UnboundedSender<Value>) -> Self {
         self.events = Some(tx);
+        self
+    }
+
+    /// Keep child replay behavior aligned with its parent run. This is mainly
+    /// used for explicit screen-region context, whose content is intentionally
+    /// transient even when a parent delegates a read-only sub-task.
+    pub fn with_replay_enabled(mut self, replay_enabled: bool) -> Self {
+        self.replay_enabled = replay_enabled;
         self
     }
 }
@@ -67,9 +80,17 @@ impl Tool for DelegateTool {
         json!({"type":"object","properties":{"task":{"type":"string"}},"required":["task"]})
     }
     async fn invoke(&self, args: Value) -> Result<ToolResult> {
-        let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let task = args
+            .get("task")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
         if task.is_empty() {
-            return Ok(ToolResult { tool: "delegate".into(), ok: false, content: "task is empty".into() });
+            return Ok(ToolResult {
+                tool: "delegate".into(),
+                ok: false,
+                content: "task is empty".into(),
+            });
         }
         let mut child = Agent::new(
             self.provider.clone(),
@@ -82,6 +103,7 @@ impl Tool for DelegateTool {
                 system_suffix:
                     "You are a focused sub-agent. Complete ONLY the given task and report the result concisely. Do not ask follow-up questions."
                         .to_string(),
+                replay_enabled: self.replay_enabled,
             },
         );
         // Stream the child's lifecycle to the Sub-agents lane (only its final
@@ -94,8 +116,12 @@ impl Tool for DelegateTool {
         let result = child
             .run(task, move |step| {
                 if let Some(ev) = &events {
-                    let preview: String =
-                        step.result_preview.replace('\n', " ").chars().take(200).collect();
+                    let preview: String = step
+                        .result_preview
+                        .replace('\n', " ")
+                        .chars()
+                        .take(200)
+                        .collect();
                     let _ = ev.send(json!({
                         "type": "subagent_step",
                         "iteration": step.iteration,
@@ -128,13 +154,19 @@ impl Tool for DelegateTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::OllamaProvider;
 
     #[test]
     fn delegate_tool_shape() {
         // Construction is network-free; invoke would need a live model, so we
         // only assert the tool's contract here.
         let provider = Arc::new(OllamaProvider::new("http://localhost:11434"));
-        let t = DelegateTool::new(provider, "qwen2.5-coder:7b", 8192, ToolRegistry::with_defaults());
+        let t = DelegateTool::new(
+            provider,
+            "qwen2.5-coder:7b",
+            8192,
+            ToolRegistry::with_defaults(),
+        );
         assert_eq!(t.name(), "delegate");
         assert!(t.description().contains("sub-agent"));
         assert_eq!(t.args_schema()["required"][0], "task");

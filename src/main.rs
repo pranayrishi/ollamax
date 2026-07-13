@@ -9,13 +9,19 @@ use ollama_forge::evals::{
     ScoreReport,
 };
 use ollama_forge::executor::ProgressEvent;
+use ollama_forge::models::is_offline_ollama_tag;
 use ollama_forge::orchestrator::{BuildRequest, Orchestrator, OrchestratorConfig};
 use ollama_forge::plugins::{render_context_suffix, PluginManager, MAX_RELEVANT_PLUGINS};
-use ollama_forge::providers::{GenerateOptions, LlmProvider, OllamaProvider};
+use ollama_forge::providers::{
+    parse_local_model_selector, ConfiguredLocalModelMetadata, GenerateOptions, LlmProvider,
+    LocalEndpointRegistry, OllamaProvider,
+};
 use ollama_forge::replay::{quick_hash, read_log};
 use ollama_forge::rules::RuleSet;
 use ollama_forge::security::{SecurityGuard, Severity};
-use ollama_forge::team::{TeamConfig, TeamCoordinator, TeamEvent, TeamMode, TeamStatus};
+use ollama_forge::team::{
+    TeamConfig, TeamCoordinator, TeamEvent, TeamMode, TeamProviders, TeamStatus,
+};
 use ollama_forge::tools::{
     files::{FsEditTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, WorkspaceFs},
     shell::{ShellPolicy, ShellTool},
@@ -194,7 +200,9 @@ async fn async_main() -> Result<()> {
         }
 
         Commands::Chat { model, prompt } => {
-            let ollama = OllamaProvider::new(&config.ollama_url);
+            let ollama = Arc::new(OllamaProvider::new(&config.ollama_url));
+            let local_endpoints = LocalEndpointRegistry::from_config(&config)?;
+            let target = select_cli_model(&config, &local_endpoints, &ollama, model).await?;
             // If FORGE_REPLAY_LOG is set we want deterministic output —
             // otherwise the chat is unrepeatable and the log is meaningless.
             // Default to seed=0 + temp=0 in that mode.
@@ -205,7 +213,7 @@ async fn async_main() -> Result<()> {
                 Some(rules_suffix.clone())
             };
             let opts = GenerateOptions {
-                model: model.unwrap_or_else(|| config.default_model.clone()),
+                model: target.model.clone(),
                 prompt: prompt.unwrap_or_default(),
                 system,
                 stream: true,
@@ -213,25 +221,48 @@ async fn async_main() -> Result<()> {
                 seed: if replay_mode { Some(0) } else { None },
                 ..Default::default()
             };
-            // Real streaming: print each token as it arrives. Previously we
-            // claimed `stream: true` but `generate()` buffered the whole
-            // response, giving the user a 20s wait for a wall of text.
-            use std::io::Write;
-            let mut stdout = std::io::stdout().lock();
-            let mut full = String::new();
-            let bytes = ollama
-                .generate_streaming(opts.clone(), |chunk| {
-                    let _ = stdout.write_all(chunk.as_bytes());
-                    let _ = stdout.flush();
-                    full.push_str(chunk);
-                })
-                .await?;
-            let _ = writeln!(stdout);
-            if bytes == 0 {
-                eprintln!("forge: model returned no tokens");
+            if let Some(local) = &target.local {
+                print_configured_local_target("chat", local);
+                eprintln!(
+                    "   note: configured OpenAI-compatible endpoints use a bounded buffered completion in the CLI."
+                );
+                let buffered_opts = GenerateOptions {
+                    stream: false,
+                    ..opts.clone()
+                };
+                let response = target
+                    .provider
+                    .generate(buffered_opts.clone())
+                    .await
+                    .map_err(|error| {
+                        anyhow::anyhow!("forge chat via `{}`: {error:#}", target.model)
+                    })?;
+                println!("{}", response.content);
+                if response.content.trim().is_empty() {
+                    eprintln!("forge: model returned no tokens");
+                }
+                maybe_log_replay(&buffered_opts, &response.content, target.provider.as_ref()).await;
+            } else {
+                // Real streaming: print each token as it arrives. Previously we
+                // claimed `stream: true` but `generate()` buffered the whole
+                // response, giving the user a 20s wait for a wall of text.
+                use std::io::Write;
+                let mut stdout = std::io::stdout().lock();
+                let mut full = String::new();
+                let bytes = ollama
+                    .generate_streaming(opts.clone(), |chunk| {
+                        let _ = stdout.write_all(chunk.as_bytes());
+                        let _ = stdout.flush();
+                        full.push_str(chunk);
+                    })
+                    .await?;
+                let _ = writeln!(stdout);
+                if bytes == 0 {
+                    eprintln!("forge: model returned no tokens");
+                }
+                // Append to replay log if FORGE_REPLAY_LOG is set.
+                maybe_log_replay(&opts, &full, ollama.as_ref()).await;
             }
-            // Append to replay log if FORGE_REPLAY_LOG is set.
-            maybe_log_replay(&opts, &full, &config.ollama_url).await;
         }
 
         Commands::Agent {
@@ -360,10 +391,13 @@ async fn async_main() -> Result<()> {
                 println!("\n📦 Pulled models");
                 match ollama.list_models().await {
                     Ok(model_list) if model_list.is_empty() => {
-                        println!("   (none — try `ollama pull qwen2.5-coder:7b`)");
+                        println!("   (none — try `ollama pull qwen3.5:4b`)");
                     }
                     Ok(model_list) => {
                         for model in model_list {
+                            if !is_offline_ollama_tag(&model.name) {
+                                continue;
+                            }
                             println!("   - {} ({})", model.name, model.size_human);
                         }
                     }
@@ -385,7 +419,12 @@ async fn async_main() -> Result<()> {
             let installed: Vec<String> = ollama
                 .list_models()
                 .await
-                .map(|ms| ms.into_iter().map(|m| m.name).collect())
+                .map(|ms| {
+                    ms.into_iter()
+                        .filter(|model| is_offline_ollama_tag(&model.name))
+                        .map(|model| model.name)
+                        .collect()
+                })
                 .unwrap_or_default();
 
             let mut reg = ModelRegistry::seed();
@@ -408,8 +447,9 @@ async fn async_main() -> Result<()> {
                 println!("🎯 Recommended for your machine: {r}\n   pull it:  ollama pull {r}");
             }
             println!(
-                "\nFree, open-weight models — run locally via Ollama. Cloud models (GPT/Claude/\n\
-                 Gemini) are paid, bring-your-own-key, and intentionally not listed here.\n"
+                "\nReviewed local-model catalog. Ollama-local entries can be pulled here;\n\
+                 self-hosted entries require a separately managed local endpoint; cloud-only\n\
+                 entries are shown only to prevent them being mistaken for offline models.\n"
             );
 
             for tier in [
@@ -418,7 +458,7 @@ async fn async_main() -> Result<()> {
                 HardwareTier::HighEnd,
             ] {
                 println!("── {} ──", tier.label());
-                for m in reg.all().iter().filter(|m| m.tier == tier) {
+                for m in reg.catalog().filter(|m| m.tier == tier) {
                     let does_fit = fits.contains(&m.ollama_tag);
                     if fits_only && !does_fit {
                         continue;
@@ -435,16 +475,24 @@ async fn async_main() -> Result<()> {
                     if !m.license.commercial_friendly() {
                         flags.push(format!("⚠ {}", m.license.spdx()));
                     }
-                    if verify {
+                    if !m.can_pull_from_ollama() {
+                        flags.push(m.local_availability.label().to_string());
+                    }
+                    if verify && m.can_pull_from_ollama() {
                         match verify_in_library(&m.ollama_tag).await {
                             Some(false) => flags.push("✗ not in library".to_string()),
                             None => flags.push("? unverified".to_string()),
                             Some(true) => {}
                         }
                     }
+                    let identity = if m.ollama_tag.is_empty() {
+                        m.source_ref.as_str()
+                    } else {
+                        m.ollama_tag.as_str()
+                    };
                     println!(
                         "  {:30} {:11} {:10}  [{}]",
-                        m.ollama_tag,
+                        identity,
                         m.params,
                         m.license.spdx(),
                         flags.join(", ")
@@ -452,7 +500,7 @@ async fn async_main() -> Result<()> {
                 }
                 println!();
             }
-            println!("Pull a tag, then select it in the chat panel or pass `--model <tag>`.");
+            println!("Pull an Ollama-local tag, then select it in the chat panel or pass `--model <tag>`. Review each entry's caveat before a self-hosted deployment.");
         }
 
         Commands::Optimize {
@@ -837,7 +885,10 @@ async fn async_main() -> Result<()> {
 
             let ollama = OllamaProvider::new(&config.ollama_url);
             let chosen_model = match model {
-                Some(m) => m,
+                Some(m) => {
+                    reject_non_ollama_catalog_model(&m)?;
+                    m
+                }
                 None => pick_installed_model(&config, &ollama).await?,
             };
             let mut system_prompt = skill.prompts.system.clone();
@@ -925,21 +976,24 @@ async fn async_main() -> Result<()> {
             }
             let question = question.join(" ");
 
-            let ollama = std::sync::Arc::new(OllamaProvider::new(&config.ollama_url));
-            let chosen_model = match model {
-                Some(m) => m,
-                None => pick_installed_model(&config, &ollama).await?,
-            };
+            let ollama = Arc::new(OllamaProvider::new(&config.ollama_url));
+            let local_endpoints = LocalEndpointRegistry::from_config(&config)?;
+            let target = select_cli_model(&config, &local_endpoints, &ollama, model).await?;
+            let chosen_model = target.model.clone();
 
             let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
             let hw = sentinel.detect_hardware().await;
+            let num_ctx = effective_context_limit(hw.optimal_context, [&target]);
 
             let registry = ToolRegistry::with_defaults();
             eprintln!(
                 "🔬 research: `{question}`\n   model: `{chosen_model}`  num_ctx: {}  tools: {}",
-                hw.optimal_context,
+                num_ctx,
                 registry.len()
             );
+            if let Some(local) = &target.local {
+                print_configured_local_target("research", local);
+            }
             // Honest egress note: inference is local, but the web tools send
             // queries + fetched page text off the machine (mirrors the server
             // disclosure for the chat tools toggle).
@@ -950,14 +1004,15 @@ async fn async_main() -> Result<()> {
             eprintln!();
 
             let mut agent = Agent::new(
-                ollama,
+                target.provider,
                 registry,
                 AgentConfig {
                     model: chosen_model,
-                    num_ctx: hw.optimal_context,
+                    num_ctx,
                     keep_alive: "1h".to_string(),
                     max_iterations,
                     system_suffix: rules_suffix.clone(),
+                    replay_enabled: true,
                 },
             );
 
@@ -1029,7 +1084,13 @@ async fn async_main() -> Result<()> {
             let hw = sentinel.detect_hardware().await;
             let num_ctx = hw.optimal_context;
             let ollama_for_pick = OllamaProvider::new(&config.ollama_url);
-            let installed = ollama_for_pick.list_models().await.unwrap_or_default();
+            let installed: Vec<_> = ollama_for_pick
+                .list_models()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|model| is_offline_ollama_tag(&model.name))
+                .collect();
             let preferred = skill
                 .settings
                 .model
@@ -1285,6 +1346,7 @@ async fn async_main() -> Result<()> {
         Commands::Preload { model, keep_alive } => {
             let ollama = OllamaProvider::new(&config.ollama_url);
             let model = model.unwrap_or_else(|| config.default_model.clone());
+            reject_non_ollama_catalog_model(&model)?;
 
             // Spawn a spinner so a 14B cold-load doesn't look like a hang.
             // The spinner runs on a background tokio task and is cancelled
@@ -1442,7 +1504,7 @@ async fn async_main() -> Result<()> {
 
         Commands::Parallel { .. } => {
             anyhow::bail!(
-                "`forge parallel` is not implemented in v0.2.0. \
+                "`forge parallel` is not implemented in v0.2.1. \
                  Use `forge build` for parallel orchestration."
             );
         }
@@ -1662,6 +1724,227 @@ fn print_evaluation_comparison(
     );
 }
 
+/// One CLI model selection. A configured endpoint stays explicitly local: the
+/// public `local:<endpoint>/<model>` selector is kept in prompts, plans, and
+/// replay records while the registry rewrites it to the endpoint's declared
+/// served model only at the provider boundary.
+#[derive(Clone)]
+struct CliModelTarget {
+    model: String,
+    provider: Arc<dyn LlmProvider>,
+    local: Option<ConfiguredLocalModelMetadata>,
+}
+
+/// Treat an absent, blank, or `auto` CLI flag as an automatic choice. Keep
+/// every other string intact so the strict local-selector parser can reject
+/// misleading whitespace rather than silently changing a user selection.
+fn explicit_cli_model(requested: Option<String>) -> Option<String> {
+    requested.filter(|model| !model.trim().is_empty() && !model.eq_ignore_ascii_case("auto"))
+}
+
+/// Resolve one explicit model name. Ordinary model names continue through
+/// Ollama unchanged; only the reserved `local:` namespace may use a separately
+/// configured loopback endpoint.
+fn resolve_named_cli_model(
+    local_endpoints: &LocalEndpointRegistry,
+    ollama: &Arc<OllamaProvider>,
+    model: String,
+) -> Result<CliModelTarget> {
+    if let Some(configured) = local_endpoints.try_resolve(&model)? {
+        let local = configured.metadata();
+        return Ok(CliModelTarget {
+            model: local.selector.clone(),
+            provider: configured.provider,
+            local: Some(local),
+        });
+    }
+    reject_non_ollama_catalog_model(&model)?;
+    let provider: Arc<dyn LlmProvider> = ollama.clone();
+    Ok(CliModelTarget {
+        model,
+        provider,
+        local: None,
+    })
+}
+
+/// Catalog entries that need a separate server—or are cloud-only—must never
+/// become ordinary Ollama requests by accident. Self-hosted models enter
+/// through the separate `local:` namespace, and cloud-only entries are
+/// rejected before any provider is called.
+fn reject_non_ollama_catalog_model(model: &str) -> Result<()> {
+    use ollama_forge::models::{is_ollama_cloud_tag, LocalAvailability, ModelRegistry};
+
+    let registry = ModelRegistry::seed();
+    // This guard is deliberately more forgiving than the `local:` parser:
+    // a malformed local selector must fail strictly, while a cloud/server
+    // catalog tag with incidental surrounding whitespace still must not slip
+    // through to Ollama.
+    let lookup = model.trim();
+    if parse_local_model_selector(lookup)?.is_some() {
+        anyhow::bail!(
+            "`{model}` is a configured local endpoint selector, not an Ollama tag. This workflow only supports pulled local Ollama artifacts; use `forge agent`, `forge team`, or the desktop Agent/Team workflow for configured endpoint routing."
+        );
+    }
+    if is_ollama_cloud_tag(lookup) {
+        anyhow::bail!(
+            "`{model}` is a cloud-tagged model and cannot be used as an offline Ollama model. Configure a separately operated loopback endpoint and select a `local:<endpoint>/<model>` selector only for a model you actually self-host."
+        );
+    }
+    let exact = |candidate: &ollama_forge::models::CuratedModel| {
+        candidate.ollama_tag.eq_ignore_ascii_case(lookup)
+            || candidate.source_ref.eq_ignore_ascii_case(lookup)
+            || candidate
+                .installed_aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(lookup))
+    };
+    let compact_model = compact_catalog_identifier(lookup);
+    let candidate = registry
+        .catalog()
+        .find(|candidate| {
+            candidate.local_availability != LocalAvailability::OllamaLocal && exact(candidate)
+        })
+        .or_else(|| {
+            registry.catalog().find(|candidate| {
+                candidate.local_availability != LocalAvailability::OllamaLocal
+                    && compact_catalog_identifier(&candidate.family) == compact_model
+            })
+        });
+
+    if let Some(candidate) = candidate {
+        match candidate.local_availability {
+            LocalAvailability::CloudOnly => anyhow::bail!(
+                "`{model}` is cataloged as cloud-only and cannot be used as an offline Ollama model. {}",
+                candidate.caveat
+            ),
+            LocalAvailability::SelfHostedLocal => anyhow::bail!(
+                "`{model}` is a separately self-hosted catalog model, not an Ollama tag. Configure a loopback endpoint and select it as `local:<endpoint>/<model>`. {}",
+                candidate.caveat
+            ),
+            LocalAvailability::OllamaLocal => {}
+        }
+    }
+    Ok(())
+}
+
+/// Compare a human-facing model family name with common direct spellings such
+/// as `DeepSeek-V4-Flash`, without treating punctuation/case as a separate
+/// runtime. This only runs after exact catalog identity checks and only for
+/// entries that are explicitly not Ollama-local.
+fn compact_catalog_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Select a model for a user-facing CLI workflow. `local:` selections are
+/// opt-in: they must name a configured endpoint. Auto selection deliberately
+/// remains Ollama-only unless the configured default itself is an explicit
+/// configured-local selector.
+async fn select_cli_model(
+    config: &Config,
+    local_endpoints: &LocalEndpointRegistry,
+    ollama: &Arc<OllamaProvider>,
+    requested: Option<String>,
+) -> Result<CliModelTarget> {
+    let model = if let Some(model) = explicit_cli_model(requested) {
+        model
+    } else if parse_local_model_selector(&config.default_model)?.is_some() {
+        config.default_model.clone()
+    } else {
+        pick_installed_model(config, ollama).await?
+    };
+    resolve_named_cli_model(local_endpoints, ollama, model)
+}
+
+/// Honor an endpoint operator's declared context ceiling while retaining the
+/// machine-derived local budget. This is a conservative request bound, not a
+/// claim that a self-hosted model fits the current GPU.
+fn effective_context_limit<'a>(
+    hardware_limit: usize,
+    targets: impl IntoIterator<Item = &'a CliModelTarget>,
+) -> usize {
+    targets
+        .into_iter()
+        .filter_map(|target| {
+            target
+                .local
+                .as_ref()
+                .and_then(|local| local.context_window_tokens)
+                .filter(|limit| *limit > 0)
+        })
+        .fold(hardware_limit.max(1), usize::min)
+}
+
+/// Make the local-only boundary visible whenever a command uses a configured
+/// endpoint. No secret or bearer-token environment variable is rendered.
+fn print_configured_local_target(role: &str, local: &ConfiguredLocalModelMetadata) {
+    let label = local.label.as_deref().unwrap_or(&local.served_model);
+    eprintln!(
+        "   {role}: `{}` → configured loopback endpoint `{}` (served as `{label}`, request cap {})",
+        local.selector, local.endpoint_url, local.max_parallel_requests,
+    );
+}
+
+/// The old scout heuristic validates installed Ollama models. If a writer is
+/// configured-local, avoid a surprise fallback to Ollama: reuse that bounded
+/// local provider unless the user explicitly selects a scout model.
+async fn pick_team_scout_target(
+    config: &Config,
+    local_endpoints: &LocalEndpointRegistry,
+    ollama: &Arc<OllamaProvider>,
+    writer: &CliModelTarget,
+    requested: Option<String>,
+) -> Result<CliModelTarget> {
+    if let Some(model) = explicit_cli_model(requested) {
+        return resolve_named_cli_model(local_endpoints, ollama, model);
+    }
+    if writer.local.is_some() {
+        return Ok(writer.clone());
+    }
+    let model = pick_team_scout_model(config, ollama, &writer.model, None).await?;
+    resolve_named_cli_model(local_endpoints, ollama, model)
+}
+
+/// Prefer an explicitly selected/configured local planning model when one is
+/// declared. For a configured-local writer, the safe fallback is that same
+/// provider—not an implicit Ollama call—so endpoint-only setups remain usable.
+async fn pick_team_planner_target(
+    config: &Config,
+    local_endpoints: &LocalEndpointRegistry,
+    ollama: &Arc<OllamaProvider>,
+    writer: &CliModelTarget,
+    requested: Option<String>,
+) -> Result<CliModelTarget> {
+    if let Some(model) = explicit_cli_model(requested) {
+        return resolve_named_cli_model(local_endpoints, ollama, model);
+    }
+    if parse_local_model_selector(&config.planning_model)?.is_some() {
+        return resolve_named_cli_model(local_endpoints, ollama, config.planning_model.clone());
+    }
+    if writer.local.is_some() {
+        return Ok(writer.clone());
+    }
+    let model = pick_team_planner_model(config, ollama, &writer.model, None).await?;
+    resolve_named_cli_model(local_endpoints, ollama, model)
+}
+
+/// The reviewer defaults to the writer model. A different reviewer can be an
+/// explicitly configured local selector or an ordinary Ollama model.
+fn pick_team_reviewer_target(
+    local_endpoints: &LocalEndpointRegistry,
+    ollama: &Arc<OllamaProvider>,
+    writer: &CliModelTarget,
+    requested: Option<String>,
+) -> Result<CliModelTarget> {
+    match explicit_cli_model(requested) {
+        Some(model) => resolve_named_cli_model(local_endpoints, ollama, model),
+        None => Ok(writer.clone()),
+    }
+}
+
 /// `forge agent "..."` — a workspace-aware local coding loop for terminal
 /// users. Unlike `forge chat`, this path gives the model concrete filesystem
 /// discovery and edit tools rooted at the current directory. It intentionally
@@ -1677,14 +1960,13 @@ async fn run_workspace_agent(
     let workspace = std::env::current_dir()?
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("resolve current workspace: {e}"))?;
-    let provider = Arc::new(OllamaProvider::new(&config.ollama_url));
-    let model =
-        match requested_model.filter(|m| !m.trim().is_empty() && !m.eq_ignore_ascii_case("auto")) {
-            Some(model) => model,
-            None => pick_installed_model(config, &provider).await?,
-        };
+    let ollama = Arc::new(OllamaProvider::new(&config.ollama_url));
+    let local_endpoints = LocalEndpointRegistry::from_config(config)?;
+    let target = select_cli_model(config, &local_endpoints, &ollama, requested_model).await?;
+    let model = target.model.clone();
     let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
     let hardware = sentinel.detect_hardware().await;
+    let num_ctx = effective_context_limit(hardware.optimal_context, [&target]);
 
     let plugin_suffix = match installed_plugin_context_suffix(&task) {
         Ok((suffix, ids)) => {
@@ -1727,19 +2009,23 @@ async fn run_workspace_agent(
     eprintln!(
         "⚒  forge agent\n   workspace: {}\n   model: `{model}` · num_ctx: {} · autonomy: {:?}\n",
         workspace.display(),
-        hardware.optimal_context,
+        num_ctx,
         autonomy,
     );
+    if let Some(local) = &target.local {
+        print_configured_local_target("agent", local);
+    }
     let approval: Arc<dyn ApprovalPolicy> = Arc::new(CliApprovalPolicy { mode: autonomy });
     let mut agent = Agent::new(
-        provider,
+        target.provider,
         registry,
         AgentConfig {
             model,
-            num_ctx: hardware.optimal_context,
+            num_ctx,
             keep_alive: "1h".to_string(),
             max_iterations: max_iterations.max(1),
             system_suffix,
+            replay_enabled: true,
         },
     )
     .with_approval(approval)
@@ -1815,19 +2101,36 @@ async fn run_workspace_team(
     let workspace = std::env::current_dir()?
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("resolve current workspace: {e}"))?;
-    let provider = Arc::new(OllamaProvider::new(&config.ollama_url));
-    let model = match requested_model
-        .filter(|candidate| !candidate.trim().is_empty() && !candidate.eq_ignore_ascii_case("auto"))
-    {
-        Some(model) => model,
-        None => pick_installed_model(config, &provider).await?,
-    };
-    let scout_model =
-        pick_team_scout_model(config, &provider, &model, requested_scout_model).await?;
-    let planner_model =
-        pick_team_planner_model(config, &provider, &model, requested_planner_model).await?;
+    let ollama = Arc::new(OllamaProvider::new(&config.ollama_url));
+    let local_endpoints = LocalEndpointRegistry::from_config(config)?;
+    let writer = select_cli_model(config, &local_endpoints, &ollama, requested_model).await?;
+    let scout = pick_team_scout_target(
+        config,
+        &local_endpoints,
+        &ollama,
+        &writer,
+        requested_scout_model,
+    )
+    .await?;
+    let planner = pick_team_planner_target(
+        config,
+        &local_endpoints,
+        &ollama,
+        &writer,
+        requested_planner_model,
+    )
+    .await?;
+    let reviewer = pick_team_reviewer_target(&local_endpoints, &ollama, &writer, reviewer_model)?;
+    let model = writer.model.clone();
+    let scout_model = scout.model.clone();
+    let planner_model = planner.model.clone();
+    let reviewer_model = reviewer.model.clone();
     let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
     let hardware = sentinel.detect_hardware().await;
+    let num_ctx = effective_context_limit(
+        hardware.optimal_context,
+        [&writer, &scout, &planner, &reviewer],
+    );
     let plugin_suffix = match installed_plugin_context_suffix(&task) {
         Ok((suffix, ids)) => {
             if !ids.is_empty() {
@@ -1846,29 +2149,45 @@ async fn run_workspace_team(
     let system_suffix = format!(
         "{rules_suffix}\n\n## Local team contract\nThis team has read-only scouts, one controlled writer, fixed repository-detected verification commands, and an advisory reviewer. Do not claim a task is verified unless the verifier reports a pass."
     ) + &plugin_suffix;
-    let coordinator = TeamCoordinator::new(
-        provider,
+    let coordinator = TeamCoordinator::new_with_providers(
+        TeamProviders::new(
+            scout.provider.clone(),
+            planner.provider.clone(),
+            writer.provider.clone(),
+            reviewer.provider.clone(),
+        ),
         &workspace,
         TeamConfig {
             model: model.clone(),
             scout_model: Some(scout_model.clone()),
             planner_model: Some(planner_model.clone()),
-            reviewer_model,
-            num_ctx: hardware.optimal_context,
+            reviewer_model: Some(reviewer_model.clone()),
+            num_ctx,
             keep_alive: "1h".to_string(),
             max_iterations: bounded_iterations,
             max_repair_rounds: bounded_repairs,
             mode,
             system_suffix,
+            replay_enabled: true,
         },
     )?;
     eprintln!(
         "⚒  forge team\n   workspace: {}\n   writer: `{model}` · scouts: `{scout_model}` · planner: `{planner_model}` · num_ctx: {} · mode: {:?} · autonomy: {:?}\n",
         workspace.display(),
-        hardware.optimal_context,
+        num_ctx,
         mode,
         autonomy,
     );
+    for (role, target) in [
+        ("team writer", &writer),
+        ("team scouts", &scout),
+        ("team planner", &planner),
+        ("team reviewer", &reviewer),
+    ] {
+        if let Some(local) = &target.local {
+            print_configured_local_target(role, local);
+        }
+    }
     if mode == TeamMode::ParallelScouts {
         eprintln!(
             "   note: only read-only scouts run concurrently; the writer remains single-lane."
@@ -1991,21 +2310,20 @@ async fn spinner_task(label: String, mut cancel: tokio::sync::oneshot::Receiver<
     let _ = stderr.flush();
 }
 
-/// If `FORGE_REPLAY_LOG` is set, append a record for this Ollama call to it.
-/// Best-effort: failures here only log a warning, never break the user's
-/// command. The log is opt-in because not every user wants their prompts
+/// If `FORGE_REPLAY_LOG` is set, append a record for this local-provider call
+/// to it. Best-effort: failures here only log a warning, never break the
+/// user's command. The log is opt-in because not every user wants prompts
 /// persisted to disk.
-async fn maybe_log_replay(opts: &GenerateOptions, response: &str, ollama_url: &str) {
+async fn maybe_log_replay(opts: &GenerateOptions, response: &str, provider: &dyn LlmProvider) {
     let Ok(path) = std::env::var("FORGE_REPLAY_LOG") else {
         return;
     };
-    // Look up the model digest via /api/show. Best-effort: empty string in
-    // the log just means we couldn't reach Ollama mid-write. Without the
-    // digest, replay can't tell if the user pulled a different version of
-    // the same tag — so this lookup is critical to the audit-trail pitch.
-    let provider_for_digest = OllamaProvider::new(ollama_url);
-    let digest = provider_for_digest
-        .model_digest(&opts.model)
+    // Best effort: Ollama supplies a manifest digest, while a separately
+    // operated OpenAI-compatible server may not expose a stable artifact ID.
+    // An empty value remains an honest "not available" marker rather than a
+    // fabricated hash for a remote model server.
+    let digest = provider
+        .model_fingerprint(&opts.model)
         .await
         .unwrap_or_default();
     let log = ollama_forge::replay::ReplayLog::new(std::path::PathBuf::from(path));
@@ -2052,8 +2370,9 @@ version = "1.0"
 
 [ollama]
 url = "http://127.0.0.1:11434"
-default_model = "qwen2.5-coder:7b"
-planning_model = "qwen2.5-coder:7b"
+default_model = "qwen3.5:4b"
+planning_model = "deepseek-r1:8b"
+execution_models = ["qwen3.5:4b", "deepseek-r1:8b", "qwen3.5:9b", "gemma4:12b"]
 
 [execution]
 parallel_workers = 4
@@ -2098,10 +2417,14 @@ async fn init_project(force: bool) -> Result<()> {
 /// if it's installed; otherwise falls back to the largest installed model;
 /// otherwise errors.
 async fn pick_installed_model(config: &Config, ollama: &OllamaProvider) -> Result<String> {
-    let installed = ollama
+    reject_non_ollama_catalog_model(&config.default_model)?;
+    let installed: Vec<_> = ollama
         .list_models()
         .await
-        .map_err(|e| anyhow::anyhow!("could not list ollama models: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("could not list ollama models: {e}"))?
+        .into_iter()
+        .filter(|model| is_offline_ollama_tag(&model.name))
+        .collect();
     if installed.iter().any(|m| m.name == config.default_model) {
         return Ok(config.default_model.clone());
     }
@@ -2130,8 +2453,11 @@ async fn pick_team_scout_model(
     requested: Option<String>,
 ) -> Result<String> {
     let requested = requested.filter(|model| !model.trim().is_empty());
-    let installed = match ollama.list_models().await {
-        Ok(models) => models,
+    let installed: Vec<_> = match ollama.list_models().await {
+        Ok(models) => models
+            .into_iter()
+            .filter(|model| is_offline_ollama_tag(&model.name))
+            .collect(),
         Err(error) if requested.is_none() => {
             eprintln!(
                 "   ⚠️  could not inspect installed models for a scout role; using writer model `{writer_model}`: {error:#}"
@@ -2190,7 +2516,14 @@ async fn pick_team_planner_model(
         return Ok(writer_model.to_string());
     };
     match ollama.list_models().await {
-        Ok(installed) if installed.iter().any(|model| model.name == candidate) => Ok(candidate),
+        Ok(installed)
+            if installed
+                .iter()
+                .filter(|model| is_offline_ollama_tag(&model.name))
+                .any(|model| model.name == candidate) =>
+        {
+            Ok(candidate)
+        }
         Ok(_) if requested.is_some() => anyhow::bail!(
             "requested planner model `{candidate}` is not installed. Run `ollama list` or omit --planner-model."
         ),
@@ -2442,4 +2775,134 @@ async fn run_test_gen(
     let _ = writeln!(stdout);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod cli_local_endpoint_tests {
+    use super::{
+        effective_context_limit, pick_team_planner_target, resolve_named_cli_model,
+        select_cli_model,
+    };
+    use ollama_forge::providers::{LocalEndpointRegistry, OllamaProvider};
+    use ollama_forge::{Config, LocalEndpointConfig, LocalEndpointModelConfig};
+    use std::sync::Arc;
+
+    fn endpoint_config() -> LocalEndpointConfig {
+        LocalEndpointConfig {
+            id: "lab".to_string(),
+            url: "http://localhost:8010".to_string(),
+            api_key_env: None,
+            max_parallel_requests: 2,
+            models: vec![
+                LocalEndpointModelConfig {
+                    id: "writer".to_string(),
+                    served_model: "MiniMax-M3".to_string(),
+                    label: Some("Local writer".to_string()),
+                    vision: false,
+                    thinking: true,
+                    context_window_tokens: Some(32_768),
+                },
+                LocalEndpointModelConfig {
+                    id: "planner".to_string(),
+                    served_model: "DeepSeek-V4-Flash".to_string(),
+                    label: None,
+                    vision: false,
+                    thinking: true,
+                    context_window_tokens: Some(8_192),
+                },
+            ],
+        }
+    }
+
+    fn configured() -> (Config, LocalEndpointRegistry, Arc<OllamaProvider>) {
+        let config = Config {
+            local_endpoints: vec![endpoint_config()],
+            ..Config::default()
+        };
+        let registry = LocalEndpointRegistry::from_config(&config).unwrap();
+        let ollama = Arc::new(OllamaProvider::new(&config.ollama_url));
+        (config, registry, ollama)
+    }
+
+    #[test]
+    fn explicit_selector_is_resolved_without_contacting_ollama() {
+        let (_config, registry, ollama) = configured();
+        let target =
+            resolve_named_cli_model(&registry, &ollama, "local:lab/writer".to_string()).unwrap();
+
+        let local = target.local.as_ref().expect("configured local metadata");
+        assert_eq!(target.model, "local:lab/writer");
+        assert_eq!(local.served_model, "MiniMax-M3");
+        assert_eq!(local.endpoint_url, "http://127.0.0.1:8010/v1");
+        assert_eq!(target.provider.name(), "openai-compatible-local:lab");
+    }
+
+    #[tokio::test]
+    async fn configured_default_and_planner_keep_endpoint_only_team_local() {
+        let (mut config, registry, ollama) = configured();
+        config.default_model = "local:lab/writer".to_string();
+        config.planning_model = "local:lab/planner".to_string();
+
+        let writer = select_cli_model(&config, &registry, &ollama, None)
+            .await
+            .unwrap();
+        let planner = pick_team_planner_target(&config, &registry, &ollama, &writer, None)
+            .await
+            .unwrap();
+
+        assert_eq!(writer.model, "local:lab/writer");
+        assert_eq!(planner.model, "local:lab/planner");
+        assert_eq!(writer.provider.name(), "openai-compatible-local:lab");
+        assert_eq!(planner.provider.name(), "openai-compatible-local:lab");
+        assert_eq!(effective_context_limit(16_384, [&writer, &planner]), 8_192,);
+    }
+
+    #[test]
+    fn unknown_local_selector_fails_closed_instead_of_falling_back_to_ollama() {
+        let (_config, registry, ollama) = configured();
+        let error = match resolve_named_cli_model(
+            &registry,
+            &ollama,
+            "local:lab/not-configured".to_string(),
+        ) {
+            Ok(_) => panic!("unknown local selector must not fall back to Ollama"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("was not found"));
+    }
+
+    #[test]
+    fn cloud_only_catalog_tag_is_rejected_before_any_ollama_request() {
+        let (_config, registry, ollama) = configured();
+        for selector in [
+            "minimax-m3:cloud",
+            "  MINIMAX-M3:CLOUD  ",
+            "  QWEN3.5:CLOUD  ",
+            "gemma4:31b-cloud",
+        ] {
+            let error = match resolve_named_cli_model(&registry, &ollama, selector.to_string()) {
+                Ok(_) => panic!("cloud-only catalog model must not be routed to Ollama"),
+                Err(error) => error,
+            };
+            let rendered = format!("{error:#}");
+            assert!(
+                rendered.contains("cloud-only") || rendered.contains("cloud-tagged"),
+                "error: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn self_hosted_catalog_family_requires_an_explicit_local_selector() {
+        let (_config, registry, ollama) = configured();
+        for selector in ["DeepSeek-V4-Flash", "deepseek-ai/DEEPSEEK-V4-FLASH"] {
+            let error = match resolve_named_cli_model(&registry, &ollama, selector.to_string()) {
+                Ok(_) => panic!("self-hosted catalog model must not be routed to Ollama"),
+                Err(error) => error,
+            };
+            let rendered = format!("{error:#}");
+            assert!(rendered.contains("self-hosted"));
+            assert!(rendered.contains("local:<endpoint>/<model>"));
+        }
+    }
 }

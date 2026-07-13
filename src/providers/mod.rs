@@ -5,9 +5,16 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
+pub mod local_endpoints;
 pub mod ollama;
+pub mod openai_compatible;
 
+pub use local_endpoints::{
+    parse_local_model_selector, ConfiguredLocalModel, ConfiguredLocalModelMetadata,
+    LocalEndpointRegistry, LocalModelSelector, LOCAL_MODEL_SELECTOR_PREFIX,
+};
 pub use ollama::OllamaProvider;
+pub use openai_compatible::{normalize_openai_compatible_endpoint, OpenAiCompatibleProvider};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmResponse {
@@ -104,6 +111,15 @@ pub trait LlmProvider: Send + Sync {
     async fn generate(&self, options: GenerateOptions) -> Result<LlmResponse>;
     async fn chat(&self, options: ChatOptions) -> Result<LlmResponse>;
     async fn list_models(&self) -> Result<Vec<ModelInfo>>;
+    /// Best-effort stable identity for the exact loaded model artifact.
+    ///
+    /// Ollama can expose a manifest digest; most OpenAI-compatible local
+    /// servers cannot. Returning `None` keeps replay useful where a stable
+    /// fingerprint exists without fabricating one for a separately-operated
+    /// runtime. This is object-safe so Agent and Team can hold trait objects.
+    async fn model_fingerprint(&self, _model: &str) -> Option<String> {
+        None
+    }
     /// Best-effort warm-load: tells Ollama to keep this model resident.
     /// Default impl is a no-op so non-Ollama providers don't have to care.
     async fn preload(&self, _model: &str, _keep_alive: &str) -> Result<()> {

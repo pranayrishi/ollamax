@@ -351,9 +351,7 @@ pub enum Commands {
 
     #[command(about = "Warm-load a model into Ollama (avoids cold-start on the next call)")]
     Preload {
-        #[arg(
-            help = "Model name (e.g. qwen2.5-coder:7b). Defaults to your config's `default_model`."
-        )]
+        #[arg(help = "Model name (e.g. qwen3.5:4b). Defaults to your config's `default_model`.")]
         model: Option<String>,
 
         #[arg(

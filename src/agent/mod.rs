@@ -1,10 +1,10 @@
 //! Tool-calling agent loop.
 //!
-//! Wraps an `OllamaProvider` and a `ToolRegistry`. Each iteration:
+//! Wraps a local [`LlmProvider`] and a `ToolRegistry`. Each iteration:
 //!
 //! 1. Builds a chat-style prompt: system prompt + tool catalog + the
 //!    accumulated transcript.
-//! 2. Calls Ollama with `format=<json schema>` so the model is *forced* to
+//! 2. Calls the selected local provider with `format=<json schema>` so the model is *forced* to
 //!    emit one of two shapes:
 //!    - `{"action": "use_tool", "tool": "<name>", "args": { ... }}`
 //!    - `{"action": "answer", "text": "..."}`
@@ -19,7 +19,7 @@
 //! time. Schema-constrained decoding (Ollama's `format` parameter) makes
 //! the loop reliable on small models, which is the entire point.
 
-use crate::providers::{GenerateOptions, LlmProvider, OllamaProvider};
+use crate::providers::{GenerateOptions, LlmProvider};
 use crate::replay::{quick_hash, ReplayLog, ReplayRecord};
 use crate::tools::{ToolRegistry, ToolResult};
 use anyhow::{anyhow, Context, Result};
@@ -38,15 +38,19 @@ pub const DEFAULT_MAX_ITERATIONS: usize = 6;
 pub const DEFAULT_CODING_MAX_ITERATIONS: usize = 12;
 
 pub struct Agent {
-    provider: Arc<OllamaProvider>,
+    provider: Arc<dyn LlmProvider>,
     tools: ToolRegistry,
     model: String,
     num_ctx: usize,
     keep_alive: String,
     max_iterations: usize,
     system_suffix: String,
-    /// Cached `/api/show` digest for `model`. Populated once on first
-    /// `run()` so we don't pay the round-trip on every iteration.
+    /// Sensitive local contexts (for example a lasso-selected screen region)
+    /// disable optional replay logging for the entire agent run.
+    replay_enabled: bool,
+    /// Cached provider-supplied artifact fingerprint for `model`. Populated
+    /// once on first `run()` so replay records a digest where the runtime can
+    /// supply one without pretending every provider exposes Ollama metadata.
     cached_digest: String,
     /// Optional approval gate consulted before a *consequential* tool runs
     /// (the Autonomy Dial). `None` = approve everything (default behavior).
@@ -114,16 +118,21 @@ pub struct AgentConfig {
     /// inject `~/.config/ollama-forge/rules/*.md` so user always-rules
     /// apply to the research agent the same way they apply to chat.
     pub system_suffix: String,
+    /// Whether this run may write prompts and responses to `FORGE_REPLAY_LOG`.
+    /// The default keeps existing deterministic-replay behavior; sensitive
+    /// visual-context callers explicitly turn it off.
+    pub replay_enabled: bool,
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            model: "qwen2.5-coder:7b".to_string(),
+            model: "qwen3.5:4b".to_string(),
             num_ctx: 16_384,
             keep_alive: "1h".to_string(),
             max_iterations: DEFAULT_CODING_MAX_ITERATIONS,
             system_suffix: String::new(),
+            replay_enabled: true,
         }
     }
 }
@@ -146,7 +155,7 @@ pub struct AgentTrace {
     /// when one was requested. This makes team/evaluation telemetry factual
     /// rather than estimating calls from tool steps.
     pub model_calls: u32,
-    /// Sum of Ollama-reported generated tokens across successful calls.
+    /// Sum of provider-reported generated tokens across successful calls.
     pub tokens_generated: usize,
 }
 
@@ -160,7 +169,7 @@ pub struct AgentStep {
 }
 
 impl Agent {
-    pub fn new(provider: Arc<OllamaProvider>, tools: ToolRegistry, config: AgentConfig) -> Self {
+    pub fn new(provider: Arc<dyn LlmProvider>, tools: ToolRegistry, config: AgentConfig) -> Self {
         Self {
             provider,
             tools,
@@ -169,6 +178,7 @@ impl Agent {
             keep_alive: config.keep_alive,
             max_iterations: config.max_iterations.max(1),
             system_suffix: config.system_suffix,
+            replay_enabled: config.replay_enabled,
             cached_digest: String::new(),
             approval: None,
             plan: false,
@@ -226,12 +236,15 @@ impl Agent {
     where
         F: FnMut(&AgentStep),
     {
-        // Cache the model digest once per run so the replay log records it
-        // without paying an /api/show round-trip on every iteration.
-        if std::env::var_os("FORGE_REPLAY_LOG").is_some() && self.cached_digest.is_empty() {
+        // Cache a provider fingerprint once per run so replay records it when
+        // available without making each generation pay a metadata round-trip.
+        if self.replay_enabled
+            && std::env::var_os("FORGE_REPLAY_LOG").is_some()
+            && self.cached_digest.is_empty()
+        {
             self.cached_digest = self
                 .provider
-                .model_digest(&self.model)
+                .model_fingerprint(&self.model)
                 .await
                 .unwrap_or_default();
         }
@@ -309,48 +322,50 @@ impl Agent {
                 .provider
                 .generate(opts.clone())
                 .await
-                .context("agent: ollama call")?;
+                .context("agent: local provider call")?;
             trace.model_calls = trace.model_calls.saturating_add(1);
             trace.tokens_generated = trace.tokens_generated.saturating_add(resp.tokens_generated);
             let raw = resp.content.trim();
             debug!("agent raw response: {raw}");
 
-            // Honor FORGE_REPLAY_LOG: every Ollama call the agent makes
+            // Honor FORGE_REPLAY_LOG: every local provider call the agent makes
             // gets recorded so the entire research session is replayable.
             // The agent path is exactly where deterministic replay matters
             // most — a regulated user re-running a research session needs
             // bit-identical reasoning.
-            if let Ok(log_path) = std::env::var("FORGE_REPLAY_LOG") {
-                let log = ReplayLog::new(PathBuf::from(log_path));
-                let mut prompt_material = String::new();
-                if let Some(s) = &opts.system {
-                    prompt_material.push_str(s);
-                    prompt_material.push('\n');
-                }
-                prompt_material.push_str(&opts.prompt);
-                if let Some(f) = &opts.format {
-                    prompt_material.push('\n');
-                    prompt_material.push_str(&f.to_string());
-                }
-                let record = ReplayRecord {
-                    ts: chrono::Utc::now().to_rfc3339(),
-                    forge_version: crate::cli::VERSION.to_string(),
-                    model: opts.model.clone(),
-                    model_digest: self.cached_digest.clone(),
-                    temperature: opts.temperature,
-                    top_p: opts.top_p,
-                    num_ctx: opts.num_ctx,
-                    keep_alive: opts.keep_alive.clone(),
-                    seed: opts.seed,
-                    format: opts.format.clone(),
-                    system: opts.system.clone(),
-                    prompt: opts.prompt.clone(),
-                    prompt_hash: quick_hash(prompt_material.as_bytes()),
-                    response_hash: quick_hash(resp.content.as_bytes()),
-                    response: resp.content.chars().take(16_384).collect(),
-                };
-                if let Err(e) = log.append(&record).await {
-                    warn!("agent: failed to append replay record: {e}");
+            if self.replay_enabled {
+                if let Ok(log_path) = std::env::var("FORGE_REPLAY_LOG") {
+                    let log = ReplayLog::new(PathBuf::from(log_path));
+                    let mut prompt_material = String::new();
+                    if let Some(s) = &opts.system {
+                        prompt_material.push_str(s);
+                        prompt_material.push('\n');
+                    }
+                    prompt_material.push_str(&opts.prompt);
+                    if let Some(f) = &opts.format {
+                        prompt_material.push('\n');
+                        prompt_material.push_str(&f.to_string());
+                    }
+                    let record = ReplayRecord {
+                        ts: chrono::Utc::now().to_rfc3339(),
+                        forge_version: crate::cli::VERSION.to_string(),
+                        model: opts.model.clone(),
+                        model_digest: self.cached_digest.clone(),
+                        temperature: opts.temperature,
+                        top_p: opts.top_p,
+                        num_ctx: opts.num_ctx,
+                        keep_alive: opts.keep_alive.clone(),
+                        seed: opts.seed,
+                        format: opts.format.clone(),
+                        system: opts.system.clone(),
+                        prompt: opts.prompt.clone(),
+                        prompt_hash: quick_hash(prompt_material.as_bytes()),
+                        response_hash: quick_hash(resp.content.as_bytes()),
+                        response: resp.content.chars().take(16_384).collect(),
+                    };
+                    if let Err(e) = log.append(&record).await {
+                        warn!("agent: failed to append replay record: {e}");
+                    }
                 }
             }
 

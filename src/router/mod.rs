@@ -1,3 +1,4 @@
+use crate::models::is_offline_ollama_tag;
 use crate::providers::ModelInfo;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -51,24 +52,20 @@ pub struct ModelConfig {
 
 impl Default for ModelConfig {
     fn default() -> Self {
-        // Aligned with the canonical qwen2.5-coder ladder used everywhere else
-        // (monitoring::suggest_model, Config::default, OrchestratorConfig). These
-        // are only *fallback* names when no installed model matches a tier
-        // pattern — `route_to_model`/`select_model_for_task` prefer installed
-        // models — but keeping the ladder consistent avoids recommending a model
-        // family the rest of the app never mentions. (Flagged in the original
-        // codebase analysis as a stale inconsistency.)
+        // Aligned with Config and monitoring's current local line-up. These are
+        // only fallbacks: route_to_model always returns an installed model when
+        // one is available, avoiding a surprise pull/404 at execution time.
         Self {
-            small_model: "qwen2.5-coder:1.5b".to_string(),
-            medium_model: "qwen2.5-coder:7b".to_string(),
-            large_model: "qwen2.5-coder:14b".to_string(),
-            planner_model: "qwen2.5-coder:7b".to_string(),
+            small_model: "gemma4:e2b".to_string(),
+            medium_model: "qwen3.5:4b".to_string(),
+            large_model: "gemma4:12b".to_string(),
+            planner_model: "deepseek-r1:8b".to_string(),
             code_models: vec![
-                "qwen2.5-coder:1.5b".to_string(),
-                "qwen2.5-coder:7b".to_string(),
-                "qwen2.5-coder:14b".to_string(),
-                "qwen2.5-coder:32b".to_string(),
-                "llama3.3:70b".to_string(),
+                "gemma4:e2b".to_string(),
+                "qwen3.5:4b".to_string(),
+                "deepseek-r1:8b".to_string(),
+                "gemma4:12b".to_string(),
+                "qwen3.6:27b".to_string(),
             ],
         }
     }
@@ -256,13 +253,18 @@ impl TaskRouter {
         complexity: &ComplexityScore,
         available_models: &[ModelInfo],
     ) -> String {
-        if available_models.is_empty() {
+        let eligible: Vec<&ModelInfo> = available_models
+            .iter()
+            .filter(|model| is_offline_ollama_tag(&model.name))
+            .collect();
+        if eligible.is_empty() {
             return complexity.suggested_model.clone();
         }
         // Honor the analyzer's pick if the user actually has that model.
-        if available_models
-            .iter()
-            .any(|m| m.name == complexity.suggested_model)
+        if is_offline_ollama_tag(&complexity.suggested_model)
+            && eligible
+                .iter()
+                .any(|m| m.name == complexity.suggested_model)
         {
             return complexity.suggested_model.clone();
         }
@@ -272,7 +274,7 @@ impl TaskRouter {
         // might not have installed, which produced a misleading 404 from
         // Ollama at call time.
         let by_size_desc: Vec<&str> = {
-            let mut v: Vec<&ModelInfo> = available_models.iter().collect();
+            let mut v = eligible;
             v.sort_by_key(|model| std::cmp::Reverse(model.size));
             v.into_iter().map(|m| m.name.as_str()).collect()
         };
@@ -280,9 +282,7 @@ impl TaskRouter {
             TaskType::Architect | TaskType::Complex => by_size_desc.first(),
             TaskType::Medium | TaskType::Simple => by_size_desc.last(),
         };
-        pick.copied()
-            .unwrap_or(available_models[0].name.as_str())
-            .to_string()
+        pick.copied().unwrap_or_default().to_string()
     }
 
     pub fn can_parallelize(&self, complexity: &ComplexityScore) -> bool {
@@ -359,7 +359,12 @@ impl TaskRouter {
         default_tier_model: &str,
         free_vram_mb: usize,
     ) -> Vec<SubTask> {
-        let mut subs = self.split_into_tiered_subtasks(task, available_models, default_tier_model);
+        let eligible: Vec<&ModelInfo> = available_models
+            .iter()
+            .filter(|model| is_offline_ollama_tag(&model.name))
+            .collect();
+        let mut subs =
+            self.split_into_tiered_subtasks_from_eligible(task, &eligible, default_tier_model);
 
         // Distinct models requested, with their advertised disk sizes.
         let distinct_overrides: std::collections::BTreeSet<String> = subs
@@ -375,7 +380,7 @@ impl TaskRouter {
         // account for KV cache (the actual memory hog) and runtime overhead.
         let total_resident_mb: usize = distinct_overrides
             .iter()
-            .filter_map(|name| available_models.iter().find(|m| m.name == *name))
+            .filter_map(|name| eligible.iter().find(|m| m.name == *name))
             .map(|m| ((m.size as f64 * 1.3) / (1024.0 * 1024.0)) as usize)
             .sum();
 
@@ -385,7 +390,7 @@ impl TaskRouter {
 
         // Doesn't fit. Pick the largest single model that DOES fit and
         // collapse every override to it.
-        let single = available_models
+        let single = eligible
             .iter()
             .filter(|m| {
                 let resident = ((m.size as f64 * 1.3) / (1024.0 * 1024.0)) as usize;
@@ -426,10 +431,23 @@ impl TaskRouter {
         available_models: &[ModelInfo],
         default_tier_model: &str,
     ) -> Vec<SubTask> {
+        let eligible: Vec<&ModelInfo> = available_models
+            .iter()
+            .filter(|model| is_offline_ollama_tag(&model.name))
+            .collect();
+        self.split_into_tiered_subtasks_from_eligible(task, &eligible, default_tier_model)
+    }
+
+    fn split_into_tiered_subtasks_from_eligible(
+        &self,
+        task: &str,
+        eligible: &[&ModelInfo],
+        default_tier_model: &str,
+    ) -> Vec<SubTask> {
         let mut subtasks = self.split_into_subtasks(task);
 
         // Sort installed models by size to derive `small`/`medium`/`large` slots.
-        let mut by_size: Vec<&ModelInfo> = available_models.iter().collect();
+        let mut by_size: Vec<&ModelInfo> = eligible.to_vec();
         by_size.sort_by_key(|m| m.size);
         let small = by_size.first().map(|m| m.name.clone());
         let large = by_size.last().map(|m| m.name.clone());
@@ -639,5 +657,30 @@ mod tests {
         let subs =
             router.split_into_tiered_subtasks("build a frontend and backend", &models, "only:7b");
         assert!(subs.iter().all(|s| s.model_override.is_none()));
+    }
+
+    #[test]
+    fn cloud_tags_are_never_selected_when_a_local_model_is_available() {
+        let router = TaskRouter::new(ModelConfig::default());
+        let models = vec![
+            mi("qwen3.5:397b-cloud", 250_000_000_000),
+            mi("qwen3.5:4b", 3_000_000_000),
+        ];
+        let complexity = ComplexityScore::new(
+            0.95,
+            "test".to_string(),
+            "qwen3.5:397b-cloud".to_string(),
+            TaskType::Architect,
+        );
+        assert_eq!(router.route_to_model(&complexity, &models), "qwen3.5:4b");
+
+        let subtasks = router.split_into_tiered_subtasks(
+            "build a frontend and backend",
+            &models,
+            "qwen3.5:4b",
+        );
+        assert!(subtasks
+            .iter()
+            .all(|subtask| subtask.model_override.as_deref() != Some("qwen3.5:397b-cloud")));
     }
 }

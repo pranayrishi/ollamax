@@ -14,7 +14,7 @@
 //! or arbitrary autonomous shell access.
 
 use crate::agent::{Agent, AgentConfig, AgentStep, Approval, ApprovalPolicy};
-use crate::providers::{GenerateOptions, LlmProvider, OllamaProvider};
+use crate::providers::{GenerateOptions, LlmProvider};
 use crate::tools::files::{
     FsEditTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, WorkspaceFs,
 };
@@ -127,7 +127,7 @@ pub struct TeamRun {
     pub review_available: bool,
     pub status: TeamStatus,
     pub elapsed_ms: u64,
-    /// Exact successful Ollama calls reported by the local role traces.
+    /// Exact successful local-provider calls reported by the role traces.
     pub model_calls: u32,
     pub tokens_generated: usize,
     /// Agent filesystem calls plus executed fixed verifier commands.
@@ -188,12 +188,15 @@ pub struct TeamConfig {
     pub max_repair_rounds: usize,
     pub mode: TeamMode,
     pub system_suffix: String,
+    /// Sensitive local visual context disables optional replay logging for all
+    /// Agent roles in this team run.
+    pub replay_enabled: bool,
 }
 
 impl Default for TeamConfig {
     fn default() -> Self {
         Self {
-            model: "qwen2.5-coder:7b".to_string(),
+            model: "qwen3.5:4b".to_string(),
             scout_model: None,
             planner_model: None,
             reviewer_model: None,
@@ -203,13 +206,55 @@ impl Default for TeamConfig {
             max_repair_rounds: 1,
             mode: TeamMode::Serial,
             system_suffix: String::new(),
+            replay_enabled: true,
+        }
+    }
+}
+
+/// Provider assignment for the local team roles.
+///
+/// Scouts, planner, writer, and reviewer can target different local runtimes
+/// (for example, an Ollama coding model plus a separately self-hosted planning
+/// model). This does not relax the team's workspace contract: only the writer
+/// receives mutating tools, and it remains a single lane.
+#[derive(Clone)]
+pub struct TeamProviders {
+    scout: Arc<dyn LlmProvider>,
+    planner: Arc<dyn LlmProvider>,
+    writer: Arc<dyn LlmProvider>,
+    reviewer: Arc<dyn LlmProvider>,
+}
+
+impl TeamProviders {
+    /// Assign a provider to each team role explicitly.
+    pub fn new(
+        scout: Arc<dyn LlmProvider>,
+        planner: Arc<dyn LlmProvider>,
+        writer: Arc<dyn LlmProvider>,
+        reviewer: Arc<dyn LlmProvider>,
+    ) -> Self {
+        Self {
+            scout,
+            planner,
+            writer,
+            reviewer,
+        }
+    }
+
+    /// Reuse one provider for every role, preserving the historical topology.
+    pub fn uniform(provider: Arc<dyn LlmProvider>) -> Self {
+        Self {
+            scout: provider.clone(),
+            planner: provider.clone(),
+            writer: provider.clone(),
+            reviewer: provider,
         }
     }
 }
 
 /// Coordinates local agents against one canonical workspace.
 pub struct TeamCoordinator {
-    provider: Arc<OllamaProvider>,
+    providers: TeamProviders,
     workspace: PathBuf,
     workspace_fs: WorkspaceFs,
     config: TeamConfig,
@@ -217,7 +262,18 @@ pub struct TeamCoordinator {
 
 impl TeamCoordinator {
     pub fn new(
-        provider: Arc<OllamaProvider>,
+        provider: Arc<dyn LlmProvider>,
+        workspace: impl AsRef<Path>,
+        config: TeamConfig,
+    ) -> Result<Self> {
+        Self::new_with_providers(TeamProviders::uniform(provider), workspace, config)
+    }
+
+    /// Construct a team with explicit provider assignments for its roles.
+    /// Existing [`Self::new`] callers retain a single-provider team through
+    /// [`TeamProviders::uniform`].
+    pub fn new_with_providers(
+        providers: TeamProviders,
         workspace: impl AsRef<Path>,
         config: TeamConfig,
     ) -> Result<Self> {
@@ -229,7 +285,7 @@ impl TeamCoordinator {
             anyhow::bail!("team workspace is not a directory: {}", workspace.display());
         }
         let workspace_fs = WorkspaceFs::new(&workspace);
-        Self::with_workspace_fs(provider, workspace, workspace_fs, config)
+        Self::with_workspace_fs_with_providers(providers, workspace, workspace_fs, config)
     }
 
     /// Construct a team around a workspace capability captured by a longer
@@ -238,7 +294,23 @@ impl TeamCoordinator {
     /// uses `workspace_fs`, so a later replacement of the path cannot redirect
     /// scouts or the writer.
     pub fn with_workspace_fs(
-        provider: Arc<OllamaProvider>,
+        provider: Arc<dyn LlmProvider>,
+        workspace: impl Into<PathBuf>,
+        workspace_fs: WorkspaceFs,
+        config: TeamConfig,
+    ) -> Result<Self> {
+        Self::with_workspace_fs_with_providers(
+            TeamProviders::uniform(provider),
+            workspace,
+            workspace_fs,
+            config,
+        )
+    }
+
+    /// Capability-rooted variant of [`Self::new_with_providers`], used by a
+    /// longer-lived local host that has already pinned its workspace handle.
+    pub fn with_workspace_fs_with_providers(
+        providers: TeamProviders,
         workspace: impl Into<PathBuf>,
         workspace_fs: WorkspaceFs,
         mut config: TeamConfig,
@@ -250,7 +322,7 @@ impl TeamCoordinator {
         config.max_iterations = config.max_iterations.clamp(1, MAX_TEAM_ITERATIONS);
         config.max_repair_rounds = config.max_repair_rounds.min(MAX_TEAM_REPAIR_ROUNDS);
         Ok(Self {
-            provider,
+            providers,
             workspace,
             workspace_fs,
             config,
@@ -488,7 +560,7 @@ impl TeamCoordinator {
             _ => "Inspect the workspace read-only and report concrete findings.",
         };
         let mut agent = Agent::new(
-            self.provider.clone(),
+            self.providers.scout.clone(),
             registry,
             AgentConfig {
                 model: self
@@ -504,6 +576,7 @@ impl TeamCoordinator {
                     self.workspace.display(),
                     self.config.system_suffix
                 ),
+                replay_enabled: self.config.replay_enabled,
             },
         );
         let trace = agent.run(task, |_| {}).await?;
@@ -561,7 +634,7 @@ impl TeamCoordinator {
             system_suffix.push_str(repair);
         }
         let mut agent = Agent::new(
-            self.provider.clone(),
+            self.providers.writer.clone(),
             registry,
             AgentConfig {
                 model: self.config.model.clone(),
@@ -569,6 +642,7 @@ impl TeamCoordinator {
                 keep_alive: self.config.keep_alive.clone(),
                 max_iterations: self.config.max_iterations.max(1),
                 system_suffix,
+                replay_enabled: self.config.replay_enabled,
             },
         );
         let plan_required = approval.requires_plan_approval();
@@ -609,7 +683,7 @@ impl TeamCoordinator {
             keep_alive: Some(self.config.keep_alive.clone()),
             ..Default::default()
         };
-        match self.provider.generate(options).await {
+        match self.providers.planner.generate(options).await {
             Ok(response) => (
                 limit_text(&response.content, MAX_SCOUT_REPORT_CHARS),
                 1,
@@ -706,7 +780,7 @@ impl TeamCoordinator {
             keep_alive: Some(self.config.keep_alive.clone()),
             ..Default::default()
         };
-        match self.provider.generate(options).await {
+        match self.providers.reviewer.generate(options).await {
             Ok(response) => (
                 limit_text(&response.content, MAX_REVIEW_CHARS),
                 1,
@@ -920,6 +994,58 @@ fn limit_text(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::{ChatOptions, LlmResponse, ModelInfo, OllamaProvider};
+    use std::sync::Mutex;
+
+    struct RecordingProvider {
+        provider_name: &'static str,
+        models: Mutex<Vec<String>>,
+    }
+
+    impl RecordingProvider {
+        fn new(provider_name: &'static str) -> Self {
+            Self {
+                provider_name,
+                models: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn recorded_models(&self) -> Vec<String> {
+            self.models.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for RecordingProvider {
+        fn name(&self) -> &str {
+            self.provider_name
+        }
+
+        async fn generate(&self, options: GenerateOptions) -> Result<LlmResponse> {
+            self.models.lock().unwrap().push(options.model.clone());
+            Ok(LlmResponse {
+                content: r#"{"action":"answer","text":"role complete"}"#.to_string(),
+                model: options.model,
+                tokens_generated: 1,
+                context_used: 1,
+                duration_ms: 1,
+            })
+        }
+
+        async fn chat(&self, options: ChatOptions) -> Result<LlmResponse> {
+            Ok(LlmResponse {
+                content: String::new(),
+                model: options.model,
+                tokens_generated: 0,
+                context_used: 0,
+                duration_ms: 0,
+            })
+        }
+
+        async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+            Ok(Vec::new())
+        }
+    }
 
     #[test]
     fn detects_fixed_commands_without_interpolating_package_scripts() {
@@ -1057,6 +1183,57 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn role_specific_providers_drive_their_assigned_lanes() {
+        let temp = tempfile::tempdir().unwrap();
+        let scout = Arc::new(RecordingProvider::new("scout-provider"));
+        let planner = Arc::new(RecordingProvider::new("planner-provider"));
+        let writer = Arc::new(RecordingProvider::new("writer-provider"));
+        let reviewer = Arc::new(RecordingProvider::new("reviewer-provider"));
+        let coordinator = TeamCoordinator::new_with_providers(
+            TeamProviders::new(
+                scout.clone(),
+                planner.clone(),
+                writer.clone(),
+                reviewer.clone(),
+            ),
+            temp.path(),
+            TeamConfig {
+                model: "writer-model".to_string(),
+                scout_model: Some("scout-model".to_string()),
+                planner_model: Some("planner-model".to_string()),
+                reviewer_model: Some("reviewer-model".to_string()),
+                ..TeamConfig::default()
+            },
+        )
+        .unwrap();
+
+        coordinator
+            .run_scout(TeamRole::ArchitectureScout, "map the workspace")
+            .await
+            .unwrap();
+        let _ = coordinator.run_planner("make a change", &[]).await;
+        coordinator
+            .run_implementer(
+                "make a change",
+                "",
+                None,
+                Arc::new(crate::agent::AllowAllApproval),
+                0,
+                &mut |_| {},
+            )
+            .await
+            .unwrap();
+        let _ = coordinator
+            .run_reviewer("make a change", &[], &[], &[])
+            .await;
+
+        assert_eq!(scout.recorded_models(), vec!["scout-model"]);
+        assert_eq!(planner.recorded_models(), vec!["planner-model"]);
+        assert_eq!(writer.recorded_models(), vec!["writer-model"]);
+        assert_eq!(reviewer.recorded_models(), vec!["reviewer-model"]);
     }
 
     #[test]
