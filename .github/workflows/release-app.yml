@@ -1,15 +1,16 @@
 name: release-app
 
 # Builds the STANDALONE desktop app (Electron shell around the forge engine,
-# modeled on the Sattva AI app) and publishes UNSIGNED installers to the public
-# releases repo. A pushed `app-v*` tag builds and publishes; a manual run is
-# build-only so it cannot accidentally attach artifacts to an unintended tag.
+# modeled on the Sattva AI app) and attaches UNSIGNED installers to a *draft*
+# release in the public releases repo. A later `v*` source release verifies the
+# complete cross-platform asset set and publishes that draft atomically. A
+# manual run is build-only so it cannot attach artifacts to an unintended tag.
 #
 # Unsigned (ad-hoc, Sattva-style) this round — see desktop-app/scripts/afterPack.js
 # and the report. Signing + notarization is the future paid step.
 #
 # Requires the same RELEASES_REPO_TOKEN secret as release.yml (cross-repo publish).
-# Each native runner attaches its verified installers directly to the release.
+# Each native runner attaches its verified installers directly to the draft.
 # This avoids intermediate Actions artifact storage, which is independently
 # quota-limited and must not block an otherwise valid public release.
 
@@ -25,8 +26,80 @@ env:
   RELEASES_REPO: pranayrishi/ollamax-releases
 
 jobs:
+  prepare-public-release:
+    name: prepare public release
+    runs-on: ubuntu-latest
+    steps:
+      # A previous Windows PowerShell invocation stripped the `app-` prefix
+      # incorrectly, creating a public `app-v*` release. It is never a valid
+      # download target. Also remove a published base release that has no CLI
+      # bundle at all: that is necessarily an interrupted app-only publish.
+      # Existing drafts and published complete releases are deliberately kept.
+      - name: Remove stale or incomplete public releases
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        shell: bash
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          base_tag="${GITHUB_REF_NAME#app-}"
+          api_root="https://api.github.com/repos/${RELEASES_REPO}/releases"
+
+          fetch_release() {
+            response="$(mktemp)"
+            code="$(curl -sS -o "$response" -w '%{http_code}' \
+              -H "Authorization: Bearer ${RELEASES_TOKEN}" \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "$api_root/tags/$1")"
+          }
+
+          delete_response_release() {
+            release_id="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("id", ""))' < "$response")"
+            [[ "$release_id" =~ ^[0-9]+$ ]] || {
+              echo "release response did not contain a numeric id" >&2
+              exit 1
+            }
+            curl -fsS -X DELETE \
+              -H "Authorization: Bearer ${RELEASES_TOKEN}" \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "$api_root/${release_id}"
+          }
+
+          fetch_release "app-${base_tag}"
+          case "$code" in
+            404) ;;
+            200) delete_response_release ;;
+            *)
+              echo "could not inspect app-prefixed release (HTTP $code)" >&2
+              sed -n '1,80p' "$response" >&2
+              exit 1
+              ;;
+          esac
+
+          fetch_release "$base_tag"
+          case "$code" in
+            404) exit 0 ;;
+            200) ;;
+            *)
+              echo "could not inspect base release (HTTP $code)" >&2
+              sed -n '1,80p' "$response" >&2
+              exit 1
+              ;;
+          esac
+
+          read -r is_draft cli_bundle_count < <(python3 -c '
+          import json, sys
+          release = json.load(sys.stdin)
+          count = sum(asset.get("name", "").startswith("ollama-forge-") for asset in release.get("assets", []))
+          print(str(bool(release.get("draft"))).lower(), count)
+          ' < "$response")
+          if [[ "$is_draft" == false && "$cli_bundle_count" == 0 ]]; then
+            delete_response_release
+          fi
+
   build:
     name: app (${{ matrix.label }})
+    needs: prepare-public-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -141,52 +214,14 @@ jobs:
             fi
           done
 
-      # Publish onto the BASE version release (strip the `app-` prefix) so the app
-      # installers live alongside everything else on a single "latest" release —
-      # keeps the website's releases/latest/download/<asset> URLs working.
+      # Attach to the BASE version draft (strip the `app-` prefix). The source
+      # release publishes it only after every desktop and CLI asset is present.
       - id: ver
         if: startsWith(github.ref, 'refs/tags/app-v')
         shell: bash
         run: echo "tag=${GITHUB_REF_NAME#app-}" >> "$GITHUB_OUTPUT"
 
-      # A prior Windows shell interpreted the Bash parameter expansion above as
-      # an empty value and created `app-v*` in the public releases repository.
-      # Those tags must never be releases: `latest/download` is intentionally
-      # served from the base `v*` release. Clean up a stale app-prefixed release
-      # before each serialized native publisher runs, without touching its tag.
-      - name: Remove a stale app-prefixed public release
-        if: startsWith(github.ref, 'refs/tags/app-v')
-        shell: bash
-        env:
-          RELEASES_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
-          BASE_TAG: ${{ steps.ver.outputs.tag }}
-        run: |
-          set -euo pipefail
-          api="https://api.github.com/repos/${RELEASES_REPO}/releases/tags/app-${BASE_TAG}"
-          response="$(mktemp)"
-          code="$(curl -sS -o "$response" -w '%{http_code}' \
-            -H "Authorization: Bearer ${RELEASES_TOKEN}" \
-            -H 'X-GitHub-Api-Version: 2022-11-28' "$api")"
-          case "$code" in
-            404) exit 0 ;;
-            200) ;;
-            *)
-              echo "could not inspect stale app-prefixed release (HTTP $code)" >&2
-              sed -n '1,80p' "$response" >&2
-              exit 1
-              ;;
-          esac
-          release_id="$(node -e 'const fs = require("fs"); const id = JSON.parse(fs.readFileSync(0, "utf8")).id; if (Number.isSafeInteger(id)) process.stdout.write(String(id));' < "$response")"
-          [[ "$release_id" =~ ^[0-9]+$ ]] || {
-            echo "stale app-prefixed release did not return a numeric id" >&2
-            exit 1
-          }
-          curl -fsS -X DELETE \
-            -H "Authorization: Bearer ${RELEASES_TOKEN}" \
-            -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/${RELEASES_REPO}/releases/${release_id}"
-
-      - name: Publish verified installers directly
+      - name: Attach verified installers to the release draft
         if: startsWith(github.ref, 'refs/tags/app-v')
         uses: softprops/action-gh-release@v2
         with:
@@ -194,6 +229,8 @@ jobs:
           token: ${{ secrets.RELEASES_REPO_TOKEN }}
           tag_name: ${{ steps.ver.outputs.tag }}
           target_commitish: main
+          draft: true
+          make_latest: false
           name: Ollamax ${{ steps.ver.outputs.tag }}
           body: |
             Standalone desktop app (UNSIGNED, ad-hoc-signed, Sattva-style) +
