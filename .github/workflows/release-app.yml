@@ -141,26 +141,26 @@ jobs:
           code="$(curl -sS -o "$response" -w '%{http_code}' \
             -H "Authorization: Bearer ${RELEASES_TOKEN}" \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/${RELEASES_REPO}/releases/tags/${base_tag}")"
-          case "$code" in
-            404) exit 0 ;;
-            200) ;;
-            *)
-              echo "could not inspect base release ${base_tag} (HTTP $code)" >&2
-              sed -n '1,80p' "$response" >&2
-              exit 1
-              ;;
-          esac
+            "https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=100")"
+          [[ "$code" == 200 ]] || {
+            echo "could not list releases for ${RELEASES_REPO}, got HTTP $code" >&2
+            sed -n '1,80p' "$response" >&2
+            exit 1
+          }
 
           python3 - "$response" "$base_tag" "$GITHUB_REF_NAME" "$SOURCE_COMMIT" <<'PY'
           import json
           import re
           import sys
 
-          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          releases = json.load(open(sys.argv[1], encoding="utf-8"))
           tag, app_tag, source_commit = sys.argv[2:]
-          if release.get("tag_name") != tag:
-              raise SystemExit("release lookup returned an unexpected tag")
+          matches = [release for release in releases if release.get("tag_name") == tag]
+          if not matches:
+              raise SystemExit(0)
+          if len(matches) != 1:
+              raise SystemExit(f"expected at most one base release for {tag}, found {len(matches)}")
+          release = matches[0]
           if not release.get("draft"):
               raise SystemExit("refusing to modify an already-published base release")
 
