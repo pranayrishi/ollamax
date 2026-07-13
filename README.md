@@ -184,6 +184,11 @@ mismatched source provenance, and a final draft that changes during the native
 builds. This is why the existing public `v0.2.0` assets remain a baseline until
 a newer pair of workflows has passed.
 
+The desktop workflow retrieves its release-only local Whisper model through
+the pinned official Hub/Xet client at an immutable upstream revision. It does
+not use a paid speech API or a Hub credential, and the shared model size/SHA-256
+contract is checked before staging and again after packaging.
+
 ---
 
 ## Local workspace Agent

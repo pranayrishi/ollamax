@@ -28,7 +28,13 @@ env:
   # different upstream revision cannot silently change a public installer.
   WHISPER_CPP_VERSION: v1.9.1
   WHISPER_CPP_COMMIT: f049fff95a089aa9969deb009cdd4892b3e74916
-  WHISPER_MODEL_URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+  # Do not use the bare /resolve URL: Hugging Face serves this Xet-backed
+  # payload through a signed CAS URL which intermittently returns 403 on
+  # hosted runners. The pinned official client below handles that protocol.
+  WHISPER_MODEL_REPO: ggerganov/whisper.cpp
+  WHISPER_MODEL_REVISION: 5359861c739e955e79d9a303bcbc70fb988958b1
+  WHISPER_HUB_VERSION: 1.23.0
+  WHISPER_XET_VERSION: 1.5.1
 
 jobs:
   prepare-public-release:
@@ -313,6 +319,15 @@ jobs:
         with:
           python-version: "3.11"
 
+      # hf_xet is the official Hugging Face transfer client for Xet-backed
+      # model files. Pin the client and Xet versions so a later package release
+      # cannot silently change the release input path or behavior.
+      - name: Install pinned Whisper model downloader
+        run: >-
+          python -m pip install --disable-pip-version-check --no-input --only-binary=:all:
+          "huggingface_hub==${{ env.WHISPER_HUB_VERSION }}"
+          "hf-xet==${{ env.WHISPER_XET_VERSION }}"
+
       - name: Install desktop packaging dependencies
         working-directory: desktop-app
         env:
@@ -390,33 +405,23 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "OLLAMAX_WHISPER_DLL_DIR=$(Split-Path -Parent $cli)"
           Add-Content -Path $env:GITHUB_ENV -Value "OLLAMAX_WHISPER_STAGE_PLATFORM=win32"
 
-      - name: Download reviewed Whisper model (macOS/Linux)
-        if: matrix.label != 'windows-x64'
-        shell: bash
-        run: |
-          set -euo pipefail
-          model_dir="${RUNNER_TEMP}/ollamax-whisper-model"
-          mkdir -p "$model_dir"
-          model="$model_dir/ggml-base.en.bin"
-          rm -f "$model"
-          curl --fail --location --retry 5 --retry-delay 3 \
-            --output "$model" "$WHISPER_MODEL_URL"
-          [[ -s "$model" ]] || { echo "Whisper model download is empty" >&2; exit 1; }
-          echo "OLLAMAX_WHISPER_MODEL_PATH=$model" >> "$GITHUB_ENV"
+      - name: Download and verify reviewed Whisper model
+        env:
+          # This is a public model fetch. Explicitly disable implicit account
+          # tokens and telemetry; no Hub credential is required or used.
+          HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          HF_HUB_DOWNLOAD_TIMEOUT: "60"
+        run: python desktop-app/scripts/download-pinned-whisper-model.py
 
-      - name: Download reviewed Whisper model (Windows x64)
-        if: matrix.label == 'windows-x64'
-        shell: pwsh
-        run: |
-          $modelDir = Join-Path $env:RUNNER_TEMP "ollamax-whisper-model"
-          New-Item -ItemType Directory -Force -Path $modelDir | Out-Null
-          $model = Join-Path $modelDir "ggml-base.en.bin"
-          Remove-Item -Force -ErrorAction SilentlyContinue $model
-          curl.exe --fail --location --retry 5 --retry-delay 3 --output $model $env:WHISPER_MODEL_URL
-          if (-not (Test-Path $model) -or (Get-Item $model).Length -le 0) {
-            throw "Whisper model download is empty"
-          }
-          Add-Content -Path $env:GITHUB_ENV -Value "OLLAMAX_WHISPER_MODEL_PATH=$model"
+      # Keep the model's size/SHA-256 in one audited source of truth. The
+      # release-only staging script repeats this before and after copying it
+      # into the package directory.
+      - name: Assert downloaded Whisper model matches the audited contract
+        run: >-
+          node -e "const { assertPinnedWhisperModel } = require('./desktop-app/scripts/voice-contract.cjs');
+          assertPinnedWhisperModel(process.env.OLLAMAX_WHISPER_MODEL_PATH);
+          console.log('verified downloaded Whisper model against the audited contract');"
 
       - name: Stage verified bundled Whisper runtime
         working-directory: desktop-app

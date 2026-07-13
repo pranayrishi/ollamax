@@ -176,6 +176,11 @@ git tag -a vX.Y.Z "$release_commit" -m "Release Ollamax vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
+For a tagged desktop build, CI fetches the reviewed `ggml-base.en.bin` through
+the pinned official Hugging Face Hub/Xet client at an immutable upstream
+revision, then validates the shared byte-count/SHA-256 contract before and
+after staging. It uses no speech-provider or Hub account credential.
+
 Do not label `app-v*` itself as a public download and do not claim that the
 currently published `v0.2.0` installers include this source-tree voice or
 spatial work. The two tags must resolve to the same source commit; the release
