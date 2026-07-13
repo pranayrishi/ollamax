@@ -12,7 +12,7 @@
 //! Commands start in the workspace root via the platform shell. This is **not**
 //! an OS/container sandbox: a command can still reference paths outside that
 //! directory. On macOS/Linux a timeout or cancelled task kills the shell's
-//! isolated process group (including ordinary descendants); on Windows it can
+//! isolated session/process group (including ordinary descendants); on Windows it can
 //! only terminate the direct child without a Job Object. The deny-list,
 //! timeout, audit log, and approval layer are guardrails, not containment.
 
@@ -197,11 +197,23 @@ impl Tool for ShellTool {
                 }
             };
             // SAFETY: `fd` belongs to the immutable directory capability held
-            // by `self.workspace`, which outlives spawn. `fchdir` is async-
-            // signal-safe and runs in the child immediately before exec.
+            // by `self.workspace`, which outlives spawn. `setsid` and `fchdir`
+            // are async-signal-safe and run in the child immediately before
+            // exec. A new session also makes the shell the leader of its own
+            // process group, which lets cancellation reach ordinary descendants
+            // without signalling the server's terminal group.
             unsafe {
                 command.pre_exec(move || {
-                    if libc::fchdir(fd) == 0 {
+                    // Do not use `CommandExt::process_group(0)` here. On
+                    // macOS, signal delivery to a just-spawned process group
+                    // has historically been racy; making the child a session
+                    // leader in this same fork/exec hook gives us a stable
+                    // PGID equal to its PID. `setsid` must happen before
+                    // `fchdir`, and cannot be combined with process_group(0)
+                    // because that would make the child a group leader first.
+                    if libc::setsid() == -1 {
+                        Err(std::io::Error::last_os_error())
+                    } else if libc::fchdir(fd) == 0 {
                         Ok(())
                     } else {
                         Err(std::io::Error::last_os_error())
@@ -211,10 +223,6 @@ impl Tool for ShellTool {
         }
         #[cfg(not(unix))]
         command.current_dir(&self.root);
-        // Put the shell in its own process group. If a verifier times out, we
-        // can terminate its ordinary child processes as well as the shell.
-        #[cfg(unix)]
-        command.process_group(0);
 
         let child = match command.spawn() {
             Ok(child) => child,
@@ -308,7 +316,7 @@ impl Drop for ProcessGroupGuard {
 }
 
 /// Best-effort process-tree cleanup for the Unix shell verifier. `kill` with a
-/// negative PID targets the process group created by `process_group(0)` above.
+/// negative PID targets the process group created by `setsid` before exec.
 /// The child may already have exited, which is harmless (ESRCH is ignored).
 #[cfg(unix)]
 fn terminate_process_group(pid: Option<u32>) {
@@ -413,7 +421,10 @@ mod tests {
         let escaped = root.path().join("escaped");
         let ready_text = ready.to_string_lossy().replace('\'', "'\\''");
         let escaped_text = escaped.to_string_lossy().replace('\'', "'\\''");
-        let command = format!("touch '{ready_text}'; (sleep 1; touch '{escaped_text}') & wait");
+        // Have the background child signal readiness itself. That guarantees
+        // the cancellation below races a live descendant, not merely the
+        // parent shell before it has forked the background job.
+        let command = format!("(touch '{ready_text}'; sleep 1; touch '{escaped_text}') & wait");
         let tool = ShellTool::new(
             root.path(),
             ShellPolicy {
