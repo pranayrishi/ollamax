@@ -189,14 +189,12 @@ impl CodeGraph {
             out.push('\n');
             // 1-hop neighbors with relation labels.
             if let Some(nbrs) = self.adj.get(id) {
-                let mut shown = 0;
-                for (nid, rel) in nbrs {
+                for (shown, (nid, rel)) in nbrs.iter().enumerate() {
                     if shown >= 6 {
                         out.push_str("    … (more neighbors)\n");
                         break;
                     }
                     out.push_str(&format!("    →{rel}: {}\n", CodeGraph::short(self.get(nid), nid)));
-                    shown += 1;
                 }
             }
             if out.len() > MAX_TOOL_OUTPUT_BYTES {

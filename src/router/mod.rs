@@ -273,7 +273,7 @@ impl TaskRouter {
         // Ollama at call time.
         let by_size_desc: Vec<&str> = {
             let mut v: Vec<&ModelInfo> = available_models.iter().collect();
-            v.sort_by(|a, b| b.size.cmp(&a.size));
+            v.sort_by_key(|model| std::cmp::Reverse(model.size));
             v.into_iter().map(|m| m.name.as_str()).collect()
         };
         let pick = match complexity.task_type {

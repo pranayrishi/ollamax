@@ -371,11 +371,19 @@
       padding-top: 12px;
     }
 
+    .composer-note {
+      margin: 9px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
     .composer-fields {
       display: flex;
       min-width: 0;
       gap: 9px;
       align-items: center;
+      flex-wrap: wrap;
     }
 
     .field {
@@ -1072,7 +1080,8 @@
     .answer-card,
     .error-card,
     .plan-card,
-    .change-card {
+    .change-card,
+    .team-summary-card {
       padding: 11px;
       border: 1px solid var(--line);
       border-radius: var(--radius-md);
@@ -1084,6 +1093,52 @@
       border-color: rgba(115, 221, 181, 0.22);
       background: linear-gradient(120deg, rgba(115, 221, 181, 0.08), rgba(17, 23, 34, 0.96) 44%);
     }
+
+    .team-summary-card {
+      margin: 0 0 12px;
+      border-color: rgba(136, 184, 255, 0.28);
+      background: linear-gradient(120deg, rgba(136, 184, 255, 0.09), rgba(17, 23, 34, 0.96) 44%);
+    }
+
+    .team-summary-card .card-label {
+      color: var(--blue);
+    }
+
+    .team-summary-meta {
+      margin: 7px 0 0;
+      color: var(--text-soft);
+      font-size: 11px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .team-verification-list {
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .team-verification-item {
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: rgba(10, 13, 18, 0.48);
+    }
+
+    .team-verification-item summary {
+      overflow: hidden;
+      color: var(--text-soft);
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .team-verification-item.passed summary { color: var(--accent-strong); }
+    .team-verification-item.failed summary { color: var(--red); }
+    .team-verification-item.declined summary { color: var(--amber); }
 
     .card-label {
       display: flex;
@@ -1496,10 +1551,17 @@
       </header>
 
       <section class="composer" aria-labelledby="composer-heading">
-        <label class="sr-only" id="composer-heading" for="task-prompt">New agent task</label>
-        <textarea id="task-prompt" maxlength="12000" rows="4" placeholder="Describe the outcome you want. The agent can inspect, plan, and edit your local workspace when you approve it."></textarea>
+        <label class="sr-only" id="composer-heading" for="task-prompt">New workspace task</label>
+        <textarea id="task-prompt" maxlength="12000" rows="4" placeholder="Describe the outcome you want. The selected local mode can inspect, plan, and edit your workspace when you approve it."></textarea>
         <div class="composer-footer">
           <div class="composer-fields">
+            <div class="field">
+              <label for="mode-select">Mode</label>
+              <select id="mode-select" aria-label="Execution mode">
+                <option value="agent">Agent</option>
+                <option value="team">Coding team</option>
+              </select>
+            </div>
             <div class="field">
               <label for="model-select">Model</label>
               <select id="model-select" aria-label="Model">
@@ -1517,6 +1579,7 @@
           </div>
           <button class="primary-button" type="button" id="run-task">Run task</button>
         </div>
+        <p class="composer-note" id="mode-note">Agent mode runs one local workspace agent. Confirm changes remains the default.</p>
       </section>
 
       <section class="task-board-section" aria-labelledby="tasks-heading">
@@ -1613,8 +1676,10 @@
         statusCompute: document.getElementById("status-compute"),
         refresh: document.getElementById("refresh-engine"),
         prompt: document.getElementById("task-prompt"),
+        mode: document.getElementById("mode-select"),
         model: document.getElementById("model-select"),
         autonomy: document.getElementById("permission-select"),
+        modeNote: document.getElementById("mode-note"),
         runTask: document.getElementById("run-task"),
         runNext: document.getElementById("run-next"),
         clearDone: document.getElementById("clear-done"),
@@ -1659,6 +1724,7 @@
           tasks: [],
           selectedId: null,
           view: "board",
+          mode: "agent",
           selectedModel: "",
           autonomy: "confirm",
           detailTab: "activity"
@@ -1677,6 +1743,7 @@
             tasks: parsed.tasks.slice(0, MAX_TASKS).map(cleanTask).filter(Boolean),
             selectedId: safeText(parsed.selectedId, 100),
             view: parsed.view === "list" ? "list" : "board",
+            mode: parsed.mode === "team" ? "team" : "agent",
             selectedModel: safeText(parsed.selectedModel, 220),
             autonomy: ["confirm", "auto", "readonly"].indexOf(parsed.autonomy) >= 0 ? parsed.autonomy : "confirm",
             detailTab: ["activity", "changes", "plan"].indexOf(parsed.detailTab) >= 0 ? parsed.detailTab : "activity"
@@ -1704,6 +1771,7 @@
           activeRunId: null,
           title: safeText(value.title, 180) || "Untitled task",
           prompt: safeText(value.prompt, 12000),
+          mode: value.mode === "team" ? "team" : "agent",
           model: safeText(value.model, 220),
           resolvedModel: safeText(value.resolvedModel, 220),
           autonomy: ["confirm", "auto", "readonly"].indexOf(value.autonomy) >= 0 ? value.autonomy : "confirm",
@@ -1716,12 +1784,81 @@
           changes: changes,
           plan: plan,
           pendingApproval: pending,
+          team: cleanTeam(value.team),
           answer: safeText(value.answer, MAX_TEXT),
           answerCapped: Boolean(value.answerCapped),
           error: safeText(value.error, 2000),
           cancelRequested: false,
           paused: Boolean(value.paused)
         };
+      }
+
+      function emptyTeam() {
+        return {
+          mode: "",
+          writerModel: "",
+          scoutModel: "",
+          plannerModel: "",
+          reviewerModel: "",
+          plan: "",
+          plannerSummary: "",
+          verification: [],
+          review: "",
+          reviewAvailable: true,
+          status: "",
+          elapsedMs: 0,
+          modelCalls: 0,
+          tokens: 0,
+          toolCalls: 0,
+          writerMutationSteps: 0,
+          functionalVerificationPassed: false,
+          parallelRequestedButDisabled: false,
+          completed: false
+        };
+      }
+
+      function cleanTeam(value) {
+        if (!value || typeof value !== "object") return null;
+        var team = emptyTeam();
+        team.mode = safeText(value.mode, 80);
+        team.writerModel = safeText(value.writerModel, 220);
+        team.scoutModel = safeText(value.scoutModel, 220);
+        team.plannerModel = safeText(value.plannerModel, 220);
+        team.reviewerModel = safeText(value.reviewerModel, 220);
+        team.plan = safeText(value.plan, MAX_TEXT);
+        team.plannerSummary = safeText(value.plannerSummary, MAX_TEXT);
+        team.verification = Array.isArray(value.verification)
+          ? value.verification.slice(-12).map(cleanVerification).filter(Boolean)
+          : [];
+        team.review = safeText(value.review, MAX_TEXT);
+        team.reviewAvailable = value.reviewAvailable !== false;
+        team.status = safeText(value.status, 80);
+        team.elapsedMs = Math.max(0, Math.min(86400000, safeNumber(value.elapsedMs)));
+        team.modelCalls = Math.max(0, Math.min(100000, safeNumber(value.modelCalls)));
+        team.tokens = Math.max(0, Math.min(100000000, safeNumber(value.tokens)));
+        team.toolCalls = Math.max(0, Math.min(100000, safeNumber(value.toolCalls)));
+        team.writerMutationSteps = Math.max(0, Math.min(100000, safeNumber(value.writerMutationSteps)));
+        team.functionalVerificationPassed = value.functionalVerificationPassed === true;
+        team.parallelRequestedButDisabled = Boolean(value.parallelRequestedButDisabled);
+        team.completed = Boolean(value.completed);
+        return team;
+      }
+
+      function cleanVerification(value) {
+        if (!value || typeof value !== "object") return null;
+        var command = safeText(value.command, 1200);
+        if (!command) return null;
+        return {
+          command: command,
+          passed: value.passed === true,
+          skippedByUser: value.skippedByUser === true || value.skipped_by_user === true,
+          output: safeText(value.output, MAX_TEXT)
+        };
+      }
+
+      function teamFor(task) {
+        if (!task.team) task.team = emptyTeam();
+        return task.team;
       }
 
       function cleanActivity(value) {
@@ -1825,6 +1962,11 @@
           state.selectedModel = els.model.value;
           persist();
         });
+        els.mode.addEventListener("change", function () {
+          state.mode = els.mode.value === "team" ? "team" : "agent";
+          persist();
+          renderComposerMode();
+        });
         els.autonomy.addEventListener("change", function () {
           state.autonomy = els.autonomy.value;
           persist();
@@ -1850,10 +1992,20 @@
       function renderAll() {
         renderConnection();
         renderModelSelect();
+        els.mode.value = state.mode;
         els.autonomy.value = state.autonomy;
+        renderComposerMode();
         els.runTask.disabled = !runtime.workspaceReady;
         renderBoard();
         renderInspector();
+      }
+
+      function renderComposerMode() {
+        if (els.mode.value === "team") {
+          els.modeNote.textContent = "Coding team uses read-only scouts, one writer, fixed repository checks, and an advisory reviewer. Confirm changes remains the default.";
+        } else {
+          els.modeNote.textContent = "Agent mode runs one local workspace agent. Confirm changes remains the default.";
+        }
       }
 
       function renderConnection() {
@@ -1973,8 +2125,9 @@
         });
         card.appendChild(element("span", "task-card-title", task.title));
         var meta = element("span", "task-card-meta");
-        var left = element("span", "task-card-model", displayModel(task));
-        left.title = displayModel(task);
+        var taskModel = displayTaskModel(task);
+        var left = element("span", "task-card-model", taskModel);
+        left.title = taskModel;
         meta.appendChild(left);
         var right = element("span", "", "");
         right.appendChild(element("span", "task-activity-dot " + (task.status === "working" ? "working" : "")));
@@ -1992,7 +2145,7 @@
           selectTask(task.id);
         });
         row.appendChild(element("span", "list-task-title", task.title));
-        row.appendChild(element("span", "list-task-model", displayModel(task)));
+        row.appendChild(element("span", "list-task-model", displayTaskModel(task)));
         row.appendChild(element("span", "list-task-time", relativeTime(task.startedAt || task.createdAt)));
         row.appendChild(createStatusBadge(task.status));
         return row;
@@ -2026,6 +2179,7 @@
         els.detailTitle.textContent = task.title;
         clear(els.detailMeta);
         appendMeta(els.detailMeta, "Model", displayModel(task));
+        appendMeta(els.detailMeta, "Mode", taskModeLabel(task.mode));
         appendMeta(els.detailMeta, "Permission", permissionLabel(task.autonomy));
         appendMeta(els.detailMeta, "Created", formatDate(task.createdAt));
         if (task.attempts) appendMeta(els.detailMeta, "Runs", String(task.attempts));
@@ -2080,7 +2234,7 @@
           duplicate.disabled = Boolean(runtime.activeTaskId);
           duplicate.addEventListener("click", function () {
             if (runtime.activeTaskId) return;
-            var fresh = makeTask(task.prompt, task.model, task.autonomy);
+            var fresh = makeTask(task.prompt, task.model, task.autonomy, task.mode);
             state.tasks.unshift(fresh);
             state.selectedId = fresh.id;
             persist();
@@ -2096,11 +2250,12 @@
         var pending = task.pendingApproval;
         if (!pending) return;
         var card = element("section", "approval-card");
+        var actor = task.mode === "team" ? "team writer" : "agent";
         var title = pending.kind === "plan" ? "Plan approval needed" : "Action approval needed";
         card.appendChild(element("div", "approval-card-title", title));
         var description = pending.kind === "plan"
-          ? "The agent is waiting for approval before it follows the proposed plan."
-          : "The agent is paused before " + (pending.tool || "a consequential action") + (pending.path ? " on " + pending.path : "") + ".";
+          ? "The " + actor + " is waiting for approval before it follows the proposed plan."
+          : "The " + actor + " is paused before " + (pending.tool || "a consequential action") + (pending.path ? " on " + pending.path : "") + ".";
         var paragraph = element("p", "", description);
         card.appendChild(paragraph);
         var actions = element("div", "approval-actions");
@@ -2127,9 +2282,12 @@
           error.appendChild(element("p", "error-text", task.error));
           els.activity.appendChild(error);
         }
+        if (task.mode === "team" && task.team) {
+          els.activity.appendChild(createTeamSummary(task.team));
+        }
         if (task.answer) {
           var answer = element("section", "answer-card");
-          answer.appendChild(element("div", "card-label", "Agent answer"));
+          answer.appendChild(element("div", "card-label", task.mode === "team" ? "Writer summary" : "Agent answer"));
           answer.appendChild(element("p", "answer-text", task.answer));
           els.activity.appendChild(answer);
         }
@@ -2231,19 +2389,85 @@
         });
       }
 
+      function createTeamSummary(team) {
+        var card = element("section", "team-summary-card");
+        var status = team.status ? teamStatusLabel(team.status) : "In progress";
+        card.appendChild(element("div", "card-label", "Coding team · " + status));
+
+        var details = [];
+        if (team.writerModel) details.push("Writer: " + team.writerModel);
+        if (team.scoutModel) details.push("Scouts: " + team.scoutModel);
+        if (team.plannerModel) details.push("Planner: " + team.plannerModel);
+        if (team.reviewerModel) details.push("Reviewer: " + team.reviewerModel);
+        if (team.mode) details.push("Topology: " + team.mode.replace(/_/g, " "));
+        if (team.parallelRequestedButDisabled) details.push("Parallel scouts requested, but this local engine ran them serially.");
+        if (team.completed) {
+          var metrics = [];
+          if (team.elapsedMs) metrics.push(formatElapsed(team.elapsedMs));
+          if (team.modelCalls) metrics.push(String(team.modelCalls) + " model call" + (team.modelCalls === 1 ? "" : "s"));
+          if (team.toolCalls) metrics.push(String(team.toolCalls) + " tool call" + (team.toolCalls === 1 ? "" : "s"));
+          if (team.writerMutationSteps) metrics.push(String(team.writerMutationSteps) + " writer mutation step" + (team.writerMutationSteps === 1 ? "" : "s"));
+          if (team.functionalVerificationPassed) metrics.push("functional check passed");
+          if (metrics.length) details.push(metrics.join(" · "));
+        }
+        if (details.length) card.appendChild(element("p", "team-summary-meta", details.join("\n")));
+
+        if (team.verification.length) {
+          var checks = element("div", "team-verification-list");
+          team.verification.forEach(function (result) {
+            var kind = result.skippedByUser ? "declined" : result.passed ? "passed" : "failed";
+            var item = element("details", "team-verification-item " + kind);
+            var icon = result.skippedByUser ? "•" : result.passed ? "✓" : "×";
+            var label = icon + " " + result.command + (result.skippedByUser ? " (declined)" : result.passed ? " (passed)" : " (failed)");
+            item.appendChild(element("summary", "", label));
+            if (result.output) item.appendChild(element("pre", "change-code", result.output));
+            checks.appendChild(item);
+          });
+          card.appendChild(checks);
+        }
+        if (team.review) {
+          card.appendChild(element("div", "card-label", team.reviewAvailable ? "Reviewer" : "Reviewer unavailable"));
+          card.appendChild(element("p", "team-summary-meta", team.review));
+        }
+        return card;
+      }
+
       function renderPlan(task) {
         clear(els.plan);
-        if (!task.plan) {
-          els.plan.appendChild(element("div", "empty-panel", "The agent has not published a plan for this task. Confirm changes to request a plan before consequential actions."));
-          return;
+        var hasContent = false;
+        if (task.mode === "team" && task.team && task.team.plan) {
+          var teamPlan = element("section", "plan-card");
+          teamPlan.appendChild(element("div", "card-label", "Team topology"));
+          teamPlan.appendChild(element("pre", "plan-body", task.team.plan));
+          var planningNote = task.team.plannerSummary
+            ? "The read-only planner synthesis is included below. The writer still inspects the workspace itself."
+            : "The team topology defines the read-only scouts, sole writer, verifier, and reviewer.";
+          teamPlan.appendChild(element("div", "change-footer", planningNote));
+          els.plan.appendChild(teamPlan);
+          if (task.team.plannerSummary) {
+            var planner = element("section", "plan-card");
+            planner.appendChild(element("div", "card-label", "Planner synthesis"));
+            planner.appendChild(element("pre", "plan-body", task.team.plannerSummary));
+            els.plan.appendChild(planner);
+          }
+          hasContent = true;
         }
-        var card = element("section", "plan-card");
-        var label = task.plan.status === "pending" ? "Plan awaiting approval" : "Agent plan";
-        card.appendChild(element("div", "card-label", label));
-        card.appendChild(element("pre", "plan-body", task.plan.text));
-        var note = task.plan.status === "declined" ? "Plan was declined." : task.plan.status === "approved" ? "Plan was approved." : "Plan shown for review.";
-        card.appendChild(element("div", "change-footer", note));
-        els.plan.appendChild(card);
+        if (task.plan) {
+          var card = element("section", "plan-card");
+          var label = task.plan.status === "pending" ? "Plan awaiting approval" : task.mode === "team" ? "Writer plan" : "Agent plan";
+          card.appendChild(element("div", "card-label", label));
+          card.appendChild(element("pre", "plan-body", task.plan.text));
+          var note = task.plan.status === "declined" ? "Plan was declined." : task.plan.status === "approved" ? "Plan was approved." : "Plan shown for review.";
+          card.appendChild(element("div", "change-footer", note));
+          els.plan.appendChild(card);
+          hasContent = true;
+        }
+        if (!hasContent) {
+          var emptyMessage = task.mode === "team"
+            ? "The coding team has not published its topology or writer plan yet."
+            : "The agent has not published a plan for this task. Confirm changes to request a plan before consequential actions.";
+          els.plan.appendChild(element("div", "empty-panel", emptyMessage));
+        }
       }
 
       function appendMeta(container, label, value) {
@@ -2288,10 +2512,11 @@
           return;
         }
         els.prompt.removeAttribute("aria-invalid");
-        var task = makeTask(prompt, els.model.value, els.autonomy.value);
+        var task = makeTask(prompt, els.model.value, els.autonomy.value, els.mode.value);
         state.tasks.unshift(task);
         trimSavedTasks();
         state.selectedId = task.id;
+        state.mode = els.mode.value === "team" ? "team" : "agent";
         state.selectedModel = els.model.value;
         state.autonomy = els.autonomy.value;
         els.prompt.value = "";
@@ -2304,14 +2529,16 @@
         }
       }
 
-      function makeTask(prompt, model, autonomy) {
+      function makeTask(prompt, model, autonomy, mode) {
         var title = prompt.replace(/\s+/g, " ").trim();
         if (title.length > 92) title = title.slice(0, 89) + "...";
+        var taskMode = mode === "team" ? "team" : "agent";
         var task = {
           id: makeId(),
           activeRunId: null,
           title: title || "Untitled task",
           prompt: safeText(prompt, 12000),
+          mode: taskMode,
           model: safeText(model, 220),
           resolvedModel: "",
           autonomy: ["confirm", "auto", "readonly"].indexOf(autonomy) >= 0 ? autonomy : "confirm",
@@ -2324,13 +2551,14 @@
           changes: [],
           plan: null,
           pendingApproval: null,
+          team: null,
           answer: "",
           answerCapped: false,
           error: "",
           cancelRequested: false,
           paused: false
         };
-        addActivity(task, "info", "Task queued", "Permission: " + permissionLabel(task.autonomy) + ". Model: " + (task.model || "server default") + ".");
+        addActivity(task, "info", task.mode === "team" ? "Coding team queued" : "Task queued", "Mode: " + taskModeLabel(task.mode) + ". Permission: " + permissionLabel(task.autonomy) + ". Model: " + (task.model || "server default") + ".");
         return task;
       }
 
@@ -2395,23 +2623,22 @@
         task.error = "";
         task.plan = null;
         task.pendingApproval = null;
+        task.team = task.mode === "team" ? emptyTeam() : null;
         task.cancelRequested = false;
         task.paused = false;
         runtime.activeTaskId = task.id;
-        addActivity(task, "info", "Agent started", "Connecting to the local research agent.");
+        addActivity(task, "info", task.mode === "team" ? "Coding team started" : "Agent started", task.mode === "team" ? "Connecting the local scouts, writer, verifier, and reviewer." : "Connecting to the local research agent.");
         persist();
         renderAll();
 
         var controller = new AbortController();
         runtime.controllers.set(task.id, { controller: controller, runId: runId });
         try {
-          var payload = {
-            id: runId,
-            question: task.prompt,
-            autonomy: task.autonomy
-          };
+          var payload = task.mode === "team"
+            ? { id: runId, task: task.prompt, autonomy: task.autonomy }
+            : { id: runId, question: task.prompt, autonomy: task.autonomy };
           if (task.model) payload.model = task.model;
-          var response = await fetch("/api/research", {
+          var response = await fetch(task.mode === "team" ? "/api/team" : "/api/research", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -2449,8 +2676,8 @@
           } else {
             task.status = "review";
             task.error = friendlyError(error);
-            addActivity(task, "error", "Local run failed", task.error);
-            showToast("The local agent could not complete this task.", "error");
+            addActivity(task, "error", task.mode === "team" ? "Coding team failed" : "Local run failed", task.error);
+            showToast(task.mode === "team" ? "The local coding team could not complete this task." : "The local agent could not complete this task.", "error");
           }
         } finally {
           var current = runtime.controllers.get(task.id);
@@ -2465,13 +2692,133 @@
         }
       }
 
+      function handleTeamStreamEvent(task, event) {
+        var type = safeText(event.type, 80);
+        var team = teamFor(task);
+        if (type === "team_meta") {
+          team.writerModel = safeText(event.writerModel, 220);
+          team.scoutModel = safeText(event.scoutModel, 220);
+          team.plannerModel = safeText(event.plannerModel, 220);
+          team.reviewerModel = safeText(event.reviewerModel, 220);
+          team.mode = safeText(event.mode, 80);
+          team.parallelRequestedButDisabled = event.parallelRequestedButDisabled === true;
+          task.resolvedModel = team.writerModel || task.resolvedModel;
+          var topology = team.mode ? team.mode.replace(/_/g, " ") : "serial";
+          var models = [];
+          if (team.writerModel) models.push("writer " + team.writerModel);
+          if (team.scoutModel) models.push("scouts " + team.scoutModel);
+          addActivity(task, "info", "Coding team connected", (models.length ? models.join(" · ") + ". " : "") + "Topology: " + topology + ".");
+          if (team.parallelRequestedButDisabled) {
+            addActivity(task, "warning", "Parallel scouts unavailable", "This local engine does not currently permit parallel scouts, so the team is running them serially.");
+          }
+          return true;
+        }
+        if (type === "knowledge_plugins_used") {
+          var plugins = Array.isArray(event.plugins) ? event.plugins : [];
+          addActivity(task, "info", "Knowledge plugins used", plugins.length ? String(plugins.length) + " installed GitHub knowledge plugin(s) were provided as untrusted reference context." : "Installed knowledge plugin context was provided as untrusted reference material.", stringifyPayload(plugins));
+          return true;
+        }
+        if (type === "knowledge_plugin_warning") {
+          addActivity(task, "warning", "Knowledge plugin warning", safeText(event.message, 1600));
+          return true;
+        }
+        if (type === "team_plan") {
+          team.plan = safeText(stringifyPayload(event.plan), MAX_TEXT);
+          addActivity(task, "plan", "Team topology ready", "Read-only scouts, one writer, fixed verification, and an advisory reviewer are scheduled.", team.plan);
+          return true;
+        }
+        if (type === "team_scout_started") {
+          addActivity(task, "info", teamRoleLabel(event.role) + " started", "This scout can inspect the workspace but cannot edit it.");
+          return true;
+        }
+        if (type === "team_scout_finished") {
+          var scoutSteps = safeNumber(event.steps);
+          addActivity(task, "success", teamRoleLabel(event.role) + " finished", scoutSteps ? String(scoutSteps) + " read-only tool step(s)." : "Read-only hand-off ready.");
+          return true;
+        }
+        if (type === "team_planner_started") {
+          addActivity(task, "info", "Planner started", "Synthesizing the scout hand-offs without editing the workspace.");
+          return true;
+        }
+        if (type === "team_planner_finished") {
+          team.plannerSummary = safeText(event.summary, MAX_TEXT);
+          addActivity(task, "plan", "Planner synthesis ready", team.plannerSummary || "The planner finished without a summary.");
+          return true;
+        }
+        if (type === "team_writer_started") {
+          var round = safeNumber(event.repairRound);
+          addActivity(task, "info", round ? "Writer started repair round " + String(round) : "Writer started", "The sole writer may inspect and propose workspace edits. Approval rules still apply.");
+          return true;
+        }
+        if (type === "team_writer_finished") {
+          var writerSteps = safeNumber(event.steps);
+          addActivity(task, "success", "Writer finished", writerSteps ? String(writerSteps) + " tool step(s) recorded." : "The writer returned control to verification.");
+          return true;
+        }
+        if (type === "team_verification_started") {
+          addActivity(task, "info", "Verification started", safeText(event.command, 1200) || "Running a repository-detected check.");
+          return true;
+        }
+        if (type === "team_verification_finished") {
+          var verification = cleanVerification(event.result);
+          if (verification) {
+            var existing = team.verification.findIndex(function (result) { return result.command === verification.command; });
+            if (existing >= 0) team.verification[existing] = verification;
+            else team.verification.push(verification);
+            var resultKind = verification.skippedByUser ? "warning" : verification.passed ? "success" : "error";
+            var resultTitle = verification.skippedByUser ? "Verification declined" : verification.passed ? "Verification passed" : "Verification failed";
+            addActivity(task, resultKind, resultTitle, verification.command, verification.output);
+          }
+          return true;
+        }
+        if (type === "team_reviewer_finished") {
+          if (event.available === false) {
+            team.reviewAvailable = false;
+            addActivity(task, "warning", "Reviewer unavailable", "The team outcome is still recorded, but its advisory review model did not return a result.");
+          } else {
+            addActivity(task, "info", "Reviewer finished", "The advisory review will be included in the final team result.");
+          }
+          return true;
+        }
+        if (type === "team_result") {
+          team.status = safeText(event.status, 80);
+          team.verification = Array.isArray(event.verification)
+            ? event.verification.slice(-12).map(cleanVerification).filter(Boolean)
+            : team.verification;
+          team.review = safeText(event.review, MAX_TEXT);
+          team.reviewAvailable = event.reviewAvailable !== false;
+          team.elapsedMs = Math.max(0, Math.min(86400000, safeNumber(event.elapsedMs)));
+          team.modelCalls = Math.max(0, Math.min(100000, safeNumber(event.modelCalls)));
+          team.tokens = Math.max(0, Math.min(100000000, safeNumber(event.tokens)));
+          team.toolCalls = Math.max(0, Math.min(100000, safeNumber(event.toolCalls)));
+          team.writerMutationSteps = Math.max(0, Math.min(100000, safeNumber(event.writerMutationSteps)));
+          team.functionalVerificationPassed = event.functionalVerificationPassed === true;
+          if (!team.plan && event.plan && typeof event.plan === "object") {
+            team.plan = safeText(stringifyPayload(event.plan), MAX_TEXT);
+          }
+          team.completed = true;
+          task.pendingApproval = null;
+          task.status = teamTaskStatus(team.status);
+          task.completedAt = Date.now();
+          var teamLabel = teamStatusLabel(team.status);
+          addActivity(task, task.status === "done" ? "success" : "warning", "Team result: " + teamLabel, task.status === "done" ? "Review the recorded verifier evidence and advisory review." : "The team could not establish a verified completion. Review the recorded evidence before retrying.");
+          return true;
+        }
+        return false;
+      }
+
       function handleStreamEvent(task, runId, event) {
         if (!event || typeof event !== "object" || task.activeRunId !== runId) return;
         var type = safeText(event.type, 80);
+        if (task.mode === "team" && handleTeamStreamEvent(task, event)) {
+          persist();
+          renderAll();
+          return;
+        }
         if (type === "meta") {
           task.resolvedModel = safeText(event.model, 220) || task.resolvedModel;
           var info = task.resolvedModel ? "Model: " + task.resolvedModel + "." : "Local agent accepted the task.";
-          addActivity(task, "info", "Agent connected", info);
+          addActivity(task, "info", task.mode === "team" ? "Writer connected" : "Agent connected", info);
           if (Array.isArray(event.warnings) && event.warnings.length) {
             addActivity(task, "warning", "Safety warning", event.warnings.length + " context warning(s) reported by the engine.", stringifyPayload(event.warnings));
           }
@@ -2487,7 +2834,7 @@
               at: Date.now()
             };
           }
-          addActivity(task, "plan", "Agent plan received", task.autonomy === "confirm" ? "Approval is required before the plan runs." : "Plan is visible for review.");
+          addActivity(task, "plan", task.mode === "team" ? "Writer plan received" : "Agent plan received", task.autonomy === "confirm" ? "Approval is required before the plan runs." : "Plan is visible for review.");
         } else if (type === "approval_request") {
           var tool = safeText(event.tool, 120) || "consequential action";
           var args = event.args && typeof event.args === "object" ? event.args : {};
@@ -2502,7 +2849,7 @@
           };
           if (tool === "fs_write" || tool === "fs_edit") {
             recordChange(task, tool, args, "pending");
-            addActivity(task, "warning", "File change awaits approval", path || "The agent requested a workspace change.", stringifyPayload(args));
+            addActivity(task, "warning", "File change awaits approval", path || (task.mode === "team" ? "The team writer requested a workspace change." : "The agent requested a workspace change."), stringifyPayload(args));
           } else {
             addActivity(task, "warning", "Action awaits approval", tool + (path ? " on " + path : "") + ".", stringifyPayload(args));
           }
@@ -2514,7 +2861,8 @@
           if (stepTool === "fs_write" || stepTool === "fs_edit") {
             updateChangeFromStep(task, stepTool, stepArgs, ok, preview);
           }
-          addActivity(task, ok ? "success" : "error", (ok ? "Completed " : "Failed ") + stepTool, preview || (ok ? "The local agent completed this tool step." : "The local agent reported a failed tool step."), stringifyPayload(stepArgs));
+          var performer = task.mode === "team" ? "team writer" : "local agent";
+          addActivity(task, ok ? "success" : "error", (ok ? "Completed " : "Failed ") + stepTool, preview || (ok ? "The " + performer + " completed this tool step." : "The " + performer + " reported a failed tool step."), stringifyPayload(stepArgs));
         } else if (type === "skill_applied") {
           addActivity(task, "info", "Skill applied", safeText(event.name, 220) || "A local task skill was added.");
         } else if (type === "memory_used") {
@@ -2528,24 +2876,28 @@
         } else if (type === "answer") {
           task.answer = safeText(event.text, MAX_TEXT);
           task.answerCapped = event.capped === true;
-          addActivity(task, "success", "Agent answer ready", event.capped ? "The agent reached its iteration cap." : "The local agent finished its answer.");
+          addActivity(task, "success", task.mode === "team" ? "Writer summary ready" : "Agent answer ready", event.capped ? "The agent reached its iteration cap." : task.mode === "team" ? "The writer finished its summary." : "The local agent finished its answer.");
         } else if (type === "done") {
           task.pendingApproval = null;
-          task.status = "done";
-          task.completedAt = Date.now();
-          addActivity(task, "success", "Task complete", event.steps ? String(event.steps) + " agent step(s) completed." : "The local run completed.");
+          if (task.mode === "team" && task.team && task.team.completed) {
+            addActivity(task, task.status === "done" ? "success" : "warning", "Team stream complete", "The final team result and verifier evidence are recorded above.");
+          } else {
+            task.status = "done";
+            task.completedAt = Date.now();
+            addActivity(task, "success", task.mode === "team" ? "Team complete" : "Task complete", event.steps ? String(event.steps) + " agent step(s) completed." : "The local run completed.");
+          }
         } else if (type === "cancelled") {
           task.pendingApproval = null;
           task.status = task.cancelRequested ? "queued" : "review";
           task.paused = Boolean(task.cancelRequested);
           task.completedAt = Date.now();
-          addActivity(task, "warning", "Run cancelled", task.cancelRequested ? "This task remains queued." : "The local engine cancelled this run.");
+          addActivity(task, "warning", task.mode === "team" ? "Team run cancelled" : "Run cancelled", task.cancelRequested ? "This task remains queued." : "The local engine cancelled this run.");
         } else if (type === "error") {
           task.pendingApproval = null;
           task.status = "review";
           task.completedAt = Date.now();
           task.error = safeText(event.message, 2000) || "The local engine reported an error.";
-          addActivity(task, "error", "Agent error", task.error);
+          addActivity(task, "error", task.mode === "team" ? "Team error" : "Agent error", task.error);
         }
         persist();
         renderAll();
@@ -2822,6 +3174,38 @@
         return task.resolvedModel || task.model || runtime.defaultModel || "server default";
       }
 
+      function taskModeLabel(mode) {
+        return mode === "team" ? "coding team" : "agent";
+      }
+
+      function displayTaskModel(task) {
+        return taskModeLabel(task.mode) + " · " + displayModel(task);
+      }
+
+      function normalizedTeamStatus(status) {
+        return safeText(status, 80).toLowerCase().replace(/[^a-z]/g, "");
+      }
+
+      function teamStatusLabel(status) {
+        var normalized = normalizedTeamStatus(status);
+        if (normalized === "verified") return "Verified";
+        if (normalized === "checkspassed") return "Checks passed";
+        if (normalized === "verificationdeclined") return "Verification declined";
+        if (normalized === "plandeclined") return "Plan declined";
+        if (normalized === "needsattention") return "Needs attention";
+        return status ? safeText(status, 80) : "In progress";
+      }
+
+      function teamTaskStatus(status) {
+        var normalized = normalizedTeamStatus(status);
+        return normalized === "verified" ? "done" : "review";
+      }
+
+      function teamRoleLabel(role) {
+        var normalized = safeText(role, 120).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").trim();
+        return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "Scout";
+      }
+
       function permissionLabel(mode) {
         if (mode === "auto") return "agent can act";
         if (mode === "readonly") return "read-only";
@@ -2850,6 +3234,13 @@
         } catch (_) {
           return "";
         }
+      }
+
+      function formatElapsed(milliseconds) {
+        var seconds = Math.max(0, Math.round(milliseconds / 1000));
+        if (seconds < 60) return String(seconds) + "s";
+        var minutes = Math.floor(seconds / 60);
+        return String(minutes) + "m " + String(seconds % 60) + "s";
       }
 
       function relativeTime(timestamp) {

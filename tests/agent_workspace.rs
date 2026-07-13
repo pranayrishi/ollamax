@@ -23,7 +23,8 @@ const TEST_TOKEN: &str = "agent-workspace-test-token-0123456789";
 const VALIDATE_EDIT_COMMAND: &str = r#"findstr /C:"hello Ollamax" src\example.txt >NUL"#;
 
 #[cfg(not(windows))]
-const VALIDATE_EDIT_COMMAND: &str = "test -f src/example.txt && grep -q 'hello Ollamax' src/example.txt";
+const VALIDATE_EDIT_COMMAND: &str =
+    "test -f src/example.txt && grep -q 'hello Ollamax' src/example.txt";
 
 async fn fake_ollama() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -86,7 +87,9 @@ async fn handle_fake_ollama(stream: TcpStream, calls: Arc<AtomicUsize>) -> std::
                 "tool":"shell",
                 "args":{"command":VALIDATE_EDIT_COMMAND}
             }),
-            _ => json!({"action":"answer","text":"Updated src/example.txt and validated the change."}),
+            _ => {
+                json!({"action":"answer","text":"Updated src/example.txt and validated the change."})
+            }
         };
         json!({
             "response": action.to_string(),
@@ -115,6 +118,12 @@ async fn handle_fake_ollama(stream: TcpStream, calls: Arc<AtomicUsize>) -> std::
 }
 
 async fn confirm_fake_ollama() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+    confirm_fake_ollama_with_empty_plan(false).await
+}
+
+async fn confirm_fake_ollama_with_empty_plan(
+    empty_plan: bool,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
@@ -134,7 +143,8 @@ async fn confirm_fake_ollama() -> (std::net::SocketAddr, tokio::task::JoinHandle
                 let mut content_length = 0usize;
                 loop {
                     let mut line = String::new();
-                    if reader.read_line(&mut line).await.is_err() || line == "\r\n" || line == "\n" {
+                    if reader.read_line(&mut line).await.is_err() || line == "\r\n" || line == "\n"
+                    {
                         break;
                     }
                     if let Some((name, value)) = line.split_once(':') {
@@ -149,18 +159,23 @@ async fn confirm_fake_ollama() -> (std::net::SocketAddr, tokio::task::JoinHandle
                 }
                 let request: Value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({}));
                 let prompt = request.get("prompt").and_then(Value::as_str).unwrap_or("");
-                let action = if prompt.contains("List the concrete steps") {
-                    Value::String("1. Update the greeting.\n2. Verify the result.".to_string())
+                let response_text = if prompt.contains("List the concrete steps") {
+                    if empty_plan {
+                        String::new()
+                    } else {
+                        "1. Update the greeting.\n2. Verify the result.".to_string()
+                    }
                 } else if calls.fetch_add(1, Ordering::SeqCst) == 0 {
                     json!({
                         "action":"use_tool",
                         "tool":"fs_edit",
                         "args":{"path":"src/example.txt","old_string":"hello world","new_string":"hello confirmed"}
                     })
+                    .to_string()
                 } else {
-                    json!({"action":"answer","text":"Applied the confirmed change."})
+                    json!({"action":"answer","text":"Applied the confirmed change."}).to_string()
                 };
-                let payload = json!({"response": action.to_string(), "model":"test-coder", "done":true});
+                let payload = json!({"response": response_text, "model":"test-coder", "done":true});
                 let response_body = serde_json::to_string(&payload).unwrap();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
@@ -221,11 +236,15 @@ async fn post_sse_approving_real_prompts(
             let Some(data_line) = frame.lines().find(|line| line.starts_with("data:")) else {
                 continue;
             };
-            let event: Value = match serde_json::from_str(data_line.trim_start_matches("data:").trim()) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            if !matches!(event.get("type").and_then(Value::as_str), Some("plan") | Some("approval_request")) {
+            let event: Value =
+                match serde_json::from_str(data_line.trim_start_matches("data:").trim()) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+            if !matches!(
+                event.get("type").and_then(Value::as_str),
+                Some("plan") | Some("approval_request")
+            ) {
                 continue;
             }
             let approval_id = event
@@ -239,7 +258,10 @@ async fn post_sse_approving_real_prompts(
                 &json!({"id":id,"approvalId":approval_id,"decision":true}),
             )
             .await;
-            assert!(response.contains("\"delivered\":true"), "approval response: {response}");
+            assert!(
+                response.contains("\"delivered\":true"),
+                "approval response: {response}"
+            );
             approved += 1;
         }
     }
@@ -290,10 +312,22 @@ async fn agent_edits_and_validates_only_the_approved_workspace() {
 
     let updated = std::fs::read_to_string(workspace.path().join("src/example.txt")).unwrap();
     assert_eq!(updated, "hello Ollamax\n");
-    assert!(response.contains("\"tool\":\"fs_list\""), "response: {response}");
-    assert!(response.contains("\"tool\":\"fs_edit\""), "response: {response}");
-    assert!(response.contains("\"tool\":\"shell\""), "response: {response}");
-    assert!(response.contains("Updated src/example.txt"), "response: {response}");
+    assert!(
+        response.contains("\"tool\":\"fs_list\""),
+        "response: {response}"
+    );
+    assert!(
+        response.contains("\"tool\":\"fs_edit\""),
+        "response: {response}"
+    );
+    assert!(
+        response.contains("\"tool\":\"shell\""),
+        "response: {response}"
+    );
+    assert!(
+        response.contains("Updated src/example.txt"),
+        "response: {response}"
+    );
 }
 
 #[tokio::test]
@@ -319,12 +353,12 @@ async fn confirm_mode_requires_the_server_approval_channel_before_editing() {
 
     let id = "agent-confirm-e2e";
     let request_body = json!({
-            "id":id,
-            "question":"Change the greeting only after approval.",
-            "model":"test-coder",
-            "autonomy":"confirm",
-            "max_iterations":5
-        });
+        "id":id,
+        "question":"Change the greeting only after approval.",
+        "model":"test-coder",
+        "autonomy":"confirm",
+        "max_iterations":5
+    });
     // An early guessed decision must not queue up or release the future plan.
     let early = post_and_read(
         addr,
@@ -332,7 +366,10 @@ async fn confirm_mode_requires_the_server_approval_channel_before_editing() {
         &json!({"id":id,"approvalId":"guessed-nonce","decision":true}),
     )
     .await;
-    assert!(early.contains("\"delivered\":false"), "early response: {early}");
+    assert!(
+        early.contains("\"delivered\":false"),
+        "early response: {early}"
+    );
     let response = tokio::time::timeout(
         Duration::from_secs(10),
         post_sse_approving_real_prompts(addr, "/api/research", &request_body),
@@ -347,7 +384,71 @@ async fn confirm_mode_requires_the_server_approval_channel_before_editing() {
         std::fs::read_to_string(workspace.path().join("src/example.txt")).unwrap(),
         "hello confirmed\n"
     );
-    assert!(response.contains("\"type\":\"plan\""), "response: {response}");
-    assert!(response.contains("\"type\":\"approval_request\""), "response: {response}");
-    assert!(response.contains("Applied the confirmed change"), "response: {response}");
+    assert!(
+        response.contains("\"type\":\"plan\""),
+        "response: {response}"
+    );
+    assert!(
+        response.contains("\"type\":\"approval_request\""),
+        "response: {response}"
+    );
+    assert!(
+        response.contains("Applied the confirmed change"),
+        "response: {response}"
+    );
+}
+
+#[tokio::test]
+async fn confirm_mode_fails_closed_when_intent_preview_is_empty() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(workspace.path().join("src")).unwrap();
+    std::fs::write(workspace.path().join("src/example.txt"), "hello world\n").unwrap();
+
+    let (ollama_addr, fake_ollama_task) = confirm_fake_ollama_with_empty_plan(true).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(serve_listener_in_workspace_with_token(
+        listener,
+        Config {
+            ollama_url: format!("http://{ollama_addr}"),
+            default_model: "test-coder".to_string(),
+            ..Config::default()
+        },
+        workspace.path().to_path_buf(),
+        TEST_TOKEN,
+    ));
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(10),
+        post_and_read(
+            addr,
+            "/api/research",
+            &json!({
+                "id":"empty-confirm-plan",
+                "question":"Change the greeting only after an approved plan.",
+                "model":"test-coder",
+                "autonomy":"confirm",
+                "max_iterations":5
+            }),
+        ),
+    )
+    .await
+    .expect("empty-plan request timed out");
+
+    server_task.abort();
+    fake_ollama_task.abort();
+
+    assert!(
+        response.contains("intent-preview plan generation returned an empty plan"),
+        "response: {response}"
+    );
+    assert!(
+        !response.contains("\"type\":\"approval_request\""),
+        "an unavailable plan must not fall through to an edit approval: {response}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("src/example.txt")).unwrap(),
+        "hello world\n",
+        "no file action may run when confirm-mode planning fails"
+    );
 }

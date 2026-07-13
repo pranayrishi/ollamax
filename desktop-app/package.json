@@ -1,8 +1,8 @@
 {
   "name": "ollama-forge-app",
   "productName": "Ollamax",
-  "version": "0.1.0",
-  "description": "Local-first AI coding — a standalone desktop app. Chat, agent, and parallel build on your own hardware via local Ollama.",
+  "version": "0.2.0",
+  "description": "Local-first AI coding — a standalone desktop app with Agent and controlled Team workflows on your own hardware via local Ollama.",
   "author": "Ollamax",
   "license": "MIT",
   "homepage": "https://github.com/pranayrishi/ollamax-releases",
@@ -17,8 +17,8 @@
     "dist:linux": "npm run prepare-assets && electron-builder --linux"
   },
   "devDependencies": {
-    "electron": "^33.4.11",
-    "electron-builder": "^25.1.8",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
     "@electron/fuses": "^1.8.0"
   },
   "dependencies": {
@@ -59,7 +59,6 @@
       "entitlementsInherit": "assets/entitlements.mac.plist"
     },
     "win": {
-      "artifactName": "Ollamax-windows-${arch}.${ext}",
       "target": [
         { "target": "nsis", "arch": ["x64"] },
         { "target": "portable", "arch": ["x64"] }
@@ -68,6 +67,7 @@
     },
     "linux": {
       "artifactName": "Ollamax-linux-${arch}.${ext}",
+      "icon": "assets/icon.png",
       "maintainer": "Ollamax <74742835+pranayrishi@users.noreply.github.com>",
       "target": [
         { "target": "AppImage", "arch": ["x64"] },
@@ -76,9 +76,13 @@
       "category": "Development"
     },
     "nsis": {
+      "artifactName": "Ollamax-windows-${arch}-setup.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "portable": {
+      "artifactName": "Ollamax-windows-${arch}-portable.${ext}"
     },
     "afterPack": "./scripts/afterPack.js"
   }

@@ -118,7 +118,7 @@ pub fn analyze_with_threshold(records: &[ReplayRecord], threshold: usize) -> Ins
             models,
         })
         .collect();
-    repeated_tasks.sort_by(|a, b| b.count.cmp(&a.count));
+    repeated_tasks.sort_by_key(|pattern| std::cmp::Reverse(pattern.count));
 
     // Repeated system prompts: same idea but on the (optional) system field.
     let mut by_system: HashMap<String, (usize, Vec<String>)> = HashMap::new();
@@ -146,7 +146,7 @@ pub fn analyze_with_threshold(records: &[ReplayRecord], threshold: usize) -> Ins
             models,
         })
         .collect();
-    repeated_systems.sort_by(|a, b| b.count.cmp(&a.count));
+    repeated_systems.sort_by_key(|pattern| std::cmp::Reverse(pattern.count));
 
     // Tool-call chain extraction: every agent record's prompt is the
     // running transcript, which contains lines like:
@@ -176,7 +176,7 @@ pub fn analyze_with_threshold(records: &[ReplayRecord], threshold: usize) -> Ins
             models,
         })
         .collect();
-    repeated_tool_chains.sort_by(|a, b| b.count.cmp(&a.count));
+    repeated_tool_chains.sort_by_key(|pattern| std::cmp::Reverse(pattern.count));
 
     InstinctsReport {
         total_records,

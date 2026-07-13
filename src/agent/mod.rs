@@ -74,6 +74,27 @@ pub trait ApprovalPolicy: Send + Sync {
     async fn approve_plan(&self, _plan: &str) -> Approval {
         Approval::Allow
     }
+    /// Whether this caller requires an intent-preview plan to be generated and
+    /// approved before a mutating run begins. Keeping this explicit lets
+    /// automatic and read-only callers avoid an unnecessary planning request,
+    /// while confirm-mode callers fail closed if the preview cannot be made.
+    fn requires_plan_approval(&self) -> bool {
+        false
+    }
+}
+
+/// Explicit opt-in policy for embedding/tests that intentionally allow every
+/// action. Team workflows require an [`ApprovalPolicy`] rather than treating a
+/// missing policy as implicit permission, so callers must choose this type
+/// deliberately when they want unattended execution.
+#[derive(Debug, Default)]
+pub struct AllowAllApproval;
+
+#[async_trait::async_trait]
+impl ApprovalPolicy for AllowAllApproval {
+    async fn approve(&self, _tool: &str, _args: &Value) -> Approval {
+        Approval::Allow
+    }
 }
 
 /// Tools that mutate the workspace or execute code — these are gated by the
@@ -117,9 +138,19 @@ pub struct AgentTrace {
     pub answer: String,
     /// True if the loop hit `MAX_ITERATIONS` before the model gave an answer.
     pub iteration_capped: bool,
+    /// True when an approval policy rejected the intent-preview plan before
+    /// any tool could be invoked. Callers can distinguish an explicit human
+    /// stop from a completed no-op task.
+    pub plan_declined: bool,
+    /// Successful local generation calls, including an intent-preview plan
+    /// when one was requested. This makes team/evaluation telemetry factual
+    /// rather than estimating calls from tool steps.
+    pub model_calls: u32,
+    /// Sum of Ollama-reported generated tokens across successful calls.
+    pub tokens_generated: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentStep {
     pub iteration: usize,
     pub tool: String,
@@ -158,9 +189,10 @@ impl Agent {
         self
     }
 
-    /// One short model call to produce a numbered plan for `task`. Best-effort:
-    /// returns empty on failure so planning never blocks the run.
-    async fn generate_plan(&self, task: &str) -> String {
+    /// One short model call to produce a numbered plan for `task`. When a
+    /// caller explicitly requires plan approval, an unavailable or empty plan
+    /// is an error: execution must not bypass the promised approval gate.
+    async fn generate_plan(&self, task: &str) -> Result<(String, u32, usize)> {
         let opts = GenerateOptions {
             model: self.model.clone(),
             prompt: format!(
@@ -174,10 +206,16 @@ impl Agent {
             keep_alive: Some(self.keep_alive.clone()),
             ..Default::default()
         };
-        match self.provider.generate(opts).await {
-            Ok(r) => r.content.trim().to_string(),
-            Err(_) => String::new(),
+        let response = self
+            .provider
+            .generate(opts)
+            .await
+            .context("agent intent-preview plan generation")?;
+        let plan = response.content.trim().to_string();
+        if plan.is_empty() {
+            anyhow::bail!("agent intent-preview plan generation returned an empty plan");
         }
+        Ok((plan, 1, response.tokens_generated))
     }
 
     /// Run the agent loop. `on_step` is called for each tool invocation so
@@ -218,19 +256,26 @@ impl Agent {
             steps: Vec::new(),
             answer: String::new(),
             iteration_capped: false,
+            plan_declined: false,
+            model_calls: 0,
+            tokens_generated: 0,
         };
 
         // Intent Preview: propose a plan up front and let the user gate it.
         if self.plan {
-            if let Some(policy) = &self.approval {
-                let plan = self.generate_plan(task).await;
-                if !plan.is_empty() && policy.approve_plan(&plan).await == Approval::Deny {
-                    info!("agent: plan declined by user before execution");
-                    trace.answer = format!(
-                        "Plan declined — nothing was executed. The proposed plan was:\n\n{plan}"
-                    );
-                    return Ok(trace);
-                }
+            let policy = self.approval.as_ref().ok_or_else(|| {
+                anyhow!("agent intent-preview planning requires an approval policy")
+            })?;
+            let (plan, calls, tokens) = self.generate_plan(task).await?;
+            trace.model_calls = trace.model_calls.saturating_add(calls);
+            trace.tokens_generated = trace.tokens_generated.saturating_add(tokens);
+            if policy.approve_plan(&plan).await == Approval::Deny {
+                info!("agent: plan declined by user before execution");
+                trace.plan_declined = true;
+                trace.answer = format!(
+                    "Plan declined — nothing was executed. The proposed plan was:\n\n{plan}"
+                );
+                return Ok(trace);
             }
         }
 
@@ -265,6 +310,8 @@ impl Agent {
                 .generate(opts.clone())
                 .await
                 .context("agent: ollama call")?;
+            trace.model_calls = trace.model_calls.saturating_add(1);
+            trace.tokens_generated = trace.tokens_generated.saturating_add(resp.tokens_generated);
             let raw = resp.content.trim();
             debug!("agent raw response: {raw}");
 

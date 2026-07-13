@@ -25,6 +25,7 @@ exports.default = async function afterPack(context) {
     console.log("[afterPack] RunAsNode fuse disabled");
   } catch (e) {
     console.error("[afterPack] fuses step failed:", e.message);
+    throw e;
   }
 
   const sign = (target) =>
@@ -49,8 +50,10 @@ exports.default = async function afterPack(context) {
       console.log("[afterPack] signed bundled forge engine");
     }
     sign(appPath); // the app last
+    execSync(`codesign --verify --deep --strict "${appPath}"`, { stdio: "inherit" });
     console.log("[afterPack] ad-hoc signing complete");
   } catch (e) {
     console.error("[afterPack] signing failed:", e.message);
+    throw e;
   }
 };

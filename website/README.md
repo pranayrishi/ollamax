@@ -75,7 +75,7 @@ with `openssl rand -base64 32`.
 
 ```bash
 cd website
-npm install
+npm ci                         # Node 20.9+ (required by Next.js 16)
 cp .env.example .env.local   # then fill it in
 npm run dev                  # http://localhost:3000
 ```

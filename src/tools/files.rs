@@ -8,8 +8,17 @@
 use super::{truncate_for_model, Tool, ToolResult};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use cap_fs_ext::OpenOptionsSyncExt;
+use cap_std::{
+    ambient_authority,
+    fs::{Dir, File, OpenOptions},
+};
 use serde_json::{json, Value};
+use std::io::{Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 /// A tool call should never make the engine read an arbitrarily large source or
 /// generated file into memory. The model only receives an 8 KiB excerpt anyway,
@@ -35,24 +44,21 @@ const IGNORED_DIRS: &[&str] = &[
     "vendor",
 ];
 
-/// Resolve a relative path against `root`, rejecting anything that escapes the
-/// sandbox. In addition to lexical traversal, reject symlink components: a
-/// workspace symlink can otherwise point outside the root and make a seemingly
-/// safe `fs_write` modify an unrelated file. This is a hard boundary independent
-/// of the UI approval layer.
-pub fn resolve_within(root: &Path, rel: &str) -> Result<PathBuf> {
+/// Validate a user-provided workspace-relative path without touching the
+/// filesystem. This is intentionally only a fast input check: callers that
+/// perform I/O must use `workspace_dir` below, whose directory capability
+/// makes the authorization boundary race-safe even if a workspace process
+/// swaps a symlink after this check.
+fn workspace_relative_path(rel: &str) -> Result<PathBuf> {
     if rel.trim().is_empty() {
         return Err(anyhow!("path is empty"));
     }
-    let canon_root = root
-        .canonicalize()
-        .map_err(|e| anyhow!("workspace root invalid: {e}"))?;
     let supplied = Path::new(rel);
     if supplied.is_absolute() {
         return Err(anyhow!("path '{rel}' must be relative to the workspace"));
     }
 
-    let mut out = canon_root.clone();
+    let mut out = PathBuf::new();
     for comp in supplied.components() {
         match comp {
             Component::ParentDir => {
@@ -65,6 +71,23 @@ pub fn resolve_within(root: &Path, rel: &str) -> Result<PathBuf> {
             }
         }
     }
+    Ok(if out.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        out
+    })
+}
+
+/// Resolve a relative path against `root` for callers that require a display
+/// or build-output path. This performs lexical and current symlink checks but
+/// is not itself an atomic authorization primitive; agent filesystem tools use
+/// `workspace_dir` for their actual reads and writes.
+pub fn resolve_within(root: &Path, rel: &str) -> Result<PathBuf> {
+    let canon_root = root
+        .canonicalize()
+        .map_err(|e| anyhow!("workspace root invalid: {e}"))?;
+    let relative = workspace_relative_path(rel)?;
+    let out = canon_root.join(relative);
     if !out.starts_with(&canon_root) {
         return Err(anyhow!("path '{rel}' escapes the workspace sandbox"));
     }
@@ -111,10 +134,10 @@ fn workspace_root(root: &Path) -> Result<PathBuf> {
         .map_err(|e| anyhow!("workspace root invalid: {e}"))
 }
 
-fn resolve_optional_dir(root: &Path, path: Option<&str>) -> Result<PathBuf> {
+fn optional_workspace_relative(path: Option<&str>) -> Result<PathBuf> {
     match path.map(str::trim).filter(|p| !p.is_empty()) {
-        Some(rel) => resolve_within(root, rel),
-        None => workspace_root(root),
+        Some(rel) => workspace_relative_path(rel),
+        None => Ok(PathBuf::from(".")),
     }
 }
 
@@ -123,11 +146,129 @@ fn ignored_dir(name: &std::ffi::OsStr) -> bool {
     IGNORED_DIRS.iter().any(|ignored| name == *ignored)
 }
 
-fn display_relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
+fn display_relative(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// A directory capability acquired when an agent's workspace tools are set up.
+/// Holding the descriptor, rather than reopening a pathname for every call,
+/// means a concurrent rename of the workspace root cannot redirect a later
+/// model-supplied operation either.
+#[derive(Clone)]
+pub struct WorkspaceFs {
+    handle: std::result::Result<Arc<WorkspaceHandle>, String>,
+}
+
+struct WorkspaceHandle {
+    dir: Arc<Dir>,
+    identity: Arc<same_file::Handle>,
+}
+
+impl WorkspaceFs {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
+        let handle = (|| -> Result<Arc<WorkspaceHandle>> {
+            let root = workspace_root(&root)?;
+            let dir = Dir::open_ambient_dir(root, ambient_authority())
+                .map_err(|error| anyhow!("open workspace capability: {error}"))?;
+            // Derive the portable identity from a duplicate of the exact
+            // descriptor retained for capability-relative file operations.
+            // A later pathname lookup can therefore prove whether it still
+            // refers to the user-selected directory before a host subprocess
+            // is allowed to use it as its working directory.
+            let identity_dir = dir
+                .try_clone()
+                .map_err(|error| anyhow!("clone workspace capability: {error}"))?;
+            let identity = same_file::Handle::from_file(identity_dir.into_std_file())
+                .map_err(|error| anyhow!("identify workspace capability: {error}"))?;
+            Ok(Arc::new(WorkspaceHandle {
+                dir: Arc::new(dir),
+                identity: Arc::new(identity),
+            }))
+        })()
+        .map_err(|error| error.to_string());
+        Self { handle }
+    }
+
+    /// Compare a current path lookup with the directory descriptor captured
+    /// above. Host subprocesses use this as a fail-closed preflight on Windows;
+    /// Unix additionally changes directory by descriptor in the child.
+    pub fn matches_root_path(&self, path: &Path) -> Result<bool> {
+        let handle = self
+            .handle
+            .as_ref()
+            .map_err(|error| anyhow!("workspace capability unavailable: {error}"))?;
+        let current = same_file::Handle::from_path(path).map_err(|error| {
+            anyhow!("inspect current workspace path {}: {error}", path.display())
+        })?;
+        Ok(handle.identity.as_ref() == &current)
+    }
+
+    #[cfg(unix)]
+    pub fn unix_dir_fd(&self) -> Result<RawFd> {
+        let handle = self
+            .handle
+            .as_ref()
+            .map_err(|error| anyhow!("workspace capability unavailable: {error}"))?;
+        Ok(handle.dir.as_raw_fd())
+    }
+}
+
+async fn in_workspace<T: Send + 'static>(
+    workspace: WorkspaceFs,
+    operation: impl FnOnce(Arc<Dir>) -> Result<T> + Send + 'static,
+) -> Result<T> {
+    tokio::task::spawn_blocking(move || {
+        let handle = workspace
+            .handle
+            .map_err(|error| anyhow!("workspace capability unavailable: {error}"))?;
+        operation(handle.dir.clone())
+    })
+    .await
+    .map_err(|error| anyhow!("workspace I/O task failed: {error}"))?
+}
+
+fn read_open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.read(true).nonblock(true);
+    options
+}
+
+fn write_open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .nonblock(true);
+    options
+}
+
+fn read_write_open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).nonblock(true);
+    options
+}
+
+/// Read a bounded UTF-8 text file from a capability-backed file handle. The
+/// limit remains enforced if another process grows the file after metadata was
+/// checked, so the agent never buffers an arbitrarily large replacement.
+fn read_open_file_limited(file: &mut File, max_bytes: u64) -> std::io::Result<String> {
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("file exceeds the {max_bytes}-byte workspace limit"),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "file is not valid UTF-8 text",
+        )
+    })
 }
 
 fn err(tool: &str, msg: impl Into<String>) -> ToolResult {
@@ -142,13 +283,81 @@ fn err(tool: &str, msg: impl Into<String>) -> ToolResult {
 /// deterministic first step before it opens files, rather than forcing it to
 /// guess paths or request a shell command just to see a repository.
 pub struct FsListTool {
-    root: PathBuf,
+    workspace: WorkspaceFs,
 }
 impl FsListTool {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self::from_workspace(WorkspaceFs::new(root))
+    }
+
+    pub fn from_workspace(workspace: WorkspaceFs) -> Self {
+        Self { workspace }
     }
 }
+
+fn child_relative(parent: &Path, name: &std::ffi::OsStr) -> PathBuf {
+    let mut child = if parent == Path::new(".") {
+        PathBuf::new()
+    } else {
+        parent.to_path_buf()
+    };
+    child.push(name);
+    child
+}
+
+fn list_capability_dir(
+    dir: &Dir,
+    relative: &Path,
+    remaining_depth: usize,
+    max_entries: usize,
+    entries: &mut Vec<String>,
+    truncated: &mut bool,
+) {
+    if remaining_depth == 0 || *truncated {
+        return;
+    }
+    let Ok(read_dir) = dir.entries() else {
+        return;
+    };
+    for entry in read_dir.flatten() {
+        if entries.len() >= max_entries {
+            *truncated = true;
+            return;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        // We do not make symlinks visible to models. If a link is swapped in
+        // after this check, subsequent capability-relative opens still cannot
+        // escape the workspace.
+        if file_type.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        if file_type.is_dir() && ignored_dir(&name) {
+            continue;
+        }
+        let child = child_relative(relative, &name);
+        let mut label = display_relative(&child);
+        if file_type.is_dir() {
+            label.push('/');
+        }
+        entries.push(label);
+        if file_type.is_dir() && remaining_depth > 1 {
+            if let Ok(child_dir) = entry.open_dir() {
+                list_capability_dir(
+                    &child_dir,
+                    &child,
+                    remaining_depth - 1,
+                    max_entries,
+                    entries,
+                    truncated,
+                );
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl Tool for FsListTool {
     fn name(&self) -> &str {
@@ -162,21 +371,10 @@ impl Tool for FsListTool {
     }
     async fn invoke(&self, args: Value) -> Result<ToolResult> {
         let path = args.get("path").and_then(|v| v.as_str());
-        let base = match resolve_optional_dir(&self.root, path) {
+        let relative = match optional_workspace_relative(path) {
             Ok(p) => p,
             Err(e) => return Ok(err(self.name(), e.to_string())),
         };
-        let metadata = match std::fs::metadata(&base) {
-            Ok(m) if m.is_dir() => m,
-            Ok(_) => return Ok(err(self.name(), "path is not a directory")),
-            Err(e) => {
-                return Ok(err(
-                    self.name(),
-                    format!("could not list {}: {e}", path.unwrap_or(".")),
-                ))
-            }
-        };
-        let _ = metadata;
         let depth = args
             .get("depth")
             .and_then(|v| v.as_u64())
@@ -187,48 +385,45 @@ impl Tool for FsListTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(200)
             .clamp(1, MAX_LIST_ENTRIES as u64) as usize;
-        let root = workspace_root(&self.root)?;
-        let mut entries = Vec::new();
-        let mut truncated = false;
-        for entry in walkdir::WalkDir::new(&base)
-            .follow_links(false)
-            .min_depth(1)
-            .max_depth(depth)
-            .into_iter()
-            .filter_entry(|e| {
-                !(e.depth() > 0 && e.file_type().is_dir() && ignored_dir(e.file_name()))
-            })
-        {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
+        let workspace = self.workspace.clone();
+        let tool = self.name().to_string();
+        let requested = path.unwrap_or(".").to_string();
+        match in_workspace(workspace, move |dir| {
+            let base = match dir.open_dir(&relative) {
+                Ok(base) => base,
+                Err(error) => {
+                    return Ok(err(&tool, format!("could not list {requested}: {error}")))
+                }
             };
-            if entry.file_type().is_symlink() {
-                continue;
+            let mut entries = Vec::new();
+            let mut truncated = false;
+            list_capability_dir(
+                &base,
+                &relative,
+                depth,
+                max_entries,
+                &mut entries,
+                &mut truncated,
+            );
+            let mut content = if entries.is_empty() {
+                "(no visible entries)".to_string()
+            } else {
+                entries.join("\n")
+            };
+            if truncated {
+                content.push_str("\n[... listing truncated; narrow path or raise max_entries]");
             }
-            if entries.len() >= max_entries {
-                truncated = true;
-                break;
-            }
-            let mut label = display_relative(&root, entry.path());
-            if entry.file_type().is_dir() {
-                label.push('/');
-            }
-            entries.push(label);
-        }
-        let mut content = if entries.is_empty() {
-            "(no visible entries)".to_string()
-        } else {
-            entries.join("\n")
-        };
-        if truncated {
-            content.push_str("\n[... listing truncated; narrow path or raise max_entries]");
-        }
-        Ok(ToolResult {
-            tool: self.name().to_string(),
-            ok: true,
-            content: truncate_for_model(&content),
+            Ok(ToolResult {
+                tool,
+                ok: true,
+                content: truncate_for_model(&content),
+            })
         })
+        .await
+        {
+            Ok(result) => Ok(result),
+            Err(error) => Ok(err(self.name(), error.to_string())),
+        }
     }
 }
 
@@ -236,13 +431,90 @@ impl Tool for FsListTool {
 /// symbol or phrase. It skips generated/vendor directories, binary files, and
 /// huge files, and returns short file:line excerpts suitable for a model turn.
 pub struct FsSearchTool {
-    root: PathBuf,
+    workspace: WorkspaceFs,
 }
 impl FsSearchTool {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self::from_workspace(WorkspaceFs::new(root))
+    }
+
+    pub fn from_workspace(workspace: WorkspaceFs) -> Self {
+        Self { workspace }
     }
 }
+
+fn search_capability_dir(
+    dir: &Dir,
+    relative: &Path,
+    query: &str,
+    max_results: usize,
+    matches: &mut Vec<String>,
+    truncated: &mut bool,
+) {
+    if *truncated {
+        return;
+    }
+    let Ok(read_dir) = dir.entries() else {
+        return;
+    };
+    for entry in read_dir.flatten() {
+        if *truncated {
+            return;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let child = child_relative(relative, &name);
+        if file_type.is_dir() {
+            if ignored_dir(&name) {
+                continue;
+            }
+            if let Ok(child_dir) = entry.open_dir() {
+                search_capability_dir(&child_dir, &child, query, max_results, matches, truncated);
+            }
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        let Ok(mut file) = entry.open() else {
+            continue;
+        };
+        let Ok(metadata) = file.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() || metadata.len() > MAX_READ_BYTES {
+            continue;
+        }
+        let Ok(content) = read_open_file_limited(&mut file, MAX_READ_BYTES) else {
+            continue;
+        };
+        if content.contains('\0') {
+            continue;
+        }
+        for (line_no, line) in content.lines().enumerate() {
+            if !line.contains(query) {
+                continue;
+            }
+            if matches.len() >= max_results {
+                *truncated = true;
+                return;
+            }
+            let excerpt: String = line.chars().take(300).collect();
+            matches.push(format!(
+                "{}:{}: {}",
+                display_relative(&child),
+                line_no + 1,
+                excerpt
+            ));
+        }
+    }
+}
+
 #[async_trait]
 impl Tool for FsSearchTool {
     fn name(&self) -> &str {
@@ -263,7 +535,7 @@ impl Tool for FsSearchTool {
             return Ok(err(self.name(), "query is too long (max 512 bytes)"));
         }
         let path = args.get("path").and_then(|v| v.as_str());
-        let base = match resolve_optional_dir(&self.root, path) {
+        let relative = match optional_workspace_relative(path) {
             Ok(p) => p,
             Err(e) => return Ok(err(self.name(), e.to_string())),
         };
@@ -272,75 +544,60 @@ impl Tool for FsSearchTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(80)
             .clamp(1, MAX_SEARCH_RESULTS as u64) as usize;
-        let root = workspace_root(&self.root)?;
-        let mut matches = Vec::new();
-        let mut truncated = false;
-        'files: for entry in walkdir::WalkDir::new(&base)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|e| {
-                !(e.depth() > 0 && e.file_type().is_dir() && ignored_dir(e.file_name()))
+        let workspace = self.workspace.clone();
+        let tool = self.name().to_string();
+        let requested = path.unwrap_or(".").to_string();
+        let query = query.to_string();
+        match in_workspace(workspace, move |dir| {
+            let base = match dir.open_dir(&relative) {
+                Ok(base) => base,
+                Err(error) => {
+                    return Ok(err(&tool, format!("could not search {requested}: {error}")))
+                }
+            };
+            let mut matches = Vec::new();
+            let mut truncated = false;
+            search_capability_dir(
+                &base,
+                &relative,
+                &query,
+                max_results,
+                &mut matches,
+                &mut truncated,
+            );
+            let mut content = if matches.is_empty() {
+                format!("no matches for `{query}`")
+            } else {
+                matches.join("\n")
+            };
+            if truncated {
+                content.push_str("\n[... search results truncated; narrow query/path]");
+            }
+            Ok(ToolResult {
+                tool,
+                ok: true,
+                content: truncate_for_model(&content),
             })
-        {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            if !entry.file_type().is_file() || entry.file_type().is_symlink() {
-                continue;
-            }
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if metadata.len() > MAX_READ_BYTES {
-                continue;
-            }
-            let Ok(content) = std::fs::read_to_string(entry.path()) else {
-                continue;
-            };
-            if content.contains('\0') {
-                continue;
-            }
-            for (line_no, line) in content.lines().enumerate() {
-                if !line.contains(query) {
-                    continue;
-                }
-                if matches.len() >= max_results {
-                    truncated = true;
-                    break 'files;
-                }
-                let excerpt: String = line.chars().take(300).collect();
-                matches.push(format!(
-                    "{}:{}: {}",
-                    display_relative(&root, entry.path()),
-                    line_no + 1,
-                    excerpt
-                ));
-            }
-        }
-        let mut content = if matches.is_empty() {
-            format!("no matches for `{query}`")
-        } else {
-            matches.join("\n")
-        };
-        if truncated {
-            content.push_str("\n[... search results truncated; narrow query/path]");
-        }
-        Ok(ToolResult {
-            tool: self.name().to_string(),
-            ok: true,
-            content: truncate_for_model(&content),
         })
+        .await
+        {
+            Ok(result) => Ok(result),
+            Err(error) => Ok(err(self.name(), error.to_string())),
+        }
     }
 }
 
 /// Read a UTF-8 file from the workspace.
 pub struct FsReadTool {
-    root: PathBuf,
+    workspace: WorkspaceFs,
 }
 impl FsReadTool {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self::from_workspace(WorkspaceFs::new(root))
+    }
+
+    pub fn from_workspace(workspace: WorkspaceFs) -> Self {
+        Self { workspace }
     }
 }
 #[async_trait]
@@ -356,42 +613,86 @@ impl Tool for FsReadTool {
     }
     async fn invoke(&self, args: Value) -> Result<ToolResult> {
         let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        let abs = match resolve_within(&self.root, path) {
+        let relative = match workspace_relative_path(path) {
             Ok(p) => p,
             Err(e) => return Ok(err(self.name(), e.to_string())),
         };
-        let metadata = match tokio::fs::metadata(&abs).await {
-            Ok(m) if m.is_file() => m,
-            Ok(_) => return Ok(err(self.name(), format!("{path} is not a regular file"))),
-            Err(e) => return Ok(err(self.name(), format!("could not read {path}: {e}"))),
-        };
-        if metadata.len() > MAX_READ_BYTES {
-            return Ok(err(
-                self.name(),
-                format!(
-                    "{path} is too large to read ({} bytes; max {MAX_READ_BYTES})",
-                    metadata.len()
-                ),
-            ));
-        }
-        match tokio::fs::read_to_string(&abs).await {
-            Ok(s) => Ok(ToolResult {
-                tool: self.name().to_string(),
-                ok: true,
-                content: truncate_for_model(&s),
-            }),
-            Err(e) => Ok(err(self.name(), format!("could not read {path}: {e}"))),
+        let workspace = self.workspace.clone();
+        let tool = self.name().to_string();
+        let requested = path.to_string();
+        match in_workspace(workspace, move |dir| {
+            let expected = match dir.metadata(&relative) {
+                Ok(metadata) if metadata.is_file() => metadata,
+                Ok(_) => return Ok(err(&tool, format!("{requested} is not a regular file"))),
+                Err(error) => {
+                    return Ok(err(
+                        &tool,
+                        format!("could not inspect {requested}: {error}"),
+                    ))
+                }
+            };
+            if expected.len() > MAX_READ_BYTES {
+                return Ok(err(
+                    &tool,
+                    format!(
+                        "{requested} is too large to read ({} bytes; max {MAX_READ_BYTES})",
+                        expected.len()
+                    ),
+                ));
+            }
+            let mut file = match dir.open_with(&relative, &read_open_options()) {
+                Ok(file) => file,
+                Err(error) => {
+                    return Ok(err(&tool, format!("could not read {requested}: {error}")))
+                }
+            };
+            let metadata = match file.metadata() {
+                Ok(metadata) if metadata.is_file() => metadata,
+                Ok(_) => return Ok(err(&tool, format!("{requested} is not a regular file"))),
+                Err(error) => {
+                    return Ok(err(
+                        &tool,
+                        format!("could not inspect {requested}: {error}"),
+                    ))
+                }
+            };
+            if metadata.len() > MAX_READ_BYTES {
+                return Ok(err(
+                    &tool,
+                    format!(
+                        "{requested} is too large to read ({} bytes; max {MAX_READ_BYTES})",
+                        metadata.len()
+                    ),
+                ));
+            }
+            match read_open_file_limited(&mut file, MAX_READ_BYTES) {
+                Ok(content) => Ok(ToolResult {
+                    tool,
+                    ok: true,
+                    content: truncate_for_model(&content),
+                }),
+                Err(error) => Ok(err(&tool, format!("could not read {requested}: {error}"))),
+            }
+        })
+        .await
+        {
+            Ok(result) => Ok(result),
+            Err(error) => Ok(err(self.name(), error.to_string())),
         }
     }
 }
 
 /// Write (create or overwrite) a file in the workspace.
 pub struct FsWriteTool {
-    root: PathBuf,
+    workspace: WorkspaceFs,
 }
 impl FsWriteTool {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self::from_workspace(WorkspaceFs::new(root))
+    }
+
+    pub fn from_workspace(workspace: WorkspaceFs) -> Self {
+        Self { workspace }
     }
 }
 #[async_trait]
@@ -417,39 +718,97 @@ impl Tool for FsWriteTool {
                 ),
             ));
         }
-        let abs = match resolve_within(&self.root, path) {
+        let relative = match workspace_relative_path(path) {
             Ok(p) => p,
             Err(e) => return Ok(err(self.name(), e.to_string())),
         };
-        if let Some(parent) = abs.parent() {
-            if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                return Ok(err(self.name(), format!("mkdir failed: {e}")));
+        let workspace = self.workspace.clone();
+        let tool = self.name().to_string();
+        let requested = path.to_string();
+        let content = content.to_string();
+        match in_workspace(workspace, move |dir| {
+            if let Some(parent) = relative
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty() && *parent != Path::new("."))
+            {
+                if let Err(error) = dir.create_dir_all(parent) {
+                    return Ok(err(&tool, format!("mkdir failed: {error}")));
+                }
             }
-        }
-        // Re-resolve after mkdir so a concurrently-created symlink cannot turn
-        // the previously checked target into an escape path.
-        let abs = match resolve_within(&self.root, path) {
-            Ok(p) => p,
-            Err(e) => return Ok(err(self.name(), e.to_string())),
-        };
-        match tokio::fs::write(&abs, content).await {
-            Ok(()) => Ok(ToolResult {
-                tool: self.name().to_string(),
-                ok: true,
-                content: format!("wrote {} bytes to {path}", content.len()),
-            }),
-            Err(e) => Ok(err(self.name(), format!("could not write {path}: {e}"))),
+
+            // Reject special files (notably FIFOs) before opening them. The
+            // subsequent nonblocking open below also protects the small race
+            // where an attacker replaces an ordinary path after this check.
+            match dir.metadata(&relative) {
+                Ok(metadata) if !metadata.is_file() => {
+                    return Ok(err(&tool, format!("{requested} is not a regular file")))
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Ok(err(
+                        &tool,
+                        format!("could not inspect {requested}: {error}"),
+                    ))
+                }
+            }
+
+            // Do not report a timestamp-only rewrite as an implementation
+            // change. The read and the eventual write both remain relative to
+            // the same directory capability, so a symlink swap cannot turn a
+            // no-op check into an outside-workspace write.
+            if let Ok(mut existing_file) = dir.open_with(&relative, &read_open_options()) {
+                if existing_file.metadata().is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.len() <= MAX_WRITE_BYTES as u64
+                }) {
+                    if let Ok(existing) =
+                        read_open_file_limited(&mut existing_file, MAX_WRITE_BYTES as u64)
+                    {
+                        if existing == content {
+                            return Ok(ToolResult {
+                                tool,
+                                ok: true,
+                                content: format!("unchanged {requested}; content already matches"),
+                            });
+                        }
+                    }
+                }
+            }
+
+            let mut file = match dir.open_with(&relative, &write_open_options()) {
+                Ok(file) => file,
+                Err(error) => {
+                    return Ok(err(&tool, format!("could not write {requested}: {error}")))
+                }
+            };
+            match file.write_all(content.as_bytes()) {
+                Ok(()) => Ok(ToolResult {
+                    tool,
+                    ok: true,
+                    content: format!("wrote {} bytes to {requested}", content.len()),
+                }),
+                Err(error) => Ok(err(&tool, format!("could not write {requested}: {error}"))),
+            }
+        })
+        .await
+        {
+            Ok(result) => Ok(result),
+            Err(error) => Ok(err(self.name(), error.to_string())),
         }
     }
 }
 
 /// Replace an exact, unique substring in a workspace file (like a precise patch).
 pub struct FsEditTool {
-    root: PathBuf,
+    workspace: WorkspaceFs,
 }
 impl FsEditTool {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self::from_workspace(WorkspaceFs::new(root))
+    }
+
+    pub fn from_workspace(workspace: WorkspaceFs) -> Self {
+        Self { workspace }
     }
 }
 #[async_trait]
@@ -476,64 +835,119 @@ impl Tool for FsEditTool {
         if old.is_empty() {
             return Ok(err(self.name(), "old_string is empty"));
         }
-        let abs = match resolve_within(&self.root, path) {
+        let relative = match workspace_relative_path(path) {
             Ok(p) => p,
             Err(e) => return Ok(err(self.name(), e.to_string())),
         };
-        let metadata = match tokio::fs::metadata(&abs).await {
-            Ok(m) if m.is_file() => m,
-            Ok(_) => return Ok(err(self.name(), format!("{path} is not a regular file"))),
-            Err(e) => return Ok(err(self.name(), format!("could not read {path}: {e}"))),
-        };
-        if metadata.len() > MAX_READ_BYTES {
-            return Ok(err(
-                self.name(),
-                format!(
-                    "{path} is too large to edit ({} bytes; max {MAX_READ_BYTES})",
-                    metadata.len()
-                ),
-            ));
-        }
-        let cur = match tokio::fs::read_to_string(&abs).await {
-            Ok(s) => s,
-            Err(e) => return Ok(err(self.name(), format!("could not read {path}: {e}"))),
-        };
-        let count = cur.matches(old).count();
-        if count == 0 {
-            return Ok(err(self.name(), "old_string not found"));
-        }
-        if count > 1 {
-            return Ok(err(
-                self.name(),
-                format!("old_string is not unique ({count} matches)"),
-            ));
-        }
-        let updated = cur.replacen(old, new, 1);
-        if updated.len() > MAX_WRITE_BYTES {
-            return Ok(err(
-                self.name(),
-                format!(
-                    "edited content is too large ({} bytes; max {MAX_WRITE_BYTES})",
-                    updated.len()
-                ),
-            ));
-        }
-        let abs = match resolve_within(&self.root, path) {
-            Ok(p) => p,
-            Err(e) => return Ok(err(self.name(), e.to_string())),
-        };
-        match tokio::fs::metadata(&abs).await {
-            Ok(metadata) if metadata.is_file() => {}
-            Ok(_) => return Ok(err(self.name(), format!("{path} is not a regular file"))),
-            Err(e) => return Ok(err(self.name(), format!("could not recheck {path}: {e}"))),
-        }
-        match tokio::fs::write(&abs, &updated).await {
-            Ok(()) => Ok(ToolResult {
-                tool: self.name().to_string(),
-                ok: true,
-                content: format!("edited {path}"),
-            }),
-            Err(e) => Ok(err(self.name(), format!("could not write {path}: {e}"))),
+        let workspace = self.workspace.clone();
+        let tool = self.name().to_string();
+        let requested = path.to_string();
+        let old = old.to_string();
+        let new = new.to_string();
+        match in_workspace(workspace, move |dir| {
+            // Hold a single read/write handle for the full edit. A concurrent
+            // rename then cannot redirect the write to a different pathname,
+            // and the directory capability prevents any link traversal from
+            // leaving the selected workspace.
+            let expected = match dir.metadata(&relative) {
+                Ok(metadata) if metadata.is_file() => metadata,
+                Ok(_) => return Ok(err(&tool, format!("{requested} is not a regular file"))),
+                Err(error) => {
+                    return Ok(err(
+                        &tool,
+                        format!("could not inspect {requested}: {error}"),
+                    ))
+                }
+            };
+            if expected.len() > MAX_READ_BYTES {
+                return Ok(err(
+                    &tool,
+                    format!(
+                        "{requested} is too large to edit ({} bytes; max {MAX_READ_BYTES})",
+                        expected.len()
+                    ),
+                ));
+            }
+            let mut file = match dir.open_with(&relative, &read_write_open_options()) {
+                Ok(file) => file,
+                Err(error) => {
+                    return Ok(err(&tool, format!("could not read {requested}: {error}")))
+                }
+            };
+            let metadata = match file.metadata() {
+                Ok(metadata) if metadata.is_file() => metadata,
+                Ok(_) => return Ok(err(&tool, format!("{requested} is not a regular file"))),
+                Err(error) => {
+                    return Ok(err(
+                        &tool,
+                        format!("could not inspect {requested}: {error}"),
+                    ))
+                }
+            };
+            if metadata.len() > MAX_READ_BYTES {
+                return Ok(err(
+                    &tool,
+                    format!(
+                        "{requested} is too large to edit ({} bytes; max {MAX_READ_BYTES})",
+                        metadata.len()
+                    ),
+                ));
+            }
+            let current = match read_open_file_limited(&mut file, MAX_READ_BYTES) {
+                Ok(current) => current,
+                Err(error) => {
+                    return Ok(err(&tool, format!("could not read {requested}: {error}")))
+                }
+            };
+            let count = current.matches(&old).count();
+            if count == 0 {
+                return Ok(err(&tool, "old_string not found"));
+            }
+            if count > 1 {
+                return Ok(err(
+                    &tool,
+                    format!("old_string is not unique ({count} matches)"),
+                ));
+            }
+            let updated = current.replacen(&old, &new, 1);
+            if updated.len() > MAX_WRITE_BYTES {
+                return Ok(err(
+                    &tool,
+                    format!(
+                        "edited content is too large ({} bytes; max {MAX_WRITE_BYTES})",
+                        updated.len()
+                    ),
+                ));
+            }
+            if updated == current {
+                return Ok(ToolResult {
+                    tool,
+                    ok: true,
+                    content: format!("unchanged {requested}; replacement already matches"),
+                });
+            }
+            if let Err(error) = file.seek(SeekFrom::Start(0)) {
+                return Ok(err(&tool, format!("could not seek {requested}: {error}")));
+            }
+            if let Err(error) = file.set_len(0) {
+                return Ok(err(
+                    &tool,
+                    format!("could not truncate {requested}: {error}"),
+                ));
+            }
+            match file.write_all(updated.as_bytes()) {
+                Ok(()) => Ok(ToolResult {
+                    tool,
+                    ok: true,
+                    content: format!("edited {requested}"),
+                }),
+                Err(error) => Ok(err(&tool, format!("could not write {requested}: {error}"))),
+            }
+        })
+        .await
+        {
+            Ok(result) => Ok(result),
+            Err(error) => Ok(err(self.name(), error.to_string())),
         }
     }
 }
@@ -582,6 +996,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn writing_identical_content_reports_no_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let write = FsWriteTool::new(root.path());
+        let first = write
+            .invoke(json!({"path":"same.txt","content":"already here"}))
+            .await
+            .unwrap();
+        assert!(first.ok, "{}", first.content);
+
+        let second = write
+            .invoke(json!({"path":"same.txt","content":"already here"}))
+            .await
+            .unwrap();
+        assert!(second.ok, "{}", second.content);
+        assert_eq!(
+            second.content,
+            "unchanged same.txt; content already matches"
+        );
+    }
+
+    #[tokio::test]
     async fn edit_requires_unique_match() {
         let root = tmp();
         FsWriteTool::new(&root)
@@ -610,7 +1045,7 @@ mod tests {
             .invoke(json!({"path":"directory","old_string":"x","new_string":"y"}))
             .await
             .unwrap();
-        assert!(!directory.ok && directory.content.contains("regular file"));
+        assert!(!directory.ok, "{}", directory.content);
 
         let large = root.join("large.txt");
         std::fs::File::create(&large)
@@ -671,5 +1106,153 @@ mod tests {
         let err = resolve_within(&root, "escape.txt").unwrap_err();
         assert!(err.to_string().contains("symlink"));
         let _ = std::fs::remove_file(outside);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn capability_backed_tools_cannot_follow_workspace_symlinks_outside() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("secret.txt");
+        std::fs::write(&outside_file, "do-not-exfiltrate-or-change").unwrap();
+        symlink(&outside_file, root.path().join("escape.txt")).unwrap();
+        symlink(outside.path(), root.path().join("escape-dir")).unwrap();
+
+        let read = FsReadTool::new(root.path());
+        let result = read.invoke(json!({"path":"escape.txt"})).await.unwrap();
+        assert!(!result.ok, "{}", result.content);
+
+        let write = FsWriteTool::new(root.path());
+        let result = write
+            .invoke(json!({"path":"escape.txt","content":"changed"}))
+            .await
+            .unwrap();
+        assert!(!result.ok, "{}", result.content);
+        let result = write
+            .invoke(json!({"path":"escape-dir/new.txt","content":"changed"}))
+            .await
+            .unwrap();
+        assert!(!result.ok, "{}", result.content);
+        assert_eq!(
+            std::fs::read_to_string(&outside_file).unwrap(),
+            "do-not-exfiltrate-or-change"
+        );
+        assert!(!outside.path().join("new.txt").exists());
+
+        let edit = FsEditTool::new(root.path());
+        let result = edit
+            .invoke(json!({
+                "path":"escape.txt",
+                "old_string":"do-not-exfiltrate-or-change",
+                "new_string":"changed"
+            }))
+            .await
+            .unwrap();
+        assert!(!result.ok, "{}", result.content);
+        assert_eq!(
+            std::fs::read_to_string(&outside_file).unwrap(),
+            "do-not-exfiltrate-or-change"
+        );
+
+        let search = FsSearchTool::new(root.path());
+        let result = search
+            .invoke(json!({"query":"do-not-exfiltrate-or-change"}))
+            .await
+            .unwrap();
+        assert!(result.ok, "{}", result.content);
+        assert!(!result.content.contains("escape.txt:"));
+
+        let list = FsListTool::new(root.path());
+        let result = list.invoke(json!({"depth":2})).await.unwrap();
+        assert!(result.ok, "{}", result.content);
+        assert!(!result.content.contains("escape.txt"));
+        assert!(!result.content.contains("escape-dir"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shared_workspace_capability_stays_pinned_after_root_path_swap() {
+        use std::os::unix::fs::symlink;
+
+        let parent = tempfile::tempdir().unwrap();
+        let workspace = parent.path().join("workspace");
+        let moved_workspace = parent.path().join("workspace-moved");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("inside.txt"), "original workspace").unwrap();
+
+        let capability = WorkspaceFs::new(&workspace);
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::rename(&workspace, &moved_workspace).unwrap();
+        symlink(outside.path(), &workspace).unwrap();
+
+        let read = FsReadTool::from_workspace(capability.clone());
+        let result = read.invoke(json!({"path":"inside.txt"})).await.unwrap();
+        assert!(result.ok, "{}", result.content);
+        assert_eq!(result.content, "original workspace");
+
+        let write = FsWriteTool::from_workspace(capability);
+        let result = write
+            .invoke(json!({"path":"new.txt","content":"pinned"}))
+            .await
+            .unwrap();
+        assert!(result.ok, "{}", result.content);
+        assert_eq!(
+            std::fs::read_to_string(moved_workspace.join("new.txt")).unwrap(),
+            "pinned"
+        );
+        assert!(!outside.path().join("new.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fifo_paths_are_rejected_without_blocking_workspace_io() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let fifo = root.path().join("blocked.fifo");
+        let fifo_name = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `fifo_name` is a NUL-free path inside a test-only temp dir.
+        assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+
+        let read = FsReadTool::new(root.path());
+        let write = FsWriteTool::new(root.path());
+        let edit = FsEditTool::new(root.path());
+        for result in [
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                read.invoke(json!({"path":"blocked.fifo"})),
+            )
+            .await
+            .expect("FIFO read must not block")
+            .unwrap(),
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                write.invoke(json!({"path":"blocked.fifo","content":"x"})),
+            )
+            .await
+            .expect("FIFO write must not block")
+            .unwrap(),
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                edit.invoke(json!({
+                    "path":"blocked.fifo",
+                    "old_string":"x",
+                    "new_string":"y"
+                })),
+            )
+            .await
+            .expect("FIFO edit must not block")
+            .unwrap(),
+        ] {
+            assert!(!result.ok, "{}", result.content);
+            assert!(
+                result.content.contains("regular file"),
+                "{}",
+                result.content
+            );
+        }
     }
 }

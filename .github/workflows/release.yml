@@ -99,8 +99,14 @@ jobs:
             target
           key: ${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
 
+      # A release binary is not enough evidence that the target is usable. Run
+      # the complete unit + integration suite on every native release runner,
+      # including Windows, before assembling an artifact for publication.
+      - name: Run Rust test suite
+        run: cargo test --locked --all-targets
+
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Strip binary (unix)
         if: runner.os != 'Windows'

@@ -4,11 +4,13 @@
 
 > [简体中文](README.zh.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Português](README.pt.md)
 
-> **Status: pre-alpha (v0.1.0).** The CLI compiles, ships hardware detection,
-> bundled skill recipes, and a security/secret scanner. Parallel orchestration,
-> the build pipeline, and the skills marketplace are scaffolded but not yet
-> wired end-to-end. See [Roadmap](#roadmap) for what works today vs. what
-> doesn't. PRs welcome — [good-first-issue label](https://github.com/pranayrishi/ollamax/labels/good%20first%20issue).
+> **Status: pre-alpha (v0.2.0).** The CLI ships hardware detection, bundled
+> skill recipes, a security/secret scanner, controlled local Agent/Team
+> workspace editing, curated documentation-only GitHub knowledge plugins, and
+> local evaluation records. The legacy parallel build path remains text-oriented;
+> worktrees, executable plugins, and an evaluation runner are not yet shipped.
+> See [Roadmap](#roadmap) for current limits. PRs welcome —
+> [good-first-issue label](https://github.com/pranayrishi/ollamax/labels/good%20first%20issue).
 
 ---
 
@@ -30,8 +32,9 @@ local-first coding agent and workspace console built around Ollama:
   keys, GitHub tokens, or known credential patterns to the model.
 
 It is pre-alpha, but its Agent mode now works on the codebase you explicitly
-open: it can inspect files, edit them through sandboxed tools, run bounded
-validation commands, and show/require approvals.
+open: it can inspect files and edit them through workspace-confined tools, run
+guardrailed host-shell validation commands, and show/require approvals. The
+host shell is not an OS-level sandbox.
 
 ---
 
@@ -43,7 +46,7 @@ validation commands, and show/require approvals.
 | Built for local-first            | ❌            | partial      | partial      | ✅                        |
 | Hardware-aware model selection   | n/a           | ❌           | ❌           | ✅                        |
 | Bundled secret scanner           | ❌            | ❌           | ❌           | ✅                        |
-| Multi-agent parallel execution   | ✅            | ❌           | ❌           | 🚧 scaffolded             |
+| Bounded multi-agent roles        | ✅            | ❌           | ❌           | ✅ (one writer; parallel scouts optional) |
 | LoRA fine-tune on your code      | ❌ (impossible) | ❌         | ❌           | 🚧 planned                |
 | Mature, daily-driver ready       | ✅            | ✅           | ✅           | ❌ (pre-alpha)            |
 
@@ -55,8 +58,9 @@ to help build the harness layer they're missing, read on.
 ## Quick start
 
 Requires [Ollama](https://ollama.com/download) installed and `ollama serve`
-running. Rust toolchain (1.75+) needed to build from source — pre-built
-binaries are not yet shipping.
+running. Rust toolchain (1.75+) is needed to build from source. Tagged releases
+publish CLI, VS Code, and desktop artifacts through the
+[Ollamax releases repository](https://github.com/pranayrishi/ollamax-releases).
 
 ```bash
 git clone https://github.com/pranayrishi/ollamax.git
@@ -66,7 +70,7 @@ forge status                      # show detected hardware + recommended model
 forge status --models             # also lists models known to Ollama
 ```
 
-`forge status` is the most useful command in v0.1.0. It is also the cheapest
+`forge status` is the most useful command in v0.2.0. It is also the cheapest
 way to verify your install works without pulling a model.
 
 ---
@@ -81,8 +85,9 @@ forge agent "Add a health endpoint and tests for it"
 
 The default `confirm` mode shows a plan and asks before each file write, exact
 edit, or shell validation command. `--autonomy readonly` lets it inspect and
-search only; `--yes` (or `--autonomy auto`) permits actions within the current
-workspace sandbox without per-step prompts.
+search only; `--yes` (or `--autonomy auto`) permits workspace-confined file
+actions without per-step prompts. Shell commands start in the workspace but
+are guardrailed host-shell commands, not an OS-level sandbox.
 
 ```bash
 forge agent --autonomy readonly "Explain the authentication flow"
@@ -90,9 +95,87 @@ forge agent --yes "Create a small CLI command and run its unit tests"
 ```
 
 The agent has explicit `fs_list`, `fs_search`, `fs_read`, `fs_write`, and
-`fs_edit` tools. It rejects absolute paths, `..` traversal, and symlink paths;
-write/edit tools are bounded in size and stay under the captured workspace
-root. Local coding runs do not register web or MCP tools by default.
+`fs_edit` tools. It rejects absolute paths and `..` traversal; each agent run
+pins a descriptor-relative workspace capability, so a later symlink or
+workspace-root path swap cannot redirect a read or write outside the selected
+root. Write/edit tools are bounded in size. Local coding runs do not register
+web or MCP tools by default.
+
+On macOS and Linux, approved shell validation and Team diff review also enter
+the captured workspace by descriptor; if the visible workspace root has been
+replaced, the command fails closed. This still is not an OS/container sandbox.
+
+## Controlled local Team
+
+For a complex workspace change, use the bounded team coordinator instead of
+the legacy text-only build workflow:
+
+```bash
+forge team "Add an authenticated health endpoint and its tests"
+forge team --parallel-scouts --scout-model qwen2.5-coder:1.5b \
+  --planner-model qwen2.5-coder:7b --yes "Refactor the API boundary"
+```
+
+The default topology is intentionally conservative: two read-only scouts, a
+read-only planner hand-off, one writer, fixed repository-detected checks, and
+an advisory reviewer. The writer is always single-lane. `--parallel-scouts`
+only overlaps the two read-only scouts when your project enables at least two
+workers; it never enables simultaneous writers in one checkout. A `Verified`
+result requires a successful writer mutation plus a passing functional test
+command (`cargo test --workspace`, `npm test`, or `python -m pytest`) after all
+detected checks pass. A diff/lint/typecheck-only run is reported as
+`ChecksPassed` and still needs human acceptance. Neither status substitutes for
+CI, security review, or deployment validation. In `--autonomy auto`, checks
+execute project code on the host, so use confirmation for unfamiliar
+repositories.
+
+The local server exposes the same workflow at `POST /api/team`; the VS Code
+extension, standalone app, and browser console include a Team mode with
+streamed role and verification events.
+
+## Curated GitHub knowledge plugins
+
+Knowledge plugins let an installed local model receive bounded reference
+documentation from a curated repository without treating that repository as
+executable code:
+
+```bash
+forge plugins list
+forge plugins install roboflow-supervision
+forge plugins context "track objects in a Python video pipeline"
+forge plugins remove roboflow-supervision
+```
+
+Installation fetches repository metadata and a capped README, checks the
+curated star/license policy, records the default-branch commit when available,
+and saves provenance plus a SHA-256 hash. It does **not** clone repositories,
+install packages, execute scripts, load hooks/MCP servers, or grant tools.
+Installed README text is labeled untrusted and is relevance-matched into Agent
+and Team context only as reference data. This initial plugin surface is CLI
+managed; a graphical marketplace/permission UI is not yet shipped. The bundled
+catalog spans computer vision (Supervision/OpenCV), machine learning
+(Transformers), web/API (FastAPI/Next.js), language tooling (TypeScript),
+browser testing (Playwright), desktop apps (Tauri), and Python testing
+(`pytest`); every install rechecks that repository's current GitHub stars and
+SPDX license against its curated policy.
+
+## Local evaluation records
+
+Ollamax includes a local, append-only evaluation schema so model/topology
+experiments can be compared honestly:
+
+```bash
+forge eval validate scenarios/greeting-fix.toml
+forge eval report results/baseline.jsonl
+forge eval compare results/baseline.jsonl results/team.jsonl
+```
+
+It validates declarative scenarios and scores caller-provided JSONL evidence
+(verified completion, checks, duration, tokens, calls, regressions, and scope
+violations). It is a scoring/comparison foundation, not yet an agent benchmark
+runner; do not interpret an empty or manually supplied report as a benchmark
+claim. See [the capability-gap analysis](docs/local-agent-capability-gap-analysis.md)
+for the current limits and next steps.
 
 ## Local Agent Console
 
@@ -104,16 +187,17 @@ forge serve --port 7878
 # open http://127.0.0.1:7878/console
 ```
 
-The console is a local task board with queued/working/review/done states, a
-model and permission picker, streamed activity, plans, file-change records,
-and approval controls. Task snapshots are scoped to the server's workspace in
-your browser storage. The server binds only to loopback and issues a
+The console is a local task board with Agent and Coding Team modes,
+queued/working/review/done states, a model and permission picker, streamed
+activity, plans, file-change records, verifier evidence, and approval controls.
+Task snapshots are scoped to the server's workspace in your browser storage.
+The server binds only to loopback and issues a
 per-process capability to its trusted desktop, VS Code, and console clients;
 do not expose the local port to an untrusted reverse proxy.
 
 ---
 
-## What works in v0.1.0
+## What works in v0.2.0
 
 | Command                      | Status | What it does                                                                                  |
 | :--------------------------- | :----: | :-------------------------------------------------------------------------------------------- |
@@ -122,15 +206,18 @@ do not expose the local port to an untrusted reverse proxy.
 | `forge replay <log>`         |   ✅   | Re-issues every Ollama call in a JSONL replay log against locally-installed models, reports hash drift |
 | `forge instincts [<log>]`    |   ✅   | **Continuous learning.** Surfaces repeated tasks/system prompts from your replay log as candidate skills/rules. Read-only. `--threshold N` to lower the floor. |
 | `forge rules list/init/show/path` | ✅ | **Persistent always-rules.** Drop Markdown files into `~/.config/ollama-forge/rules/` and they get prepended to every system prompt across `chat`, `research`, `run-skill`, `analyze`, `test`, and `build`. |
-| `forge build "..." -o dir/`  |   ✅   | Heterogeneous parallel orchestration with per-worker progress events; `--output` extracts labeled code blocks (incl. small-model "path on first line inside block" shape) and writes them to disk. Reports total tokens + duration. |
+| `forge build "..." -o dir/`  |   ✅   | Legacy text-oriented parallel orchestration; `--output` extracts labeled code blocks and writes them to disk. Use `forge team` for controlled workspace edits. |
 | `forge status`               |   ✅   | Hardware (NVIDIA / AMD / Apple Silicon / Intel / CPU), recommended model, Ollama health, loaded models |
 | `forge --version`            |   ✅   | Includes git short SHA so a build can be pinned for replay/debug                              |
 | `forge optimize`             |   ✅   | Prints a tuned `Modelfile` for your hardware                                                  |
 | `forge audit <dir>`          |   ✅   | Walks the dir, runs the secret scanner, exits 1 on Critical/High; `--json` for CI consumers   |
 | `forge preload [model]`      |   ✅   | Warm-loads a model with `--keep-alive`; braille spinner so a 14B cold-load doesn't look hung |
 | `forge chat "..."`           |   ✅   | Streams tokens to stdout as they arrive (real NDJSON drain, not buffered)                     |
-| `forge agent "..."`          |   ✅   | Local workspace agent: lists/searches/reads files, writes through a sandbox, and validates changes with visible approval controls |
-| `forge serve --port 7878`    |   ✅   | Runs the local desktop/VS Code backend and the browser-based Agent Console at `/console`       |
+| `forge agent "..."`          |   ✅   | Local workspace agent: lists/searches/reads files, writes through a workspace-confined filesystem boundary, and validates with approval controls (host shell is not OS-sandboxed) |
+| `forge team "..."`           |   ✅   | Read-only scouts + planner, one controlled writer, repository-detected verification, bounded repair, and advisory review; optional read-only parallel scouts |
+| `forge plugins ...`           |   ✅   | Curated GitHub knowledge-document installs with provenance, policy checks, integrity hashes, and untrusted-context framing; no repository code execution |
+| `forge eval validate/report/compare` | ✅ | Validates local scenarios and scores/compares append-only JSONL evidence; not an evaluation runner yet |
+| `forge serve --port 7878`    |   ✅   | Runs the local desktop/VS Code backend and browser-based Agent/Team Console at `/console`       |
 | `forge run-skill <name>`     |   ✅   | Loads a skill, picks an installed model (with fallback), streams the response                |
 | `forge skills list/add/search` | ✅   | Recipe management; `add` is local-path only by design                                         |
 | `forge analyze <dir>`        |   ✅   | Local secret scan + token-budgeted model code review                                          |
@@ -226,6 +313,11 @@ supported frontmatter shape.
 ```
 src/
 ├── cli/          clap subcommands
+├── agent/        bounded local tool-calling workspace agent
+├── team/         read-only scouts, single writer, verifier, reviewer
+├── plugins/      curated documentation-only GitHub knowledge installs
+├── evals/        local scenario/evidence validation and comparison
+├── tools/        descriptor-confined workspace tools and guarded shell
 ├── orchestrator/ planner→executor→merger pipeline (scaffold)
 ├── router/       complexity heuristic → model tier selection
 ├── executor/     parallel worker pool (scaffold)

@@ -200,7 +200,7 @@ impl ModelRegistry {
                 .filter(|m| (m.approx_vram_mb as f64 * 1.25) as usize <= free_vram_mb)
                 .collect()
         };
-        v.sort_by(|a, b| b.approx_vram_mb.cmp(&a.approx_vram_mb));
+        v.sort_by_key(|model| std::cmp::Reverse(model.approx_vram_mb));
         v
     }
 
@@ -276,6 +276,14 @@ pub async fn verify_in_library(ollama_tag: &str) -> Option<bool> {
     match client.get(&url).send().await {
         Ok(resp) => Some(resp.status().is_success()),
         Err(_) => None,
+    }
+}
+
+// Small test helper kept out of the public surface.
+#[cfg(test)]
+impl CuratedModel {
+    fn installed_matches(&self, installed: &[String]) -> bool {
+        installed.iter().any(|i| tag_matches(&self.ollama_tag, i))
     }
 }
 
@@ -370,13 +378,5 @@ mod tests {
         // The bigger qwen3 sizes must NOT be marked installed.
         assert!(!reg.all().iter().any(|m| m.ollama_tag == "qwen3:14b" && m.installed));
         assert!(!reg.all().iter().any(|m| m.ollama_tag == "qwen3:235b" && m.installed));
-    }
-}
-
-// Small test helper kept out of the public surface.
-#[cfg(test)]
-impl CuratedModel {
-    fn installed_matches(&self, installed: &[String]) -> bool {
-        installed.iter().any(|i| tag_matches(&self.ollama_tag, i))
     }
 }

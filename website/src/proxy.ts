@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 // `'unsafe-inline'` for scripts, so injected inline <script> won't execute.
 // Next.js reads the nonce from this CSP header and stamps it onto its own
 // framework/bootstrap scripts automatically.
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const nonce = btoa(crypto.randomUUID());
   const csp = [
     "default-src 'self'",

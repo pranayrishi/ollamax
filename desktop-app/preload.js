@@ -26,8 +26,10 @@ contextBridge.exposeInMainWorld("forgeNative", {
     activate: (slug) => ipcRenderer.invoke("hub:activate", slug),
     support: (args) => ipcRenderer.invoke("hub:support", args),
   },
-  // IDE workspace (#3): folder/file access (sandboxed to the opened root) + a
-  // node-pty-backed integrated terminal.
+  // IDE workspace (#3): folder/file access scoped to the opened root by the
+  // main process + a node-pty-backed integrated terminal. This IPC boundary is
+  // not an OS-level filesystem sandbox; symlink-safe agent edits use the Rust
+  // engine's descriptor-relative workspace tools instead.
   ide: {
     openFolder: () => ipcRenderer.invoke("ide:openFolder"),
     readDir: (dir) => ipcRenderer.invoke("ide:readDir", dir),

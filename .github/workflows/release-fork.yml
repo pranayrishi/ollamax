@@ -5,9 +5,10 @@ name: release-fork
 # repo. This is the real "VS Code format" app — distinct from the Electron
 # desktop-app (release-app.yml). Trigger: push a `fork-v*` tag, or run manually.
 #
-# STARTING macOS arm64 ONLY to de-risk: the VS Code build is heavy (~15 GB disk,
-# wants an 8 GB Node heap, 20-40 min) and may need iteration / a larger runner.
-# Published under a DISTINCT name (Ollamax-*) so it does NOT clobber the
+# The VS Code build is heavy (~15 GB disk, wants an 8 GB Node heap, 20-40 min)
+# across the active macOS, Linux, and Windows jobs and may need iteration or a
+# larger runner.
+# Published under a DISTINCT name (Ollamax-code-oss-*) so it does NOT clobber the
 # working Electron download while we validate it.
 #
 # Requires the RELEASES_REPO_TOKEN secret (cross-repo publish), same as release-app.yml.
@@ -79,8 +80,8 @@ jobs:
           # Lays out the Finder window with the drag-to-Applications background +
           # one-time first-launch steps. Falls back to a plain .dmg on headless
           # runners where Finder window-scripting isn't available.
-          bash desktop/scripts/make-dmg.sh "${{ steps.app.outputs.app }}" dist/Ollamax-macos-arm64.dmg
-          ( cd dist && shasum -a 256 Ollamax-macos-arm64.dmg > Ollamax-macos-arm64.dmg.sha256 )
+          bash desktop/scripts/make-dmg.sh "${{ steps.app.outputs.app }}" dist/Ollamax-code-oss-macos-arm64.dmg
+          ( cd dist && shasum -a 256 Ollamax-code-oss-macos-arm64.dmg > Ollamax-code-oss-macos-arm64.dmg.sha256 )
           ls -la dist
 
       - uses: actions/upload-artifact@v4
@@ -89,22 +90,31 @@ jobs:
           path: dist/*
           if-no-files-found: warn
 
+      - name: Resolve base release tag
+        id: release
+        if: startsWith(github.ref, 'refs/tags/fork-v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#fork-}"
+          [[ "$tag" == v* ]] || { echo "invalid fork release tag: $GITHUB_REF_NAME" >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - name: Publish to the releases repo (distinct name; coexists with Electron app)
         if: startsWith(github.ref, 'refs/tags/fork-v')
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.RELEASES_REPO }}
           token: ${{ secrets.RELEASES_REPO_TOKEN }}
-          tag_name: v0.1.0
-          name: Ollamax v0.1.0
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: Ollamax ${{ steps.release.outputs.tag }}
           body: |
             Ollamax — the VS Code-based (Code-OSS fork) build with the forge AI
             experience as a built-in. UNSIGNED: macOS first launch → right-click →
             Open. Ollama required. Published alongside the Electron app while the
             fork build is validated.
           files: |
-            dist/Ollamax-macos-arm64.dmg
-            dist/Ollamax-macos-arm64.dmg.sha256
+            dist/Ollamax-code-oss-macos-arm64.dmg
+            dist/Ollamax-code-oss-macos-arm64.dmg.sha256
           fail_on_unmatched_files: false
 
   fork-linux:
@@ -149,13 +159,22 @@ jobs:
           name: fork-linux-x64
           path: dist/*
           if-no-files-found: warn
+      - name: Resolve base release tag
+        id: release
+        if: startsWith(github.ref, 'refs/tags/fork-v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#fork-}"
+          [[ "$tag" == v* ]] || { echo "invalid fork release tag: $GITHUB_REF_NAME" >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Publish to the releases repo
         if: startsWith(github.ref, 'refs/tags/fork-v')
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.RELEASES_REPO }}
           token: ${{ secrets.RELEASES_REPO_TOKEN }}
-          tag_name: v0.1.0
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: Ollamax ${{ steps.release.outputs.tag }}
           files: |
             dist/Ollamax-linux-x64.tar.gz
             dist/Ollamax-linux-x64.tar.gz.sha256
@@ -206,13 +225,22 @@ jobs:
           name: fork-windows-x64
           path: dist/*
           if-no-files-found: warn
+      - name: Resolve base release tag
+        id: release
+        if: startsWith(github.ref, 'refs/tags/fork-v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#fork-}"
+          [[ "$tag" == v* ]] || { echo "invalid fork release tag: $GITHUB_REF_NAME" >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - name: Publish to the releases repo
         if: startsWith(github.ref, 'refs/tags/fork-v')
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.RELEASES_REPO }}
           token: ${{ secrets.RELEASES_REPO_TOKEN }}
-          tag_name: v0.1.0
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: Ollamax ${{ steps.release.outputs.tag }}
           files: |
             dist/Ollamax-windows-x64.zip
             dist/Ollamax-windows-x64.zip.sha256

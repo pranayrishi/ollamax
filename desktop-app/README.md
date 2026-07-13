@@ -4,7 +4,7 @@ An Electron shell around the existing **forge engine**, modeled on the Sattva AI
 desktop app. It is the **only** user-facing surface: users download and open the
 app — no terminal, no CLI, no one-liner. The engine runs **hidden** inside the
 app as `forge serve` (a local HTTP+SSE backend); the window hosts the existing
-chat / agent / build UI, which talks to that local server. Inference stays local
+Ask / Agent / Team / Build UI, which talks to that local server. Inference stays local
 (app → forge serve → Ollama).
 
 ## Architecture

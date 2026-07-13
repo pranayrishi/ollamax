@@ -32,7 +32,9 @@ case "$os" in
   Darwin)
     case "$arch" in
       arm64)  asset="ollama-forge-macos-arm64.tar.gz" ;;
-      x86_64) asset="ollama-forge-macos-x64.tar.gz" ;;
+      x86_64)
+        die "Intel macOS has no published prebuilt Ollamax bundle yet. Build from source instead: https://github.com/pranayrishi/ollamax (requires Rust), or use an Apple Silicon Mac."
+        ;;
       *) die "unsupported macOS arch: $arch" ;;
     esac ;;
   Linux)

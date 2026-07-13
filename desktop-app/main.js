@@ -401,7 +401,7 @@ ipcMain.handle("hub:support", async (_e, { slug, repos, token } = {}) => {
 // =====================================================================
 // IDE workspace (#3) — open a folder, browse files, edit (Monaco in the
 // renderer), and an integrated terminal (xterm.js ↔ node-pty here). All file
-// access is sandboxed to the opened workspace root. This is a normal in-app IDE
+// file access is scoped to the opened workspace root. This is a normal in-app IDE
 // terminal — it does NOT contradict "no user-facing CLI install" (that was about
 // distribution, not having an editor terminal).
 // =====================================================================

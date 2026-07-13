@@ -35,6 +35,7 @@
 //! - `GET  /api/workspace` → approved workspace root for this server process
 //! - `POST /api/chat`      → SSE: `meta` → `token`* → (`done` | `error` | `cancelled`)
 //! - `POST /api/research`  → SSE: `meta` → `step`* → `answer` → (`done` | …)
+//! - `POST /api/team`      → SSE: team role events → verification → `team_result` → `done`
 //! - `POST /api/build`     → SSE: `meta` → `progress`* → `result` → `done`
 //! - `POST /api/cancel`    → `{ ok }` (cancels the in-flight request with that id)
 
@@ -48,13 +49,15 @@ use crate::replay::{quick_hash, ReplayLog, ReplayRecord};
 use crate::router::{TaskRouter, TaskType};
 use crate::rules::RuleSet;
 use crate::security::SecurityGuard;
+use crate::team::{TeamConfig, TeamCoordinator, TeamEvent, TeamMode};
 use crate::tools::ToolRegistry;
 use crate::Config;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::OwnedWriteHalf;
@@ -78,14 +81,19 @@ pub struct ServerState {
     /// agent tool is confined to this root; clients cannot submit an arbitrary
     /// path in an HTTP request to widen the sandbox.
     workspace_root: PathBuf,
+    /// Descriptor-relative capability opened at server startup and shared by
+    /// all Agent/Team filesystem tools. Keeping this handle prevents a later
+    /// rename or symlink replacement of `workspace_root` from changing the
+    /// workspace that a long-running local server edits.
+    workspace_fs: crate::tools::files::WorkspaceFs,
     /// Per-server, high-entropy capability required for every `/api/*` route.
     /// Managed hosts pass it in `FORGE_SERVER_TOKEN`; standalone `forge serve`
     /// generates and prints one on its ready line for the local console host.
     api_token: String,
-    /// In-flight request id → cancel signal. `Notify::notify_one` stores a
-    /// permit, so a cancel that arrives a hair before the handler starts
-    /// awaiting is not lost.
-    cancels: Mutex<HashMap<String, Arc<Notify>>>,
+    /// In-flight request id → sticky cancellation signal. The atomic flag
+    /// closes the race where a cancel arrives during request setup before a
+    /// handler begins waiting for a notification.
+    cancels: Mutex<HashMap<String, Arc<CancellationSignal>>>,
     /// At most one pending approval per Agent run. It is keyed by an opaque
     /// nonce so an early or duplicate HTTP decision cannot approve a later
     /// plan/action in the same run.
@@ -97,12 +105,54 @@ struct PendingApproval {
     tx: mpsc::UnboundedSender<bool>,
 }
 
+/// One-way cancellation state shared by a request handler and `/api/cancel`.
+/// `Notify` wakes an active stream loop; the atomic makes a pre-start request
+/// observable even when nobody was waiting at the exact instant of cancel.
+struct CancellationSignal {
+    cancelled: AtomicBool,
+    notify: Notify,
+}
+
+impl CancellationSignal {
+    fn new() -> Self {
+        Self {
+            cancelled: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
+    }
+
+    fn request_cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        // `notify_one` retains a permit when the stream loop has not yet
+        // polled its waiter, closing the setup-to-wait race as well as waking
+        // an already-running loop.
+        self.notify.notify_one();
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    async fn cancelled(&self) {
+        // The atomic handles an already-cancelled request; `notify_one` above
+        // retains a permit if cancellation races this waiter before it polls.
+        let notified = self.notify.notified();
+        tokio::pin!(notified);
+        if self.is_cancelled() {
+            return;
+        }
+        notified.as_mut().await;
+    }
+}
+
 impl ServerState {
     fn new(config: Config, workspace_root: PathBuf, api_token: String) -> Self {
+        let workspace_fs = crate::tools::files::WorkspaceFs::new(&workspace_root);
         Self {
             config,
             version: crate::cli::VERSION,
             workspace_root,
+            workspace_fs,
             api_token,
             cancels: Mutex::new(HashMap::new()),
             approvals: Mutex::new(HashMap::new()),
@@ -125,8 +175,8 @@ impl ServerState {
                 == 0
     }
 
-    async fn register(&self, id: &str) -> Option<Arc<Notify>> {
-        let n = Arc::new(Notify::new());
+    async fn register(&self, id: &str) -> Option<Arc<CancellationSignal>> {
+        let n = Arc::new(CancellationSignal::new());
         let mut cancels = self.cancels.lock().await;
         if cancels.contains_key(id) {
             None
@@ -141,7 +191,7 @@ impl ServerState {
     async fn cancel(&self, id: &str) -> bool {
         match self.cancels.lock().await.get(id) {
             Some(n) => {
-                n.notify_one();
+                n.request_cancel();
                 true
             }
             None => false,
@@ -261,7 +311,8 @@ pub async fn serve_listener_in_workspace(
     config: Config,
     workspace_root: PathBuf,
 ) -> Result<()> {
-    serve_listener_in_workspace_with_token(listener, config, workspace_root, server_api_token()).await
+    serve_listener_in_workspace_with_token(listener, config, workspace_root, server_api_token())
+        .await
 }
 
 /// Test/embedded-host variant with an explicit private API capability. Managed
@@ -641,8 +692,8 @@ async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<S
             // The console is same-origin and its static template is never
             // CORS-readable. Injecting the per-server token lets it call the
             // protected API without persisting the capability in localStorage.
-            let page = include_str!("console.html")
-                .replace("__OLLAMAX_API_TOKEN__", &state.api_token);
+            let page =
+                include_str!("console.html").replace("__OLLAMAX_API_TOKEN__", &state.api_token);
             let _ = write_html(w, 200, &page).await;
         }
         ("GET", "/api/status") => handle_status(w, state).await,
@@ -672,6 +723,7 @@ async fn route(head: RequestHead, body: String, w: OwnedWriteHalf, state: &Arc<S
         ("POST", "/api/graph/build") => handle_graph_build(w, state, &body).await,
         ("POST", "/api/chat") => handle_chat(w, state, &body).await,
         ("POST", "/api/research") => handle_research(w, state, &body).await,
+        ("POST", "/api/team") => handle_team(w, state, &body).await,
         ("POST", "/api/build") => handle_build(w, state, &body).await,
         ("POST", "/api/cancel") => handle_cancel(w, state, &body).await,
         _ => {
@@ -742,6 +794,33 @@ struct ResearchReq {
     /// into web tools because search queries and fetched pages leave the device.
     #[serde(default)]
     web_tools: bool,
+}
+
+/// Controlled local coding-team request. The workspace is deliberately not a
+/// request field: `forge serve` captured it at startup and all team roles stay
+/// confined to that one root.
+#[derive(Debug, Deserialize)]
+struct TeamReq {
+    id: String,
+    task: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    scout_model: Option<String>,
+    #[serde(default)]
+    planner_model: Option<String>,
+    #[serde(default)]
+    reviewer_model: Option<String>,
+    #[serde(default)]
+    max_iterations: Option<usize>,
+    #[serde(default)]
+    max_repair_rounds: Option<usize>,
+    #[serde(default)]
+    parallel_scouts: bool,
+    #[serde(default)]
+    autonomy: Option<String>,
+    #[serde(default)]
+    context: Vec<ContextItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1369,7 +1448,7 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     loop {
         tokio::select! {
             biased;
-            _ = cancel.notified() => {
+            _ = cancel.cancelled() => {
                 gen.abort();
                 cancelled = true;
                 let _ = write_sse(&mut w, &json!({"type": "cancelled"})).await;
@@ -1471,6 +1550,395 @@ async fn handle_research(w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     .await;
 }
 
+/// Run the bounded workspace-team topology through the local SSE protocol.
+/// Unlike the legacy build endpoint, this path has actual filesystem tools: a
+/// pair of read-only scouts, one writer, fixed verifier commands, and an
+/// advisory reviewer. It intentionally never gives concurrent writers the
+/// same checkout.
+async fn handle_team(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str) {
+    let req: TeamReq = match serde_json::from_str(body) {
+        Ok(request) => request,
+        Err(error) => {
+            let _ = write_json(w, 400, &json!({"error": error.to_string()})).await;
+            return;
+        }
+    };
+    if req.task.trim().is_empty() {
+        let _ = write_json(w, 400, &json!({"error": "team task must not be empty"})).await;
+        return;
+    }
+    if write_sse_head(&mut w).await.is_err() {
+        return;
+    }
+
+    let id = req.id.clone();
+    // Register before model/plugin setup or progress events so an immediate
+    // `/api/cancel` is acknowledged and observed before this request can spawn
+    // a coordinator with filesystem access.
+    let Some(cancel) = state.register(&id).await else {
+        let _ = write_sse(
+            &mut w,
+            &json!({"type":"error", "message":"a request with this id is already running"}),
+        )
+        .await;
+        let _ = write_sse(&mut w, &json!({"type":"done"})).await;
+        return;
+    };
+    let pick_provider = OllamaProvider::new(&state.config.ollama_url);
+    let installed = pick_provider.list_models().await.unwrap_or_default();
+    let model = match req
+        .model
+        .filter(|model| !model.trim().is_empty() && !model.eq_ignore_ascii_case("auto"))
+    {
+        Some(model) if installed.iter().any(|installed| installed.name == model) => model,
+        Some(model) => {
+            let _ = write_sse(
+                &mut w,
+                &json!({"type":"error", "id": id, "message": format!("requested writer model `{model}` is not installed")}),
+            )
+            .await;
+            let _ = write_sse(&mut w, &json!({"type":"done"})).await;
+            state.unregister(&id).await;
+            state.clear_approvals_for_run(&id).await;
+            return;
+        }
+        None => pick_model(&state.config, &pick_provider).await,
+    };
+    let scout_model = match req.scout_model.filter(|model| !model.trim().is_empty()) {
+        Some(model) if installed.iter().any(|installed| installed.name == model) => model,
+        Some(model) => {
+            let _ = write_sse(
+                &mut w,
+                &json!({"type":"error", "id": id, "message": format!("requested scout model `{model}` is not installed")}),
+            )
+            .await;
+            let _ = write_sse(&mut w, &json!({"type":"done"})).await;
+            state.unregister(&id).await;
+            state.clear_approvals_for_run(&id).await;
+            return;
+        }
+        None => select_server_scout_model(&state.config, &installed, &model),
+    };
+    let planner_model = match req.planner_model.filter(|model| !model.trim().is_empty()) {
+        Some(model) if installed.iter().any(|installed| installed.name == model) => model,
+        Some(model) => {
+            let _ = write_sse(
+                &mut w,
+                &json!({"type":"error", "id": id, "message": format!("requested planner model `{model}` is not installed")}),
+            )
+            .await;
+            let _ = write_sse(&mut w, &json!({"type":"done"})).await;
+            state.unregister(&id).await;
+            state.clear_approvals_for_run(&id).await;
+            return;
+        }
+        None => select_server_planner_model(&state.config, &installed, &model),
+    };
+    let reviewer_model = match req.reviewer_model.filter(|model| !model.trim().is_empty()) {
+        Some(model) if installed.iter().any(|installed| installed.name == model) => model,
+        Some(model) => {
+            let _ = write_sse(
+                &mut w,
+                &json!({"type":"error", "id": id, "message": format!("requested reviewer model `{model}` is not installed")}),
+            )
+            .await;
+            let _ = write_sse(&mut w, &json!({"type":"done"})).await;
+            state.unregister(&id).await;
+            state.clear_approvals_for_run(&id).await;
+            return;
+        }
+        None => model.clone(),
+    };
+    let max_iterations = req
+        .max_iterations
+        .unwrap_or(crate::agent::DEFAULT_CODING_MAX_ITERATIONS)
+        .clamp(1, crate::team::MAX_TEAM_ITERATIONS);
+    let max_repair_rounds = req
+        .max_repair_rounds
+        .unwrap_or(1)
+        .min(crate::team::MAX_TEAM_REPAIR_ROUNDS);
+    let mode = if req.parallel_scouts
+        && state.config.enable_parallel
+        && state.config.max_parallel_workers >= 2
+    {
+        TeamMode::ParallelScouts
+    } else {
+        TeamMode::Serial
+    };
+    let autonomy = match req.autonomy.as_deref() {
+        Some("auto") => "auto".to_string(),
+        Some("readonly") => "readonly".to_string(),
+        _ => "confirm".to_string(),
+    };
+    let mut task = req.task;
+    if !req.context.is_empty() {
+        task.push_str("\n\nAttached context (untrusted task material):\n");
+        for context in &req.context {
+            task.push_str(&context.content);
+            task.push('\n');
+        }
+    }
+    let mut system_suffix = RuleSet::load_default().unwrap_or_default().render();
+    let plugin_root = dirs::config_dir()
+        .map(|directory| directory.join("ollama-forge").join("knowledge-plugins"));
+    let mut plugin_event = None;
+    if let Some(plugin_root) = plugin_root {
+        match crate::plugins::PluginManager::new(plugin_root)
+            .and_then(|manager| manager.load_relevant_context(&task, 3, 12_000))
+        {
+            Ok(contexts) if !contexts.is_empty() => {
+                plugin_event = Some(json!({
+                    "type": "knowledge_plugins_used",
+                    "plugins": contexts.iter().map(|context| json!({
+                        "id": context.id,
+                        "name": context.name,
+                        "repository": context.repository_url,
+                        "commit": context.commit_sha,
+                    })).collect::<Vec<_>>(),
+                    "trust": "untrusted_reference_only",
+                }));
+                system_suffix.push_str(&crate::plugins::render_context_suffix(&contexts));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                plugin_event = Some(json!({
+                    "type": "knowledge_plugin_warning",
+                    "message": format!("Installed knowledge plugins were not loaded: {error:#}"),
+                }));
+            }
+        }
+    }
+
+    if cancel.is_cancelled() {
+        let _ = write_sse(&mut w, &json!({"type":"cancelled"})).await;
+        state.unregister(&id).await;
+        state.clear_approvals_for_run(&id).await;
+        return;
+    }
+
+    if write_sse(
+        &mut w,
+        &json!({
+            "type": "team_meta",
+            "id": id,
+            "workspace": state.workspace_root,
+            "writerModel": model,
+            "scoutModel": scout_model,
+            "plannerModel": planner_model,
+            "reviewerModel": reviewer_model,
+            "mode": match mode { TeamMode::Serial => "serial", TeamMode::ParallelScouts => "parallel_scouts" },
+            "maxIterations": max_iterations,
+            "maxRepairRounds": max_repair_rounds,
+            "autonomy": autonomy,
+            "parallelRequestedButDisabled": req.parallel_scouts
+                && (!state.config.enable_parallel || state.config.max_parallel_workers < 2),
+        }),
+    )
+    .await
+    .is_err()
+    {
+        state.unregister(&id).await;
+        state.clear_approvals_for_run(&id).await;
+        return;
+    }
+    if let Some(event) = plugin_event {
+        if write_sse(&mut w, &event).await.is_err() {
+            state.unregister(&id).await;
+            state.clear_approvals_for_run(&id).await;
+            return;
+        }
+    }
+    if cancel.is_cancelled() {
+        let _ = write_sse(&mut w, &json!({"type":"cancelled"})).await;
+        state.unregister(&id).await;
+        state.clear_approvals_for_run(&id).await;
+        return;
+    }
+    let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+    let approval: Arc<dyn crate::agent::ApprovalPolicy> = Arc::new(ChannelApprovalPolicy {
+        mode: autonomy.clone(),
+        tx: tx.clone(),
+        state: state.clone(),
+        run_id: id.clone(),
+    });
+    let provider = Arc::new(OllamaProvider::new(&state.config.ollama_url));
+    let workspace = state.workspace_root.clone();
+    let workspace_fs = state.workspace_fs.clone();
+    let task_for_run = task.clone();
+    let run = tokio::spawn(async move {
+        let coordinator = TeamCoordinator::with_workspace_fs(
+            provider,
+            workspace,
+            workspace_fs,
+            TeamConfig {
+                model,
+                scout_model: Some(scout_model),
+                planner_model: Some(planner_model),
+                reviewer_model: Some(reviewer_model),
+                num_ctx: VramSentinel::new(0, false)
+                    .detect_hardware()
+                    .await
+                    .optimal_context,
+                keep_alive: "1h".to_string(),
+                max_iterations,
+                max_repair_rounds,
+                mode,
+                system_suffix,
+            },
+        )?;
+        coordinator
+            .run(&task_for_run, approval, |event| {
+                let _ = tx.send(team_event_json(event));
+            })
+            .await
+    });
+
+    let mut cancelled = false;
+    loop {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                run.abort();
+                cancelled = true;
+                let _ = write_sse(&mut w, &json!({"type":"cancelled"})).await;
+                break;
+            }
+            event = rx.recv() => match event {
+                Some(event) => {
+                    if write_sse(&mut w, &event).await.is_err() {
+                        run.abort();
+                        cancelled = true;
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+    }
+    if cancelled {
+        // Wait for task-drop cleanup before releasing the run ID. In
+        // particular, a cancelled ShellTool's process-group guard runs during
+        // this join, so ordinary verifier descendants cannot outlive the
+        // request that launched them.
+        let _ = run.await;
+        state.unregister(&id).await;
+        state.clear_approvals_for_run(&id).await;
+        return;
+    }
+    state.unregister(&id).await;
+    state.clear_approvals_for_run(&id).await;
+    match run.await {
+        Ok(Ok(result)) => {
+            let answer = result.implementation_answers.join("\n\n");
+            let _ = write_sse(&mut w, &json!({"type":"answer", "text": answer})).await;
+            let _ = write_sse(
+                &mut w,
+                &json!({
+                    "type": "team_result",
+                    "status": result.status,
+                    "writerMutationSteps": result.writer_mutation_steps,
+                    "verification": result.verification,
+                    "functionalVerificationPassed": result.functional_verification_passed,
+                    "review": result.review,
+                    "reviewAvailable": result.review_available,
+                    "elapsedMs": result.elapsed_ms,
+                    "modelCalls": result.model_calls,
+                    "tokens": result.tokens_generated,
+                    "toolCalls": result.tool_calls,
+                    "plan": result.plan,
+                }),
+            )
+            .await;
+            let _ = write_sse(&mut w, &json!({"type":"done"})).await;
+        }
+        Ok(Err(error)) => {
+            let _ = write_sse(
+                &mut w,
+                &json!({"type":"error", "message": error.to_string()}),
+            )
+            .await;
+        }
+        Err(_) => {}
+    }
+}
+
+fn select_server_scout_model(
+    config: &Config,
+    installed: &[ModelInfo],
+    writer_model: &str,
+) -> String {
+    let writer_size = installed
+        .iter()
+        .find(|model| model.name == writer_model)
+        .map(|model| model.size);
+    config
+        .execution_models
+        .iter()
+        .filter(|name| name.as_str() != writer_model)
+        .filter_map(|name| installed.iter().find(|model| model.name == *name))
+        .filter(|model| writer_size.map_or(true, |writer_size| model.size <= writer_size))
+        .max_by_key(|model| model.size)
+        .map(|model| model.name.clone())
+        .unwrap_or_else(|| writer_model.to_string())
+}
+
+fn select_server_planner_model(
+    config: &Config,
+    installed: &[ModelInfo],
+    writer_model: &str,
+) -> String {
+    if config.planning_model != writer_model
+        && installed
+            .iter()
+            .any(|model| model.name == config.planning_model)
+    {
+        return config.planning_model.clone();
+    }
+    writer_model.to_string()
+}
+
+fn team_event_json(event: &TeamEvent) -> Value {
+    match event {
+        TeamEvent::PlanCreated { plan } => json!({"type":"team_plan", "plan": plan}),
+        TeamEvent::ScoutStarted { role } => json!({"type":"team_scout_started", "role": role}),
+        TeamEvent::ScoutFinished { role, steps } => {
+            json!({"type":"team_scout_finished", "role": role, "steps": steps})
+        }
+        TeamEvent::PlannerStarted => json!({"type":"team_planner_started"}),
+        TeamEvent::PlannerFinished { summary } => {
+            json!({"type":"team_planner_finished", "summary": summary})
+        }
+        TeamEvent::ImplementerStarted { repair_round } => {
+            json!({"type":"team_writer_started", "repairRound": repair_round})
+        }
+        TeamEvent::ImplementerStep { repair_round, step } => json!({
+            "type":"step",
+            "role":"implementer",
+            "repairRound": repair_round,
+            "iteration": step.iteration,
+            "tool": step.tool,
+            "ok": step.ok,
+            "args": step.args,
+            "preview": step.result_preview,
+        }),
+        TeamEvent::ImplementerFinished {
+            repair_round,
+            steps,
+        } => {
+            json!({"type":"team_writer_finished", "repairRound": repair_round, "steps": steps})
+        }
+        TeamEvent::VerificationStarted { command } => {
+            json!({"type":"team_verification_started", "command": command})
+        }
+        TeamEvent::VerificationFinished { result } => {
+            json!({"type":"team_verification_finished", "result": result})
+        }
+        TeamEvent::ReviewerFinished { available } => {
+            json!({"type":"team_reviewer_finished", "available": available})
+        }
+    }
+}
+
 /// Shared agent-loop streamer used by BOTH `/api/research` and `/api/chat` (when
 /// its `tools` toggle is on) — the web tools are the *same* system surfaced in
 /// two places, not a fork. Streams `step` events as tools are called, then a
@@ -1488,7 +1956,11 @@ struct ChannelApprovalPolicy {
 }
 
 impl ChannelApprovalPolicy {
-    async fn request_decision(&self, mut event: Value, timeout: std::time::Duration) -> crate::agent::Approval {
+    async fn request_decision(
+        &self,
+        mut event: Value,
+        timeout: std::time::Duration,
+    ) -> crate::agent::Approval {
         use crate::agent::Approval;
         let approval_id = Uuid::new_v4().to_string();
         let Some(mut rx) = self
@@ -1515,6 +1987,10 @@ impl ChannelApprovalPolicy {
 
 #[async_trait::async_trait]
 impl crate::agent::ApprovalPolicy for ChannelApprovalPolicy {
+    fn requires_plan_approval(&self) -> bool {
+        self.mode == "confirm"
+    }
+
     async fn approve_plan(&self, plan: &str) -> crate::agent::Approval {
         use crate::agent::Approval;
         // Always surface the plan (Intent Preview). Only "confirm" pauses for the
@@ -1535,12 +2011,13 @@ impl crate::agent::ApprovalPolicy for ChannelApprovalPolicy {
         match self.mode.as_str() {
             "auto" => Approval::Allow,
             "readonly" => Approval::Deny,
-            _ => self
-                .request_decision(
+            _ => {
+                self.request_decision(
                     json!({ "type": "approval_request", "tool": tool, "args": args }),
                     std::time::Duration::from_secs(120),
                 )
-                .await,
+                .await
+            }
         }
     }
 }
@@ -1602,6 +2079,7 @@ async fn run_agent_streamed(
         run_id: id.clone(),
     });
     let workspace_root = state.workspace_root.clone();
+    let workspace_fs = state.workspace_fs.clone();
     let run = tokio::spawn(async move {
         let provider = Arc::new(OllamaProvider::new(&url));
         let mut registry = if web_disclosure {
@@ -1617,17 +2095,28 @@ async fn run_agent_streamed(
             &mut registry,
             &cwd.join("graphify-out").join("graph.json"),
         );
-        // Hermes-class file + shell tools, sandboxed to the workspace. The shell
-        // carries its own deny-list + timeout + audit; interactive per-call
-        // consent is layered in the Agent UI (Autonomy Dial). Shell honors the
+        // Filesystem tools are sandboxed to the workspace. The host shell starts
+        // there but is not OS-sandboxed; it carries a deny-list + timeout + audit
+        // and interactive per-call consent in the Agent UI. Shell honors the
         // FORGE_SHELL_DISABLED kill-switch.
-        registry.register(Arc::new(crate::tools::files::FsListTool::new(&cwd)));
-        registry.register(Arc::new(crate::tools::files::FsSearchTool::new(&cwd)));
-        registry.register(Arc::new(crate::tools::files::FsReadTool::new(&cwd)));
-        registry.register(Arc::new(crate::tools::files::FsWriteTool::new(&cwd)));
-        registry.register(Arc::new(crate::tools::files::FsEditTool::new(&cwd)));
-        registry.register(Arc::new(crate::tools::shell::ShellTool::new(
+        registry.register(Arc::new(crate::tools::files::FsListTool::from_workspace(
+            workspace_fs.clone(),
+        )));
+        registry.register(Arc::new(crate::tools::files::FsSearchTool::from_workspace(
+            workspace_fs.clone(),
+        )));
+        registry.register(Arc::new(crate::tools::files::FsReadTool::from_workspace(
+            workspace_fs.clone(),
+        )));
+        registry.register(Arc::new(crate::tools::files::FsWriteTool::from_workspace(
+            workspace_fs.clone(),
+        )));
+        registry.register(Arc::new(crate::tools::files::FsEditTool::from_workspace(
+            workspace_fs.clone(),
+        )));
+        registry.register(Arc::new(crate::tools::shell::ShellTool::from_workspace(
             &cwd,
+            workspace_fs.clone(),
             crate::tools::shell::ShellPolicy::default(),
         )));
         // #1f Sub-agent delegation: the child gets a read-only research toolset
@@ -1641,9 +2130,15 @@ async fn run_agent_streamed(
             &mut child_registry,
             &cwd.join("graphify-out").join("graph.json"),
         );
-        child_registry.register(Arc::new(crate::tools::files::FsListTool::new(&cwd)));
-        child_registry.register(Arc::new(crate::tools::files::FsSearchTool::new(&cwd)));
-        child_registry.register(Arc::new(crate::tools::files::FsReadTool::new(&cwd)));
+        child_registry.register(Arc::new(crate::tools::files::FsListTool::from_workspace(
+            workspace_fs.clone(),
+        )));
+        child_registry.register(Arc::new(crate::tools::files::FsSearchTool::from_workspace(
+            workspace_fs.clone(),
+        )));
+        child_registry.register(Arc::new(crate::tools::files::FsReadTool::from_workspace(
+            workspace_fs.clone(),
+        )));
         registry.register(Arc::new(
             crate::tools::delegate::DelegateTool::new(
                 provider.clone(),
@@ -1697,6 +2192,44 @@ async fn run_agent_streamed(
                         skill.name, skill.prompts.system
                     );
                     let _ = tx.send(json!({"type": "skill_applied", "name": skill.name}));
+                }
+            }
+        }
+        // Curated GitHub knowledge plugins are deliberately documentation-only:
+        // load bounded, integrity-checked reference text only and make the
+        // untrusted-data boundary explicit in the system suffix. A corrupt or
+        // tampered cache is skipped rather than injected into the model.
+        if let Some(plugin_root) =
+            dirs::config_dir().map(|d| d.join("ollama-forge").join("knowledge-plugins"))
+        {
+            match crate::plugins::PluginManager::new(plugin_root)
+                .and_then(|manager| manager.load_relevant_context(&question, 3, 12_000))
+            {
+                Ok(contexts) if !contexts.is_empty() => {
+                    let applied = contexts
+                        .iter()
+                        .map(|context| {
+                            json!({
+                                "id": context.id,
+                                "name": context.name,
+                                "repository": context.repository_url,
+                                "commit": context.commit_sha,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    suffix.push_str(&crate::plugins::render_context_suffix(&contexts));
+                    let _ = tx.send(json!({
+                        "type": "knowledge_plugins_used",
+                        "plugins": applied,
+                        "trust": "untrusted_reference_only",
+                    }));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    let _ = tx.send(json!({
+                        "type": "knowledge_plugin_warning",
+                        "message": format!("Installed knowledge plugins were not loaded: {error:#}"),
+                    }));
                 }
             }
         }
@@ -1758,7 +2291,7 @@ async fn run_agent_streamed(
     loop {
         tokio::select! {
             biased;
-            _ = cancel.notified() => {
+            _ = cancel.cancelled() => {
                 run.abort();
                 cancelled = true;
                 let _ = write_sse(&mut w, &json!({"type": "cancelled"})).await;
@@ -1776,11 +2309,14 @@ async fn run_agent_streamed(
             }
         }
     }
-    state.unregister(&id).await;
-    state.clear_approvals_for_run(&id).await;
     if cancelled {
+        let _ = run.await;
+        state.unregister(&id).await;
+        state.clear_approvals_for_run(&id).await;
         return;
     }
+    state.unregister(&id).await;
+    state.clear_approvals_for_run(&id).await;
 
     match run.await {
         Ok(Ok(trace)) => {
@@ -1808,6 +2344,28 @@ async fn handle_build(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &st
     };
 
     let id = req.id.clone();
+    // `output_dir` comes from an HTTP client, so treat it exactly like a
+    // model-supplied filesystem path. Resolve it while the server's approved
+    // workspace root is still available, before spending any model work.
+    let output_dir =
+        match resolve_build_output_dir(&state.workspace_root, req.output_dir.as_deref()) {
+            Ok(dir) => dir,
+            Err(error) => {
+                if write_sse_head(&mut w).await.is_ok() {
+                    let _ = write_sse(
+                        &mut w,
+                        &json!({
+                            "type": "error",
+                            "id": id,
+                            "message": format!("invalid build output_dir: {error:#}"),
+                        }),
+                    )
+                    .await;
+                    let _ = write_sse(&mut w, &json!({"type": "done"})).await;
+                }
+                return;
+            }
+        };
     let rules_suffix = RuleSet::load_default().unwrap_or_default().render();
     let cfg = OrchestratorConfig {
         ollama_url: state.config.ollama_url.clone(),
@@ -1835,11 +2393,12 @@ async fn handle_build(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &st
     let (prog_tx, mut prog_rx) = mpsc::unbounded_channel::<ProgressEvent>();
     let task_text = req.task.clone();
     let no_security = req.no_security;
+    let output_dir_for_build = output_dir.clone();
     let run = tokio::spawn(async move {
         let orchestrator = Orchestrator::new(cfg).await?;
         let request = BuildRequest {
             task: task_text,
-            output_dir: None,
+            output_dir: output_dir_for_build,
             language: None,
             run_tests: false,
             skip_security: no_security,
@@ -1853,7 +2412,7 @@ async fn handle_build(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &st
     loop {
         tokio::select! {
             biased;
-            _ = cancel.notified() => {
+            _ = cancel.cancelled() => {
                 run.abort();
                 cancelled = true;
                 let _ = write_sse(&mut w, &json!({"type": "cancelled"})).await;
@@ -1871,22 +2430,30 @@ async fn handle_build(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &st
             }
         }
     }
-    state.unregister(&id).await;
-    state.clear_approvals_for_run(&id).await;
     if cancelled {
+        let _ = run.await;
+        state.unregister(&id).await;
+        state.clear_approvals_for_run(&id).await;
         return;
     }
+    state.unregister(&id).await;
+    state.clear_approvals_for_run(&id).await;
 
     match run.await {
         Ok(Ok(result)) => {
             // Optional: extract labeled code blocks to disk, reusing the exact
             // same path-safety guard the CLI's `--output` uses.
             let mut files: Vec<String> = Vec::new();
-            if let Some(dir) = &req.output_dir {
-                if let Ok(paths) =
-                    extract_and_write_code_blocks(std::path::Path::new(dir), &result.output)
-                {
-                    files = paths.iter().map(|p| p.display().to_string()).collect();
+            let mut warnings = result.warnings;
+            if let Some(dir) = &output_dir {
+                match extract_and_write_code_blocks(dir, &result.output) {
+                    Ok(paths) => {
+                        files = paths.iter().map(|p| p.display().to_string()).collect();
+                    }
+                    Err(error) => warnings.push(format!(
+                        "could not write build output under approved workspace directory {}: {error:#}",
+                        dir.display()
+                    )),
                 }
             }
             let _ = write_sse(
@@ -1897,7 +2464,7 @@ async fn handle_build(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &st
                     "model": result.model_used,
                     "tokens": result.tokens_generated,
                     "durationMs": result.duration_ms,
-                    "warnings": result.warnings,
+                    "warnings": warnings,
                     "files": files,
                 }),
             )
@@ -1914,6 +2481,62 @@ async fn handle_build(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &st
 // =====================================================================
 // Helpers
 // =====================================================================
+
+/// Resolve the optional **legacy text-build** output directory under the fixed
+/// server workspace. This retains lexical/current symlink validation for the
+/// compatibility path; Agent and Team workspace tools use the pinned
+/// descriptor capability instead.
+fn resolve_build_output_dir(
+    workspace_root: &Path,
+    requested: Option<&str>,
+) -> Result<Option<PathBuf>> {
+    let Some(requested) = requested else {
+        return Ok(None);
+    };
+    let requested = requested.trim();
+    if requested.is_empty() {
+        anyhow::bail!("output_dir must be a non-empty path relative to the workspace");
+    }
+
+    let candidate = crate::tools::files::resolve_within(workspace_root, requested)
+        .with_context(|| format!("resolve output_dir `{requested}`"))?;
+    match std::fs::symlink_metadata(&candidate) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            anyhow::bail!("output_dir `{requested}` is a symlink and is not allowed");
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            anyhow::bail!("output_dir `{requested}` is not a directory");
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(&candidate)
+                .with_context(|| format!("create output_dir `{requested}`"))?;
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspect output_dir `{requested}`"));
+        }
+    }
+
+    let metadata = std::fs::symlink_metadata(&candidate)
+        .with_context(|| format!("inspect output_dir `{requested}`"))?;
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("output_dir `{requested}` is a symlink and is not allowed");
+    }
+    if !metadata.is_dir() {
+        anyhow::bail!("output_dir `{requested}` is not a directory");
+    }
+
+    let canonical_workspace = workspace_root
+        .canonicalize()
+        .context("canonicalize approved workspace root")?;
+    let canonical_output = candidate
+        .canonicalize()
+        .with_context(|| format!("canonicalize output_dir `{requested}`"))?;
+    if !canonical_output.starts_with(&canonical_workspace) {
+        anyhow::bail!("output_dir `{requested}` resolves outside the approved workspace");
+    }
+    Ok(Some(canonical_output))
+}
 
 fn progress_event_json(ev: &ProgressEvent) -> Value {
     match ev {
@@ -2154,6 +2777,43 @@ async fn maybe_log_replay(opts: &GenerateOptions, response: &str, ollama_url: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_output_dir_is_confined_to_the_workspace() {
+        let workspace = tempfile::tempdir().unwrap();
+        let output = workspace.path().join("generated");
+        std::fs::create_dir(&output).unwrap();
+
+        let resolved = resolve_build_output_dir(workspace.path(), Some("generated"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved, output.canonicalize().unwrap());
+
+        let created = resolve_build_output_dir(workspace.path(), Some("new-generated"))
+            .unwrap()
+            .unwrap();
+        assert!(created.is_dir());
+        assert!(resolve_build_output_dir(workspace.path(), Some("../outside")).is_err());
+        assert!(resolve_build_output_dir(workspace.path(), Some("")).is_err());
+
+        let outside = tempfile::tempdir().unwrap();
+        assert!(
+            resolve_build_output_dir(workspace.path(), Some(outside.path().to_str().unwrap()))
+                .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_output_dir_rejects_symlink_components() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), workspace.path().join("linked-output")).unwrap();
+
+        assert!(resolve_build_output_dir(workspace.path(), Some("linked-output")).is_err());
+    }
 
     #[test]
     fn parses_get_request_head() {

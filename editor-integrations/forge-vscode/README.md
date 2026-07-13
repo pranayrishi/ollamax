@@ -1,8 +1,9 @@
 # Ollamax — VSCode Extension (Cursor-style chat panel)
 
-A side-docked AI chat panel for [Ollamax](../../README.md). Chat, run the
-tool-using research **Agent**, and kick off a parallel **Build** — all against
-your **local** Ollama daemon. No cloud, no API keys, no telemetry.
+A side-docked AI panel for [Ollamax](../../README.md). Ask questions, run a
+workspace-editing **Agent**, or use a controlled **Team** (read-only scouts,
+one writer, verification, and review) — all against your **local** Ollama
+daemon. No cloud inference or API keys are required.
 
 This extension is intentionally **thin**: it is pure JavaScript with **no build
 step and no npm dependencies**. It talks to the Rust backend (`forge serve`)
@@ -37,7 +38,7 @@ over a local HTTP/SSE API; it never does inference itself and never bypasses
      ```
 3. In the dev window, set the path to your built binary if `forge` isn't on your
    PATH: **Settings → Ollamax → Server Path** →
-   `/abs/path/to/Ollama-Optimizer/target/release/forge`.
+   `/abs/path/to/ollamax/target/release/forge`.
 4. Click the **anvil icon** in the Activity Bar → the **Chat** panel opens.
    - To get the Cursor/Windsurf right-side feel, **drag the panel to the
      Secondary Side Bar** (right edge). VSCode remembers the placement.
@@ -48,9 +49,9 @@ yourself, run `forge serve --port 7878` and set **Server Port** to `7878`.
 
 ## Using it
 
-- **Mode toggle** (top-left): **Chat** (multi-turn) · **Agent** (web/wiki/arxiv
-  tools) · **Build** (parallel multi-model orchestration with live per-worker
-  progress).
+- **Mode toggle** (top-left): **Ask** (multi-turn, read-only) · **Agent**
+  (workspace tools with approvals) · **Team** (read-only scouts, one writer,
+  fixed verification, and review).
 - **Model picker** (top-right) is populated from your installed Ollama models;
   the hardware-recommended default is preselected.
 - **Context**: `+ file` (active editor), `+ selection`, `@ files` (workspace
@@ -136,5 +137,9 @@ is bundled into the Code-OSS fork — see
   prompt (reuses the existing streaming path). Native `/api/chat` streaming is a
   clean follow-up.
 - Markdown rendering is intentionally minimal (fenced code + inline code).
-- Build writes files to disk only when an `output_dir` is provided to the
-  backend; the panel currently shows the merged output inline.
+- Team verification executes repository code when the user selects automatic
+  autonomy. The filesystem tools are workspace-confined, but the host shell is
+  not an OS/container sandbox; use confirmation for unfamiliar repositories.
+- Curated GitHub knowledge plugins are currently installed with `forge plugins`
+  in the terminal. Their README documentation is untrusted reference text, not
+  executable extension code.

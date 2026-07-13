@@ -4,7 +4,7 @@
  * postMessage to the extension host, which talks to `forge serve`.
  *
  * Features in this file:
- *  - Chat / Agent / Build modes, model picker, streaming, stop/cancel.
+ *  - Chat / Agent / Team / Build modes, model picker, streaming, stop/cancel.
  *  - Message QUEUE (Feature 2): enqueue while streaming; strict FIFO; the next
  *    item starts only after the backend's terminal `done`; edit/remove/reorder;
  *    cancel = pause-and-confirm (does not auto-advance).
@@ -478,7 +478,7 @@
     inputEl.value = "";
     const autonomyEl = $("#autonomy");
     const item = { text, mode, model, context: contextItems.slice(), autonomy: autonomyEl ? autonomyEl.value : "confirm" };
-    if (mode === "agent") lastAutonomy = item.autonomy;
+    if (mode === "agent" || mode === "team") lastAutonomy = item.autonomy;
     contextItems = []; // consumed by this message
     renderContext();
     if (streaming) {
@@ -588,6 +588,68 @@
         // conversation at use time — not just buried in Settings.
         if (ev.toolsEnabled && ev.disclosure) active.showNote("🌐 " + ev.disclosure);
         break;
+      case "team_meta":
+        active.setMetaLabel(
+          `Team · writer ${ev.writerModel || "local"} · scouts ${ev.scoutModel || "local"} · planner ${ev.plannerModel || "local"}`
+        );
+        active.showNote(
+          "👥 Controlled local team: read-only scouts → one writer → fixed verification → review." +
+            " Confirm is selected by default; allowed test commands execute this workspace's code." +
+            (ev.parallelRequestedButDisabled ? " Parallel scouts were disabled by this project's configuration." : "")
+        );
+        break;
+      case "team_plan": {
+        const p = ev.plan || {};
+        const checks = Array.isArray(p.verification_commands) && p.verification_commands.length
+          ? p.verification_commands.join("; ")
+          : "no conventional verifier detected";
+        active.showNote(`📋 Team plan · one writer · checks: ${checks}`);
+        break;
+      }
+      case "team_scout_started":
+        active.showNote(`🔎 ${String(ev.role || "scout").replace(/([A-Z])/g, " $1").trim()} started`);
+        break;
+      case "team_scout_finished":
+        active.showNote(`✓ ${String(ev.role || "scout").replace(/([A-Z])/g, " $1").trim()} finished (${ev.steps || 0} tool steps)`);
+        break;
+      case "team_planner_started":
+        active.showNote("🧭 Planner is synthesizing the read-only scout hand-offs");
+        break;
+      case "team_planner_finished":
+        active.showNote("✓ Planner hand-off is ready");
+        break;
+      case "team_writer_started":
+        active.showNote(`✎ Writer ${ev.repairRound ? "repair" : "implementation"} pass started`);
+        break;
+      case "team_writer_finished":
+        active.showNote(`✓ Writer pass finished (${ev.steps || 0} tool steps)`);
+        break;
+      case "team_verification_started":
+        active.showNote(`🧪 Verifying: ${ev.command || "check"}`);
+        break;
+      case "team_verification_finished": {
+        const r = ev.result || {};
+        active.showNote(
+          `${r.passed ? "✓" : "✕"} Verification ${r.passed ? "passed" : r.skipped_by_user ? "declined" : "failed"}: ${r.command || "check"}`
+        );
+        break;
+      }
+      case "team_reviewer_finished":
+        active.showNote(ev.available === false ? "⚠ Advisory reviewer was unavailable" : "✓ Advisory review finished");
+        break;
+      case "team_result": {
+        const bits = [
+          `team status: ${String(ev.status || "unknown")}`,
+          ev.writerMutationSteps != null ? `${ev.writerMutationSteps} writer mutation step(s)` : "",
+          ev.functionalVerificationPassed === true ? "functional check passed" : "",
+          ev.modelCalls != null ? `${ev.modelCalls} local model calls` : "",
+          ev.toolCalls != null ? `${ev.toolCalls} tool/check calls` : "",
+          ev.elapsedMs != null ? `${ev.elapsedMs} ms` : "",
+        ].filter(Boolean);
+        active.appendNote(`\n\n_${bits.join(" · ")}_`);
+        if (ev.review) active.appendNote(`\n\n**Review**\n${ev.review}`);
+        break;
+      }
       case "token":
         active.appendToken(ev.text);
         break;
@@ -627,6 +689,16 @@
         break;
       case "memory_used":
         active.addMemory(ev.preview || "");
+        break;
+      case "knowledge_plugins_used": {
+        const names = Array.isArray(ev.plugins)
+          ? ev.plugins.map((plugin) => plugin.name || plugin.id).filter(Boolean).join(", ")
+          : "";
+        active.showNote(`🧩 Using installed GitHub knowledge reference${names ? `: ${names}` : ""} (untrusted documentation only).`);
+        break;
+      }
+      case "knowledge_plugin_warning":
+        active.showNote(`⚠ ${ev.message || "Installed knowledge plugin was not loaded."}`);
         break;
       case "answer":
         active.setAnswerText(ev.text || "");
@@ -855,7 +927,7 @@
   function maybeWarnVision() {
     // Images are only honored on the Chat path — Agent can't analyze them,
     // so warn instead of silently dropping the image (review #7/#8).
-    if (mode === "agent") {
+    if (mode === "agent" || mode === "team") {
       setStatus("🖼 Images only work in Chat mode — switch to Chat to analyze an image.");
       return;
     }
@@ -1035,13 +1107,15 @@
       document.querySelectorAll(".mode").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       mode = btn.getAttribute("data-mode");
-      // The Autonomy Dial only applies to the autonomous Agent.
+      // The Autonomy Dial applies to both workspace-writing modes.
       const dial = $("#autonomy");
-      if (dial) dial.hidden = mode !== "agent";
+      if (dial) dial.hidden = mode !== "agent" && mode !== "team";
       inputEl.placeholder =
         mode === "agent"
           ? "Tell the agent what to do — it uses tools, memory & skills and edits files (asks first)…"
-          : "Ask anything — conversational, read-only, runs locally on your hardware…";
+          : mode === "team"
+            ? "Describe a complex task — scouts inspect first, one writer edits, then Ollamax verifies the result…"
+            : "Ask anything — conversational, read-only, runs locally on your hardware…";
     });
   });
 

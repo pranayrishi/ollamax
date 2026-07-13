@@ -1,17 +1,27 @@
 use anyhow::Result;
 use clap::Parser;
 use ollama_forge::agent::{Agent, AgentConfig, Approval, ApprovalPolicy};
-use ollama_forge::cli::{AgentAutonomy, Cli, Commands, RulesAction, SkillsAction};
+use ollama_forge::cli::{
+    AgentAutonomy, Cli, Commands, EvalAction, PluginsAction, RulesAction, SkillsAction,
+};
+use ollama_forge::evals::{
+    compare_records, load_scenario, score_records, JsonlEvaluationStore, ScoreComparison,
+    ScoreReport,
+};
 use ollama_forge::executor::ProgressEvent;
 use ollama_forge::orchestrator::{BuildRequest, Orchestrator, OrchestratorConfig};
+use ollama_forge::plugins::{render_context_suffix, PluginManager, MAX_RELEVANT_PLUGINS};
 use ollama_forge::providers::{GenerateOptions, LlmProvider, OllamaProvider};
 use ollama_forge::replay::{quick_hash, read_log};
 use ollama_forge::rules::RuleSet;
 use ollama_forge::security::{SecurityGuard, Severity};
-use ollama_forge::tools::{files::{FsEditTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool}, shell::{ShellPolicy, ShellTool}, ToolRegistry};
-use ollama_forge::{
-    init_tracing, monitoring::VramSentinel, skills::SkillsEngine, Config,
+use ollama_forge::team::{TeamConfig, TeamCoordinator, TeamEvent, TeamMode, TeamStatus};
+use ollama_forge::tools::{
+    files::{FsEditTool, FsListTool, FsReadTool, FsSearchTool, FsWriteTool, WorkspaceFs},
+    shell::{ShellPolicy, ShellTool},
+    ToolRegistry,
 };
+use ollama_forge::{init_tracing, monitoring::VramSentinel, skills::SkillsEngine, Config};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -245,6 +255,52 @@ async fn async_main() -> Result<()> {
             .await?;
         }
 
+        Commands::Team {
+            model,
+            scout_model,
+            planner_model,
+            reviewer_model,
+            max_iterations,
+            max_repair_rounds,
+            parallel_scouts,
+            autonomy,
+            yes,
+            task,
+        } => {
+            if task.is_empty() {
+                anyhow::bail!("forge team: task is required");
+            }
+            let team_mode = if parallel_scouts
+                && config.enable_parallel
+                && config.max_parallel_workers >= 2
+            {
+                TeamMode::ParallelScouts
+            } else {
+                if parallel_scouts {
+                    eprintln!(
+                        "⚠️  --parallel-scouts was requested, but this configuration does not allow two workers; using serial scouts."
+                    );
+                }
+                TeamMode::Serial
+            };
+            run_workspace_team(
+                &config,
+                &rules_suffix,
+                WorkspaceTeamRequest {
+                    task: task.join(" "),
+                    requested_model: model,
+                    requested_scout_model: scout_model,
+                    requested_planner_model: planner_model,
+                    reviewer_model,
+                    max_iterations,
+                    max_repair_rounds,
+                    mode: team_mode,
+                    autonomy: if yes { AgentAutonomy::Auto } else { autonomy },
+                },
+            )
+            .await?;
+        }
+
         Commands::Status { models } => {
             let ollama = OllamaProvider::new(&config.ollama_url);
             let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
@@ -334,9 +390,14 @@ async fn async_main() -> Result<()> {
 
             let mut reg = ModelRegistry::seed();
             reg.mark_installed(&installed);
-            let fits: std::collections::HashSet<String> =
-                reg.fits(free).into_iter().map(|m| m.ollama_tag.clone()).collect();
-            let recommended = reg.recommend(free, &installed).map(|m| m.ollama_tag.clone());
+            let fits: std::collections::HashSet<String> = reg
+                .fits(free)
+                .into_iter()
+                .map(|m| m.ollama_tag.clone())
+                .collect();
+            let recommended = reg
+                .recommend(free, &installed)
+                .map(|m| m.ollama_tag.clone());
 
             println!(
                 "\n🖥️  Detected {:?} · {free} MB free VRAM → tier: {}",
@@ -351,7 +412,11 @@ async fn async_main() -> Result<()> {
                  Gemini) are paid, bring-your-own-key, and intentionally not listed here.\n"
             );
 
-            for tier in [HardwareTier::Modest, HardwareTier::Single, HardwareTier::HighEnd] {
+            for tier in [
+                HardwareTier::Modest,
+                HardwareTier::Single,
+                HardwareTier::HighEnd,
+            ] {
                 println!("── {} ──", tier.label());
                 for m in reg.all().iter().filter(|m| m.tier == tier) {
                     let does_fit = fits.contains(&m.ollama_tag);
@@ -362,7 +427,11 @@ async fn async_main() -> Result<()> {
                     if m.installed {
                         flags.push("✓ installed".to_string());
                     }
-                    flags.push(if does_fit { "fits".to_string() } else { "needs more VRAM".to_string() });
+                    flags.push(if does_fit {
+                        "fits".to_string()
+                    } else {
+                        "needs more VRAM".to_string()
+                    });
                     if !m.license.commercial_friendly() {
                         flags.push(format!("⚠ {}", m.license.spdx()));
                     }
@@ -1084,6 +1153,135 @@ async fn async_main() -> Result<()> {
             }
         }
 
+        Commands::Plugins { action } => {
+            let manager = PluginManager::new(knowledge_plugin_root())?;
+            match action {
+                PluginsAction::List => {
+                    let installed = manager.list()?;
+                    let installed_by_id: std::collections::BTreeMap<_, _> = installed
+                        .iter()
+                        .map(|manifest| (manifest.id.as_str(), manifest))
+                        .collect();
+                    println!("\n🧩 Curated GitHub knowledge plugins");
+                    println!("   cache: {}", manager.install_root().display());
+                    println!("   These are documentation-only references: Ollamax never clones, executes, installs, or registers repository code.\n");
+                    for plugin in &manager.registry().plugins {
+                        match installed_by_id.get(plugin.id.as_str()) {
+                            Some(manifest) => println!(
+                                "   ✓ {} — {}\n     {} · {} · pinned commit: {} · {} stars at install\n",
+                                plugin.id,
+                                plugin.name,
+                                plugin.category,
+                                manifest.repository.license,
+                                manifest
+                                    .repository
+                                    .default_branch_commit_sha
+                                    .as_deref()
+                                    .unwrap_or("unavailable"),
+                                manifest.repository.stars,
+                            ),
+                            None => println!(
+                                "   ○ {} — {}\n     {} · requires {}+ stars · allowed licenses: {}\n",
+                                plugin.id,
+                                plugin.name,
+                                plugin.category,
+                                plugin.policy.minimum_stars,
+                                plugin.policy.allowed_licenses.join(", "),
+                            ),
+                        }
+                    }
+                }
+                PluginsAction::Install { id } => {
+                    eprintln!("Fetching curated GitHub metadata and README for `{id}`…");
+                    let manifest = manager.install(&id).await?;
+                    println!(
+                        "✅ installed `{}`\n   repository: {}\n   commit: {}\n   policy checked: {} stars (minimum {}), {}\n   saved: {} bytes of explicitly untrusted README documentation\n   cache: {}",
+                        manifest.id,
+                        manifest.repository.url,
+                        manifest
+                            .repository
+                            .default_branch_commit_sha
+                            .as_deref()
+                            .unwrap_or("unavailable"),
+                        manifest.repository.stars,
+                        manifest.policy.minimum_stars,
+                        manifest.repository.license,
+                        manifest.document.bytes,
+                        manager.install_root().join(&manifest.id).display(),
+                    );
+                }
+                PluginsAction::Remove { id } => {
+                    if manager.remove(&id)? {
+                        println!("Removed knowledge plugin `{id}`.");
+                    } else {
+                        println!("Knowledge plugin `{id}` was not installed.");
+                    }
+                }
+                PluginsAction::Context { query, max_plugins } => {
+                    if query.is_empty() {
+                        anyhow::bail!("forge plugins context: query is required");
+                    }
+                    let capped = max_plugins.clamp(1, MAX_RELEVANT_PLUGINS);
+                    let contexts =
+                        manager.load_relevant_context(&query.join(" "), capped, 12_000)?;
+                    if contexts.is_empty() {
+                        println!("No installed knowledge plugins match this query.");
+                    } else {
+                        println!(
+                            "\nMatched {} untrusted knowledge plugin(s):",
+                            contexts.len()
+                        );
+                        for context in &contexts {
+                            println!(
+                                "\n--- {} ({}, score {}) ---\n{}",
+                                context.name, context.id, context.score, context.content
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        Commands::Eval { action } => match action {
+            EvalAction::Validate { scenario } => {
+                let scenario = load_scenario(&scenario)?;
+                println!(
+                    "✅ valid scenario `{}`\n   name: {}\n   allowed paths: {}\n   verifier: `{}`\n\nThis command only validates the declarative scenario; it does not run a model or verifier command.",
+                    scenario.id,
+                    scenario.name,
+                    if scenario.allowed_paths.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        scenario.allowed_paths.join(", ")
+                    },
+                    scenario.verify_command,
+                );
+            }
+            EvalAction::Report { results, json } => {
+                let records = JsonlEvaluationStore::new(&results).load()?;
+                let report = score_records(&records);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    print_evaluation_score(&results, &report);
+                }
+            }
+            EvalAction::Compare {
+                baseline,
+                candidate,
+                json,
+            } => {
+                let baseline_records = JsonlEvaluationStore::new(&baseline).load()?;
+                let candidate_records = JsonlEvaluationStore::new(&candidate).load()?;
+                let comparison = compare_records(&baseline_records, &candidate_records);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&comparison)?);
+                } else {
+                    print_evaluation_comparison(&baseline, &candidate, &comparison);
+                }
+            }
+        },
+
         Commands::Preload { model, keep_alive } => {
             let ollama = OllamaProvider::new(&config.ollama_url);
             let model = model.unwrap_or_else(|| config.default_model.clone());
@@ -1244,7 +1442,7 @@ async fn async_main() -> Result<()> {
 
         Commands::Parallel { .. } => {
             anyhow::bail!(
-                "`forge parallel` is not implemented in v0.1.0. \
+                "`forge parallel` is not implemented in v0.2.0. \
                  Use `forge build` for parallel orchestration."
             );
         }
@@ -1260,7 +1458,8 @@ async fn async_main() -> Result<()> {
 /// Terminal approval gate for `forge agent`. The server/UI path has an
 /// interactive diff preview; the CLI instead keeps the user in control with a
 /// concise prompt before every consequential operation. File tools still enforce
-/// their workspace sandbox even in `--autonomy auto` mode.
+/// their workspace sandbox even in `--autonomy auto` mode; the host shell is
+/// separately guarded but not OS-sandboxed.
 #[derive(Clone, Copy)]
 struct CliApprovalPolicy {
     mode: AgentAutonomy,
@@ -1268,6 +1467,10 @@ struct CliApprovalPolicy {
 
 #[async_trait::async_trait]
 impl ApprovalPolicy for CliApprovalPolicy {
+    fn requires_plan_approval(&self) -> bool {
+        self.mode == AgentAutonomy::Confirm
+    }
+
     async fn approve(&self, tool: &str, args: &serde_json::Value) -> Approval {
         match self.mode {
             AgentAutonomy::Auto => Approval::Allow,
@@ -1287,7 +1490,8 @@ impl ApprovalPolicy for CliApprovalPolicy {
         if self.mode != AgentAutonomy::Confirm {
             return Approval::Allow;
         }
-        let prompt = format!("\nAgent plan:\n{plan}\n\nRun this plan in the current workspace? [y/N] ");
+        let prompt =
+            format!("\nAgent plan:\n{plan}\n\nRun this plan in the current workspace? [y/N] ");
         if cli_confirm(prompt).await {
             Approval::Allow
         } else {
@@ -1299,7 +1503,10 @@ impl ApprovalPolicy for CliApprovalPolicy {
 fn cli_action_description(tool: &str, args: &serde_json::Value) -> String {
     match tool {
         "fs_write" => {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("(unknown path)");
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(unknown path)");
             let bytes = args
                 .get("content")
                 .and_then(|v| v.as_str())
@@ -1308,11 +1515,17 @@ fn cli_action_description(tool: &str, args: &serde_json::Value) -> String {
             format!("write {path} ({bytes} bytes)")
         }
         "fs_edit" => {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("(unknown path)");
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(unknown path)");
             format!("edit {path}")
         }
         "shell" => {
-            let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("(empty command)");
+            let command = args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(empty command)");
             format!("run `{command}`")
         }
         _ => format!("run {tool}"),
@@ -1323,7 +1536,10 @@ async fn cli_confirm(prompt: String) -> bool {
     tokio::task::spawn_blocking(move || {
         use std::io::Write;
         let mut stderr = std::io::stderr().lock();
-        if write!(stderr, "{prompt}").and_then(|_| stderr.flush()).is_err() {
+        if write!(stderr, "{prompt}")
+            .and_then(|_| stderr.flush())
+            .is_err()
+        {
             return false;
         }
         let mut input = String::new();
@@ -1334,6 +1550,116 @@ async fn cli_confirm(prompt: String) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+/// Per-user cache location for provenance-recorded GitHub knowledge plugins.
+/// This follows the same platform config convention as skills and rules; the
+/// repository itself is never copied into the active workspace.
+fn knowledge_plugin_root() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("ollama-forge")
+        .join("knowledge-plugins")
+}
+
+/// Select bounded, locally cached plugin documentation for a task. A broken
+/// or tampered plugin cache is reported to the user and omitted rather than
+/// becoming prompt context.
+fn installed_plugin_context_suffix(query: &str) -> Result<(String, Vec<String>)> {
+    let manager = PluginManager::new(knowledge_plugin_root())?;
+    let contexts = manager.load_relevant_context(query, 3, 12_000)?;
+    let ids = contexts.iter().map(|context| context.id.clone()).collect();
+    Ok((render_context_suffix(&contexts), ids))
+}
+
+fn format_rate(rate: Option<f64>) -> String {
+    rate.map(|value| format!("{:.1}%", value * 100.0))
+        .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_median(value: Option<u64>, unit: &str) -> String {
+    value
+        .map(|value| format!("{value} {unit}"))
+        .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn print_evaluation_score(path: &std::path::Path, report: &ScoreReport) {
+    println!(
+        "\n📊 Local evaluation report\n   results: {}",
+        path.display()
+    );
+    println!(
+        "   runs: {} · verified: {}/{} ({})",
+        report.total_runs,
+        report.verified_completions,
+        report.total_runs,
+        format_rate(report.verified_completion_rate),
+    );
+    println!(
+        "   checks: build {} · lint {} · tests {}",
+        format_rate(report.build_pass_rate),
+        format_rate(report.lint_pass_rate),
+        format_rate(report.test_pass_rate),
+    );
+    println!(
+        "   medians: {} · {} total tokens · {} model calls · {} tool calls",
+        format_median(report.median_duration_ms, "ms"),
+        format_median(report.median_total_tokens, ""),
+        format_median(report.median_model_calls, ""),
+        format_median(report.median_tool_calls, ""),
+    );
+    println!(
+        "   safety evidence: regressions {} · scope-violation runs {} ({} paths)",
+        format_rate(report.regression_rate),
+        format_rate(report.scope_violation_rate),
+        report.scope_violation_count,
+    );
+}
+
+fn print_evaluation_comparison(
+    baseline_path: &std::path::Path,
+    candidate_path: &std::path::Path,
+    comparison: &ScoreComparison,
+) {
+    println!("\n📊 Local evaluation comparison");
+    println!("   baseline:  {}", baseline_path.display());
+    println!("   candidate: {}", candidate_path.display());
+    println!(
+        "   verified completion: {} → {} ({:+.1} pp)",
+        format_rate(comparison.baseline.verified_completion_rate),
+        format_rate(comparison.candidate.verified_completion_rate),
+        comparison.delta.verified_completion_rate.unwrap_or(0.0) * 100.0,
+    );
+    println!(
+        "   test pass rate:       {} → {} ({:+.1} pp)",
+        format_rate(comparison.baseline.test_pass_rate),
+        format_rate(comparison.candidate.test_pass_rate),
+        comparison.delta.test_pass_rate.unwrap_or(0.0) * 100.0,
+    );
+    println!(
+        "   median duration:      {} → {} ({:+} ms)",
+        format_median(comparison.baseline.median_duration_ms, "ms"),
+        format_median(comparison.candidate.median_duration_ms, "ms"),
+        comparison.delta.median_duration_ms.unwrap_or(0),
+    );
+    println!(
+        "   median total tokens:  {} → {} ({:+})",
+        format_median(comparison.baseline.median_total_tokens, ""),
+        format_median(comparison.candidate.median_total_tokens, ""),
+        comparison.delta.median_total_tokens.unwrap_or(0),
+    );
+    println!(
+        "   regression rate:      {} → {} ({:+.1} pp)",
+        format_rate(comparison.baseline.regression_rate),
+        format_rate(comparison.candidate.regression_rate),
+        comparison.delta.regression_rate.unwrap_or(0.0) * 100.0,
+    );
+    println!(
+        "   scope violation rate: {} → {} ({:+.1} pp)",
+        format_rate(comparison.baseline.scope_violation_rate),
+        format_rate(comparison.candidate.scope_violation_rate),
+        comparison.delta.scope_violation_rate.unwrap_or(0.0) * 100.0,
+    );
 }
 
 /// `forge agent "..."` — a workspace-aware local coding loop for terminal
@@ -1352,27 +1678,48 @@ async fn run_workspace_agent(
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("resolve current workspace: {e}"))?;
     let provider = Arc::new(OllamaProvider::new(&config.ollama_url));
-    let model = match requested_model
-        .filter(|m| !m.trim().is_empty() && !m.eq_ignore_ascii_case("auto"))
-    {
-        Some(model) => model,
-        None => pick_installed_model(config, &provider).await?,
-    };
+    let model =
+        match requested_model.filter(|m| !m.trim().is_empty() && !m.eq_ignore_ascii_case("auto")) {
+            Some(model) => model,
+            None => pick_installed_model(config, &provider).await?,
+        };
     let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
     let hardware = sentinel.detect_hardware().await;
 
+    let plugin_suffix = match installed_plugin_context_suffix(&task) {
+        Ok((suffix, ids)) => {
+            if !ids.is_empty() {
+                eprintln!(
+                    "   knowledge plugins: {} (untrusted reference only)",
+                    ids.join(", ")
+                );
+            }
+            suffix
+        }
+        Err(error) => {
+            eprintln!("   ⚠️  installed knowledge plugins were not loaded: {error:#}");
+            String::new()
+        }
+    };
+
     let mut registry = ToolRegistry::new();
-    registry.register(Arc::new(FsListTool::new(&workspace)));
-    registry.register(Arc::new(FsSearchTool::new(&workspace)));
-    registry.register(Arc::new(FsReadTool::new(&workspace)));
-    registry.register(Arc::new(FsWriteTool::new(&workspace)));
-    registry.register(Arc::new(FsEditTool::new(&workspace)));
-    registry.register(Arc::new(ShellTool::new(&workspace, ShellPolicy::default())));
+    let workspace_fs = WorkspaceFs::new(&workspace);
+    registry.register(Arc::new(FsListTool::from_workspace(workspace_fs.clone())));
+    registry.register(Arc::new(FsSearchTool::from_workspace(workspace_fs.clone())));
+    registry.register(Arc::new(FsReadTool::from_workspace(workspace_fs.clone())));
+    registry.register(Arc::new(FsWriteTool::from_workspace(workspace_fs.clone())));
+    registry.register(Arc::new(FsEditTool::from_workspace(workspace_fs.clone())));
+    registry.register(Arc::new(ShellTool::from_workspace(
+        &workspace,
+        workspace_fs,
+        ShellPolicy::default(),
+    )));
 
     let mut system_suffix = format!(
         "{rules_suffix}\n\n## Workspace agent\nYou are working inside `{}`. Use fs_list and fs_search to orient yourself, then read files before editing. Keep every path relative to this workspace. Use fs_write/fs_edit to make requested code changes rather than only returning a code block. The user must approve consequential actions unless autonomy is auto.",
         workspace.display()
     );
+    system_suffix.push_str(&plugin_suffix);
     if system_suffix.starts_with("\n\n") {
         system_suffix = system_suffix.trim_start().to_string();
     }
@@ -1415,9 +1762,197 @@ async fn run_workspace_agent(
         })
         .await?;
     if trace.iteration_capped {
-        eprintln!("⚠️  agent reached the {}-round safety limit.", max_iterations.max(1));
+        eprintln!(
+            "⚠️  agent reached the {}-round safety limit.",
+            max_iterations.max(1)
+        );
     }
     println!("{}", trace.answer);
+    Ok(())
+}
+
+struct WorkspaceTeamRequest {
+    task: String,
+    requested_model: Option<String>,
+    requested_scout_model: Option<String>,
+    requested_planner_model: Option<String>,
+    reviewer_model: Option<String>,
+    max_iterations: usize,
+    max_repair_rounds: usize,
+    mode: TeamMode,
+    autonomy: AgentAutonomy,
+}
+
+/// `forge team "..."` — a bounded local coding-team workflow. The only
+/// parallel lane is optional read-only reconnaissance; a single implementer
+/// owns workspace changes, and repository-detected verification commands are
+/// gated through the same autonomy policy as ordinary agent shell actions.
+async fn run_workspace_team(
+    config: &Config,
+    rules_suffix: &str,
+    request: WorkspaceTeamRequest,
+) -> Result<()> {
+    let WorkspaceTeamRequest {
+        task,
+        requested_model,
+        requested_scout_model,
+        requested_planner_model,
+        reviewer_model,
+        max_iterations,
+        max_repair_rounds,
+        mode,
+        autonomy,
+    } = request;
+    let bounded_iterations = max_iterations.clamp(1, ollama_forge::team::MAX_TEAM_ITERATIONS);
+    let bounded_repairs = max_repair_rounds.min(ollama_forge::team::MAX_TEAM_REPAIR_ROUNDS);
+    if bounded_iterations != max_iterations || bounded_repairs != max_repair_rounds {
+        eprintln!(
+            "   ⚠️  team budgets were capped at {} tool rounds and {} repair round(s).",
+            ollama_forge::team::MAX_TEAM_ITERATIONS,
+            ollama_forge::team::MAX_TEAM_REPAIR_ROUNDS,
+        );
+    }
+    let workspace = std::env::current_dir()?
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("resolve current workspace: {e}"))?;
+    let provider = Arc::new(OllamaProvider::new(&config.ollama_url));
+    let model = match requested_model
+        .filter(|candidate| !candidate.trim().is_empty() && !candidate.eq_ignore_ascii_case("auto"))
+    {
+        Some(model) => model,
+        None => pick_installed_model(config, &provider).await?,
+    };
+    let scout_model =
+        pick_team_scout_model(config, &provider, &model, requested_scout_model).await?;
+    let planner_model =
+        pick_team_planner_model(config, &provider, &model, requested_planner_model).await?;
+    let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
+    let hardware = sentinel.detect_hardware().await;
+    let plugin_suffix = match installed_plugin_context_suffix(&task) {
+        Ok((suffix, ids)) => {
+            if !ids.is_empty() {
+                eprintln!(
+                    "   knowledge plugins: {} (untrusted reference only)",
+                    ids.join(", ")
+                );
+            }
+            suffix
+        }
+        Err(error) => {
+            eprintln!("   ⚠️  installed knowledge plugins were not loaded: {error:#}");
+            String::new()
+        }
+    };
+    let system_suffix = format!(
+        "{rules_suffix}\n\n## Local team contract\nThis team has read-only scouts, one controlled writer, fixed repository-detected verification commands, and an advisory reviewer. Do not claim a task is verified unless the verifier reports a pass."
+    ) + &plugin_suffix;
+    let coordinator = TeamCoordinator::new(
+        provider,
+        &workspace,
+        TeamConfig {
+            model: model.clone(),
+            scout_model: Some(scout_model.clone()),
+            planner_model: Some(planner_model.clone()),
+            reviewer_model,
+            num_ctx: hardware.optimal_context,
+            keep_alive: "1h".to_string(),
+            max_iterations: bounded_iterations,
+            max_repair_rounds: bounded_repairs,
+            mode,
+            system_suffix,
+        },
+    )?;
+    eprintln!(
+        "⚒  forge team\n   workspace: {}\n   writer: `{model}` · scouts: `{scout_model}` · planner: `{planner_model}` · num_ctx: {} · mode: {:?} · autonomy: {:?}\n",
+        workspace.display(),
+        hardware.optimal_context,
+        mode,
+        autonomy,
+    );
+    if mode == TeamMode::ParallelScouts {
+        eprintln!(
+            "   note: only read-only scouts run concurrently; the writer remains single-lane."
+        );
+    }
+    let approval: Arc<dyn ApprovalPolicy> = Arc::new(CliApprovalPolicy { mode: autonomy });
+    let run = coordinator
+        .run(&task, approval, |event| match event {
+            TeamEvent::PlanCreated { plan } => {
+                if plan.verification_commands.is_empty() {
+                    eprintln!("   ⚠️  no conventional verifier was detected; status cannot be verified automatically.");
+                } else {
+                    eprintln!(
+                        "   plan: one writer `{}` · scouts `{}` · planner `{}` · reviewer `{}` · verifiers: {}",
+                        plan.writer_model,
+                        plan.scout_model,
+                        plan.planner_model,
+                        plan.reviewer_model,
+                        plan.verification_commands.join("; ")
+                    );
+                }
+            }
+            TeamEvent::ScoutStarted { role } => eprintln!("   ⏳ scout start  {role:?}"),
+            TeamEvent::ScoutFinished { role, steps } => {
+                eprintln!("   ✅ scout done   {role:?} ({steps} tool steps)")
+            }
+            TeamEvent::PlannerStarted => eprintln!("   ⏳ planner start read-only synthesis"),
+            TeamEvent::PlannerFinished { .. } => eprintln!("   ✅ planner done  read-only hand-off"),
+            TeamEvent::ImplementerStarted { repair_round } => {
+                let label = if *repair_round == 0 { "implementation" } else { "repair" };
+                eprintln!("   ⏳ writer start {label} pass {repair_round}")
+            }
+            TeamEvent::ImplementerStep { step, .. } => {
+                let preview: String = step
+                    .result_preview
+                    .replace('\n', " ")
+                    .chars()
+                    .take(180)
+                    .collect();
+                eprintln!(
+                    "   [{}] writer {} {}",
+                    if step.ok { "ok" } else { "failed" },
+                    step.tool,
+                    preview
+                );
+            }
+            TeamEvent::ImplementerFinished { repair_round, steps } => {
+                eprintln!("   ✅ writer done  pass {repair_round} ({steps} tool steps)")
+            }
+            TeamEvent::VerificationStarted { command } => {
+                eprintln!("   ⏳ verify       `{command}`")
+            }
+            TeamEvent::VerificationFinished { result } => {
+                let mark = if result.passed { "✅" } else { "❌" };
+                let suffix = if result.skipped_by_user { " (declined)" } else { "" };
+                eprintln!("   {mark} verify       `{}`{suffix}", result.command);
+            }
+            TeamEvent::ReviewerFinished { available } => {
+                if *available {
+                    eprintln!("   ✅ reviewer done")
+                } else {
+                    eprintln!("   ⚠️  reviewer unavailable; inspect the recorded review warning")
+                }
+            }
+        })
+        .await?;
+
+    let status = match run.status {
+        TeamStatus::Verified => "✅ verified",
+        TeamStatus::ChecksPassed => "ℹ️  checks passed; human acceptance still needed",
+        TeamStatus::NeedsAttention => "⚠️  needs attention",
+        TeamStatus::VerificationDeclined => "⚠️  verification declined",
+        TeamStatus::PlanDeclined => "⚠️  implementation plan declined",
+    };
+    eprintln!(
+        "\n{status} · {} writer mutation step(s) · {} ms",
+        run.writer_mutation_steps, run.elapsed_ms
+    );
+    if !run.implementation_answers.is_empty() {
+        println!("{}", run.implementation_answers.join("\n\n"));
+    }
+    if !run.review.trim().is_empty() {
+        println!("\nReview:\n{}", run.review);
+    }
     Ok(())
 }
 
@@ -1581,6 +2116,100 @@ async fn pick_installed_model(config: &Config, ollama: &OllamaProvider) -> Resul
         "no models installed in ollama. Pull one first:\n  ollama pull {}",
         config.default_model
     );
+}
+
+/// Assign a read-only scout model without silently sending Ollama an
+/// unavailable tag. A user-requested scout model wins. Otherwise, only an
+/// installed model from `execution_models` that is no larger than the writer
+/// is selected; this makes the existing model ladder useful for inexpensive
+/// repository reconnaissance while preserving the writer's stronger model.
+async fn pick_team_scout_model(
+    config: &Config,
+    ollama: &OllamaProvider,
+    writer_model: &str,
+    requested: Option<String>,
+) -> Result<String> {
+    let requested = requested.filter(|model| !model.trim().is_empty());
+    let installed = match ollama.list_models().await {
+        Ok(models) => models,
+        Err(error) if requested.is_none() => {
+            eprintln!(
+                "   ⚠️  could not inspect installed models for a scout role; using writer model `{writer_model}`: {error:#}"
+            );
+            return Ok(writer_model.to_string());
+        }
+        Err(error) => {
+            return Err(anyhow::anyhow!(
+                "could not list Ollama models to validate requested scout model: {error:#}"
+            ))
+        }
+    };
+
+    if let Some(requested) = requested {
+        if installed.iter().any(|model| model.name == requested) {
+            return Ok(requested);
+        }
+        anyhow::bail!(
+            "requested scout model `{requested}` is not installed. Run `ollama list` or omit --scout-model."
+        );
+    }
+
+    let writer_size = installed
+        .iter()
+        .find(|model| model.name == writer_model)
+        .map(|model| model.size);
+    let candidate = config
+        .execution_models
+        .iter()
+        .filter(|name| name.as_str() != writer_model)
+        .filter_map(|name| installed.iter().find(|model| model.name == *name))
+        .filter(|model| writer_size.map_or(true, |writer_size| model.size <= writer_size))
+        // Prefer the strongest smaller model rather than arbitrarily choosing
+        // the tiniest one: scouts still have to understand an unfamiliar repo.
+        .max_by_key(|model| model.size);
+    Ok(candidate
+        .map(|model| model.name.clone())
+        .unwrap_or_else(|| writer_model.to_string()))
+}
+
+/// Resolve the read-only planning/synthesis model. A configured planning model
+/// is useful only when it is actually installed; otherwise the writer model is
+/// safer than failing late or silently sending an unavailable tag to Ollama.
+async fn pick_team_planner_model(
+    config: &Config,
+    ollama: &OllamaProvider,
+    writer_model: &str,
+    requested: Option<String>,
+) -> Result<String> {
+    let requested = requested.filter(|model| !model.trim().is_empty());
+    let configured = (!config.planning_model.trim().is_empty()
+        && config.planning_model != writer_model)
+        .then(|| config.planning_model.clone());
+    let candidate = requested.clone().or(configured);
+    let Some(candidate) = candidate else {
+        return Ok(writer_model.to_string());
+    };
+    match ollama.list_models().await {
+        Ok(installed) if installed.iter().any(|model| model.name == candidate) => Ok(candidate),
+        Ok(_) if requested.is_some() => anyhow::bail!(
+            "requested planner model `{candidate}` is not installed. Run `ollama list` or omit --planner-model."
+        ),
+        Ok(_) => {
+            eprintln!(
+                "   ⚠️  configured planning model `{candidate}` is not installed; using writer model `{writer_model}` for planning."
+            );
+            Ok(writer_model.to_string())
+        }
+        Err(error) if requested.is_some() => Err(anyhow::anyhow!(
+            "could not list Ollama models to validate requested planner model: {error:#}"
+        )),
+        Err(error) => {
+            eprintln!(
+                "   ⚠️  could not inspect configured planning model; using writer model `{writer_model}`: {error:#}"
+            );
+            Ok(writer_model.to_string())
+        }
+    }
 }
 
 /// `forge analyze <path>` — runs the local secret scanner *and* asks a model

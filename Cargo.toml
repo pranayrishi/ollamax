@@ -1,6 +1,6 @@
 [package]
 name = "ollama-forge"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Pranay Rishi Nalem"]
 description = "Harness optimization layer for local coding agents running on Ollama"
@@ -52,6 +52,17 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 regex = "1.10"
 # Recursive directory walk for `forge audit`.
 walkdir = "2.4"
+# Descriptor-relative filesystem capabilities used by the agent's workspace
+# tools.  They keep symlink swaps inside the user-selected workspace on
+# Linux, macOS, and Windows rather than relying on check-then-open paths.
+cap-std = "4.0.2"
+# Cross-platform identity comparison for the selected workspace directory.
+# It lets host-shell/reviewer paths fail closed if a workspace pathname is
+# replaced after its descriptor capability was captured.
+same-file = "1.0"
+# Exposes nonblocking capability-relative open options so a FIFO swapped into
+# a model-supplied path cannot strand a blocking workspace-I/O thread.
+cap-fs-ext = "4.0.2"
 # Real BPE tokenizer for accurate context budgeting. We use cl100k_base
 # (the GPT-3.5/4 tokenizer) as a calibrated stand-in — it's not the exact
 # tokenizer Llama or Qwen use, but it's within ~10% on code/prose and far
@@ -67,6 +78,12 @@ tiktoken-rs = "0.5"
 # dep is mandatory, not optional. `sha2` is small (~30 KB compiled), well
 # audited, and pure Rust.
 sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+# Used only to terminate the isolated process group for a timed-out local
+# verifier. This prevents shell-spawned descendants from surviving a cancelled
+# or timed-out command on macOS/Linux.
+libc = "0.2"
 
 [dev-dependencies]
 # Used by tests/security_scanner.rs to build a sandbox dir.

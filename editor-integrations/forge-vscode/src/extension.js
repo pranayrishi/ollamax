@@ -29,7 +29,7 @@ function activate(context) {
   const hub = new HubViewProvider(context, auth, log, telemetry, backend);
   const voice = new VoiceNavigator(context, backend, log);
 
-  // `forge serve` captures its filesystem sandbox at process start. A workspace
+  // `forge serve` captures its filesystem scope at process start. A workspace
   // switch therefore cannot reuse the old process: stop any in-flight request,
   // then rebind an extension-managed server to the newly opened folder. A
   // configured external server is never killed; Agent preflight verifies it.

@@ -1,6 +1,6 @@
 // IDE workspace (#3): file explorer + editor (Monaco, with a textarea fallback)
 // + integrated terminal (xterm.js ↔ node-pty). Reuses proven components rather
-// than building an editor from scratch (Monaco/xterm). Everything is sandboxed
+// than building an editor from scratch (Monaco/xterm). Access is scoped
 // to the folder the user opens; file access goes through preload IPC.
 (function () {
   const ide = window.forgeNative && window.forgeNative.ide;

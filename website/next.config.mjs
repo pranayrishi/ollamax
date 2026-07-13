@@ -6,7 +6,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 
 // Static security headers applied to every response. The Content-Security-Policy
-// is NOT here — it's set per-request (with a fresh nonce) in `src/middleware.ts`
+// is NOT here — it's set per-request (with a fresh nonce) in `src/proxy.ts`
 // so inline scripts can't execute. These are the static, request-independent
 // headers. `frame-ancestors 'none'` is enforced by the middleware CSP;
 // X-Frame-Options here covers older agents.

@@ -428,11 +428,11 @@ class ChatViewProvider {
       this.post({ type: "backendError", message: "Sign in with your Ollamax account to use the app." });
       return;
     }
-    const isAgent = msg.mode === "agent";
+    const isWorkspaceMode = msg.mode === "agent" || msg.mode === "team";
     const folders = vscode.workspace.workspaceFolders;
     const workspaceRoot = folders && folders[0] ? folders[0].uri.fsPath : null;
-    if (isAgent && !workspaceRoot) {
-      const message = "Open a workspace folder before running the Ollamax Agent. It only edits the folder you explicitly opened.";
+    if (isWorkspaceMode && !workspaceRoot) {
+      const message = "Open a workspace folder before running an Ollamax Agent or Team task. It only edits the folder you explicitly opened.";
       this.post({ type: "backendError", message });
       vscode.window.showWarningMessage(message);
       return;
@@ -440,7 +440,7 @@ class ChatViewProvider {
     try {
       // Agent runs get a stronger preflight than Ask: the server must prove it
       // was launched for this exact VS Code folder before it sees the prompt.
-      if (isAgent) {
+      if (isWorkspaceMode) {
         await this.backend.ensureWorkspace(workspaceRoot);
         if (!this.backend.isWorkspaceBound(workspaceRoot)) {
           throw new Error("Ollamax Agent blocked this request because the backend is not bound to the open workspace.");
@@ -451,7 +451,7 @@ class ChatViewProvider {
     } catch (e) {
       const message = String(e && e.message);
       this.post({ type: "backendError", message });
-      if (isAgent) vscode.window.showWarningMessage(message);
+      if (isWorkspaceMode) vscode.window.showWarningMessage(message);
       return;
     }
 
@@ -460,7 +460,7 @@ class ChatViewProvider {
     let path0;
     let body;
 
-    if (isAgent) {
+    if (msg.mode === "agent") {
       path0 = "/api/research";
       // Autonomy Dial: "auto" | "confirm" | "readonly" (default confirm-each so a
       // first-timer is asked before the agent writes/executes anything).
@@ -468,6 +468,16 @@ class ChatViewProvider {
       body = {
         id,
         question: msg.text,
+        model: msg.model,
+        context,
+        autonomy: msg.autonomy || "confirm",
+      };
+    } else if (msg.mode === "team") {
+      path0 = "/api/team";
+      this.currentAgentId = id;
+      body = {
+        id,
+        task: msg.text,
         model: msg.model,
         context,
         autonomy: msg.autonomy || "confirm",
@@ -515,7 +525,7 @@ class ChatViewProvider {
         });
       } else if (ev.type === "done" && msg.mode !== "build" && this.telemetry) {
         this.telemetry.track({
-          type: msg.mode === "agent" ? "agent" : "chat",
+          type: msg.mode === "agent" ? "agent" : msg.mode === "team" ? "team" : "chat",
           model: lastModel,
           provider: "ollama",
           language: lang,
@@ -710,6 +720,7 @@ class ChatViewProvider {
   <header id="topbar">
     <div class="modes" role="tablist">
       <button class="mode active" data-mode="agent" title="Agent — inspects your workspace, runs multi-step tasks, and edits files with your approval.">Agent</button>
+      <button class="mode" data-mode="team" title="Team — read-only scouts, one controlled writer, deterministic verification, and review.">Team</button>
       <button class="mode" data-mode="chat" title="Ask — conversational Q&A. Read-only: never changes your files.">Ask</button>
     </div>
     <div class="picker">

@@ -196,10 +196,10 @@
         }
         // Chat remains pure/read-only and usable without a folder. Agent tools
         // are never started until a folder has explicitly restarted the server.
-        if (msg.mode === "agent" && !workspaceReady) {
+        if ((msg.mode === "agent" || msg.mode === "team") && !workspaceReady) {
           post({
             type: "stream",
-            ev: { type: "error", message: "Open a folder in the Editor before running an Agent task." },
+            ev: { type: "error", message: "Open a folder in the Editor before running an Agent or Team task." },
           });
           break;
         }
@@ -211,6 +211,12 @@
           streamPost(
             "/api/research",
             { id, question: msg.text, model: msg.model, context, autonomy: msg.autonomy || "confirm" },
+            id
+          );
+        } else if (msg.mode === "team") {
+          streamPost(
+            "/api/team",
+            { id, task: msg.text, model: msg.model, context, autonomy: msg.autonomy || "confirm" },
             id
           );
         } else if (msg.mode === "build") {

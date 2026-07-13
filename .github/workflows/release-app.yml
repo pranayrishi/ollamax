@@ -2,7 +2,8 @@ name: release-app
 
 # Builds the STANDALONE desktop app (Electron shell around the forge engine,
 # modeled on the Sattva AI app) and publishes UNSIGNED installers to the public
-# releases repo. Trigger: push an `app-v*` tag, or run manually.
+# releases repo. A pushed `app-v*` tag builds and publishes; a manual run is
+# build-only so it cannot accidentally attach artifacts to an unintended tag.
 #
 # Unsigned (ad-hoc, Sattva-style) this round — see desktop-app/scripts/afterPack.js
 # and the report. Signing + notarization is the future paid step.
@@ -37,9 +38,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Assert the macOS artifact is built on Apple Silicon
+        if: matrix.label == 'macos-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          [[ "$arch" == "arm64" ]] || {
+            echo "expected an arm64 macOS runner for Ollamax-macos-arm64, got $arch" >&2
+            exit 1
+          }
+
       - name: Build the forge engine (bundled into the app)
         uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
+      - name: Test the bundled forge engine
+        run: cargo test --locked --all-targets
+      - run: cargo build --release --locked
 
       - uses: actions/setup-node@v4
         with:
@@ -59,29 +73,73 @@ jobs:
           # `python` resolves to the pinned 3.11 on all runners (setup-python).
           npm_config_python: python
         run: |
-          npm install
+          npm ci
           npm run dist
 
-      - name: Collect installers
+      - name: Verify macOS ad-hoc signature
+        if: matrix.label == 'macos-arm64'
+        working-directory: desktop-app
+        run: codesign --verify --deep --strict release/mac-arm64/Ollamax.app
+
+      - name: Collect expected installers and checksums
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          # electron-builder writes to desktop-app/release/
-          find desktop-app/release -maxdepth 1 -type f \
-            \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) \
-            -exec cp {} dist/ \; || true
+
+          # Keep this contract in lockstep with desktop-app/package.json and
+          # website/src/lib/downloads.ts. A successful electron-builder command
+          # is not sufficient: fail the job when its user-facing installers are
+          # absent or empty, rather than publishing an empty artifact upload.
+          case "${{ matrix.label }}" in
+            macos-arm64)
+              expected=(
+                "Ollamax-macos-arm64.dmg"
+                "Ollamax-macos-arm64.zip"
+              )
+              ;;
+            windows-x64)
+              expected=(
+                "Ollamax-windows-x64-setup.exe"
+                "Ollamax-windows-x64-portable.exe"
+              )
+              ;;
+            linux-x64)
+              expected=(
+                "Ollamax-linux-x64.AppImage"
+                "Ollamax-linux-x64.deb"
+              )
+              ;;
+            *)
+              echo "unknown release matrix label: ${{ matrix.label }}" >&2
+              exit 1
+              ;;
+          esac
+
+          for installer in "${expected[@]}"; do
+            source="desktop-app/release/$installer"
+            if [[ ! -s "$source" ]]; then
+              echo "expected installer is missing or empty: $source" >&2
+              find desktop-app/release -type f -exec ls -lh {} \; 2>/dev/null || true
+              exit 1
+            fi
+            cp "$source" "dist/$installer"
+          done
+
           ls -la dist
-          ( cd dist && for f in *; do
-              if command -v sha256sum >/dev/null 2>&1; then sha256sum "$f" > "$f.sha256";
-              else shasum -a 256 "$f" > "$f.sha256"; fi
-            done )
+          for installer in "${expected[@]}"; do
+            if command -v sha256sum >/dev/null 2>&1; then
+              ( cd dist && sha256sum "$installer" > "$installer.sha256" )
+            else
+              ( cd dist && shasum -a 256 "$installer" > "$installer.sha256" )
+            fi
+          done
 
       - uses: actions/upload-artifact@v4
         with:
           name: app-${{ matrix.label }}
           path: dist/*
-          if-no-files-found: warn
+          if-no-files-found: error
 
   publish:
     name: publish app installers
@@ -104,7 +162,7 @@ jobs:
           repository: ${{ env.RELEASES_REPO }}
           token: ${{ secrets.RELEASES_REPO_TOKEN }}
           tag_name: ${{ steps.ver.outputs.tag }}
-          name: Ollama-Forge ${{ steps.ver.outputs.tag }}
+          name: Ollamax ${{ steps.ver.outputs.tag }}
           body: |
             Standalone desktop app (UNSIGNED, ad-hoc-signed, Sattva-style) +
             CLI bundles. macOS first launch: right-click the app → Open → Open
@@ -112,4 +170,4 @@ jobs:
             the forge engine; Ollama required (https://ollama.com/download).
           files: |
             dist/*
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true

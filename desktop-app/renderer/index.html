@@ -18,7 +18,7 @@
   <div id="shell">
     <!-- Left rail: switch between Chat and the Central Hub (separate panels). -->
     <nav id="rail" aria-label="Sections">
-      <button class="rail-btn active" data-view="chat" title="Chat / Agent / Build">💬</button>
+      <button class="rail-btn active" data-view="chat" title="Ask / Agent / Team / Build">💬</button>
       <button class="rail-btn" data-view="hub" title="Central Hub — domain packages">🧩</button>
       <button class="rail-btn" data-view="ide" title="Editor — files + terminal">📁</button>
     </nav>
@@ -29,6 +29,7 @@
         <header id="topbar">
           <div class="modes" role="tablist">
             <button class="mode active" data-mode="agent" title="Autonomous agent — inspects the opened workspace and edits files with your approval">Agent</button>
+            <button class="mode" data-mode="team" title="Controlled local team — read-only scouts, one writer, verification, and review">Team</button>
             <button class="mode" data-mode="chat" title="Quick local Q&A — read-only, nothing changes in your workspace">Ask</button>
             <button class="mode" data-mode="build" title="Parallel multi-model code build/orchestration">Build</button>
           </div>

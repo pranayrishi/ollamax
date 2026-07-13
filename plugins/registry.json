@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "roboflow-supervision",
+      "name": "Roboflow Supervision",
+      "category": "computer-vision",
+      "description": "Curated reference documentation for the Supervision computer-vision toolkit, including detection, tracking, annotation, and video workflows.",
+      "repository": "roboflow/supervision",
+      "tags": [
+        "python",
+        "computer-vision",
+        "image",
+        "video",
+        "object-detection",
+        "tracking",
+        "annotation"
+      ],
+      "policy": {
+        "minimum_stars": 5000,
+        "allowed_licenses": [
+          "MIT",
+          "Apache-2.0"
+        ]
+      }
+    },
+    {
+      "id": "fastapi-fastapi",
+      "name": "FastAPI",
+      "category": "web-api",
+      "description": "Curated reference documentation for building typed Python web APIs with FastAPI.",
+      "repository": "fastapi/fastapi",
+      "tags": [
+        "python",
+        "web",
+        "api",
+        "backend",
+        "openapi",
+        "async"
+      ],
+      "policy": {
+        "minimum_stars": 10000,
+        "allowed_licenses": [
+          "MIT"
+        ]
+      }
+    },
+    {
+      "id": "huggingface-transformers",
+      "name": "Hugging Face Transformers",
+      "category": "machine-learning",
+      "description": "Curated reference documentation for transformer-model inference, training, pipelines, tokenizers, and multimodal workflows.",
+      "repository": "huggingface/transformers",
+      "tags": [
+        "python",
+        "machine-learning",
+        "transformers",
+        "nlp",
+        "vision",
+        "audio",
+        "inference"
+      ],
+      "policy": {
+        "minimum_stars": 100000,
+        "allowed_licenses": [
+          "Apache-2.0"
+        ]
+      }
+    },
+    {
+      "id": "opencv-opencv",
+      "name": "OpenCV",
+      "category": "computer-vision",
+      "description": "Curated reference documentation for classic and modern computer-vision pipelines using OpenCV.",
+      "repository": "opencv/opencv",
+      "tags": [
+        "computer-vision",
+        "image",
+        "video",
+        "opencv",
+        "python",
+        "c-plus-plus"
+      ],
+      "policy": {
+        "minimum_stars": 50000,
+        "allowed_licenses": [
+          "Apache-2.0"
+        ]
+      }
+    },
+    {
+      "id": "microsoft-typescript",
+      "name": "TypeScript",
+      "category": "language-tooling",
+      "description": "Curated reference documentation for typed JavaScript application development and TypeScript tooling.",
+      "repository": "microsoft/TypeScript",
+      "tags": [
+        "typescript",
+        "javascript",
+        "web",
+        "frontend",
+        "backend",
+        "types"
+      ],
+      "policy": {
+        "minimum_stars": 75000,
+        "allowed_licenses": [
+          "Apache-2.0"
+        ]
+      }
+    },
+    {
+      "id": "vercel-nextjs",
+      "name": "Next.js",
+      "category": "web-framework",
+      "description": "Curated reference documentation for React web applications, routing, rendering, and deployment-oriented Next.js workflows.",
+      "repository": "vercel/next.js",
+      "tags": [
+        "typescript",
+        "react",
+        "nextjs",
+        "web",
+        "frontend",
+        "fullstack"
+      ],
+      "policy": {
+        "minimum_stars": 100000,
+        "allowed_licenses": [
+          "MIT"
+        ]
+      }
+    },
+    {
+      "id": "microsoft-playwright",
+      "name": "Playwright",
+      "category": "browser-testing",
+      "description": "Curated reference documentation for reliable end-to-end browser testing and browser automation.",
+      "repository": "microsoft/playwright",
+      "tags": [
+        "testing",
+        "browser",
+        "e2e",
+        "typescript",
+        "javascript",
+        "automation"
+      ],
+      "policy": {
+        "minimum_stars": 50000,
+        "allowed_licenses": [
+          "Apache-2.0"
+        ]
+      }
+    },
+    {
+      "id": "tauri-tauri",
+      "name": "Tauri",
+      "category": "desktop-apps",
+      "description": "Curated reference documentation for small, secure cross-platform desktop applications with Rust and web frontends.",
+      "repository": "tauri-apps/tauri",
+      "tags": [
+        "rust",
+        "typescript",
+        "desktop",
+        "app",
+        "webview",
+        "cross-platform"
+      ],
+      "policy": {
+        "minimum_stars": 50000,
+        "allowed_licenses": [
+          "Apache-2.0"
+        ]
+      }
+    },
+    {
+      "id": "pytest-pytest",
+      "name": "pytest",
+      "category": "testing",
+      "description": "Curated reference documentation for Python testing, fixtures, parametrization, and plugin-oriented test workflows.",
+      "repository": "pytest-dev/pytest",
+      "tags": [
+        "python",
+        "testing",
+        "pytest",
+        "fixtures",
+        "unit-tests"
+      ],
+      "policy": {
+        "minimum_stars": 10000,
+        "allowed_licenses": [
+          "MIT"
+        ]
+      }
+    }
+  ]
+}

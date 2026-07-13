@@ -316,6 +316,7 @@ impl SkillsEngine {
     }
 
     pub async fn add_skill(&self, skill: Skill) -> Result<()> {
+        validate_skill_name(&skill.name)?;
         let path = self.skills_dir.join(format!("{}.json", skill.name));
         let json = serde_json::to_string_pretty(&skill)?;
         tokio::fs::write(&path, json).await?;
@@ -327,6 +328,7 @@ impl SkillsEngine {
     }
 
     pub async fn remove_skill(&self, name: &str) -> Result<()> {
+        validate_skill_name(name)?;
         let path = self.skills_dir.join(format!("{}.json", name));
         if path.exists() {
             tokio::fs::remove_file(&path).await?;
@@ -372,9 +374,103 @@ impl SkillsEngine {
     }
 }
 
+/// Skill names become filenames in the global skills directory. Keep that
+/// identifier deliberately narrower than a general display name so an imported
+/// skill can never turn `skills_dir.join(...)` into a path traversal or a
+/// platform-specific absolute path.
+///
+/// Accepted shape: `[A-Za-z0-9][A-Za-z0-9._-]{0,95}` with no `..` sequence.
+/// The extra `..` rejection prevents ambiguous dot-directory-like names even
+/// though dots are otherwise useful in versioned skill identifiers.
+fn validate_skill_name(name: &str) -> Result<()> {
+    let bytes = name.as_bytes();
+    let valid_first = bytes
+        .first()
+        .is_some_and(|b| b.is_ascii_alphanumeric());
+    let valid_rest = bytes.iter().skip(1).all(|b| {
+        b.is_ascii_alphanumeric() || matches!(*b, b'.' | b'_' | b'-')
+    });
+    if !(1..=96).contains(&bytes.len()) || !valid_first || !valid_rest || name.contains("..") {
+        anyhow::bail!(
+            "unsafe skill name `{name}`; use [A-Za-z0-9][A-Za-z0-9._-]{{0,95}} without `..`"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_skill(name: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            description: "test skill".to_string(),
+            version: "1.0.0".to_string(),
+            author: None,
+            tags: Vec::new(),
+            prompts: SkillPrompts {
+                system: "test".to_string(),
+                planning: None,
+                execution: None,
+                review: None,
+            },
+            settings: SkillSettings {
+                model: None,
+                temperature: None,
+                max_tokens: None,
+                tools: Vec::new(),
+            },
+            recipes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn skill_names_are_safe_file_identifiers() {
+        let max_length_name = "x".repeat(96);
+        for valid in [
+            "react",
+            "vision-tools",
+            "skill.v2",
+            "A_1",
+            max_length_name.as_str(),
+        ] {
+            assert!(validate_skill_name(valid).is_ok(), "expected valid: {valid}");
+        }
+        let too_long_name = "x".repeat(97);
+        for unsafe_name in [
+            "",
+            "../escape",
+            "a..b",
+            "/absolute",
+            "C:\\windows",
+            "nested/skill",
+            "nested\\skill",
+            ".hidden",
+            "has space",
+            too_long_name.as_str(),
+        ] {
+            assert!(
+                validate_skill_name(unsafe_name).is_err(),
+                "expected rejection: {unsafe_name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn add_and_remove_reject_unsafe_names_before_filesystem_access() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = SkillsEngine::new(dir.path().join("skills"));
+        let outside = dir.path().join("escaped.json");
+
+        let add = engine.add_skill(test_skill("../escaped")).await;
+        assert!(add.is_err());
+        assert!(!outside.exists(), "unsafe skill name must not write outside skills dir");
+
+        let remove = engine.remove_skill("../escaped").await;
+        assert!(remove.is_err());
+        assert!(!outside.exists(), "unsafe skill name must not remove outside skills dir");
+    }
 
     #[tokio::test]
     async fn best_match_picks_relevant_skill() {

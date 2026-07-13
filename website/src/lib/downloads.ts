@@ -40,14 +40,18 @@ export function checksumUrl(asset: string): string {
 }
 export const allReleasesUrl = `${RELEASES_REPO}/releases/latest`;
 
-// The STANDALONE desktop app (the Code-OSS fork) — the recommended way to get
-// Ollamax: a full app with the engine, voice, and login built in. Distinct from
-// the CLI + editor-extension bundles above. `published` reflects what's actually
-// on the latest release (macOS Apple Silicon ships now; other platforms follow).
+// The STANDALONE Electron desktop app — the recommended way to get Ollamax: a
+// full app with the engine, voice, and login built in. It is distinct from both
+// the CLI + editor-extension bundles above and the experimental Code-OSS fork.
+//
+// Asset names are the exact electron-builder output contract in
+// desktop-app/package.json. `published` reflects assets verified on the current
+// public latest release; leave a future platform false until its matching asset
+// has actually been uploaded, so the site never renders a dead download link.
 export type DesktopApp = Bundle;
 export const DESKTOP_APPS: DesktopApp[] = [
   { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · .dmg", asset: "Ollamax-macos-arm64.dmg", published: true },
   { os: "macos", arch: "x64", label: "macOS — Intel", note: "x86_64 · .dmg", asset: "Ollamax-macos-x64.dmg", published: false },
-  { os: "windows", arch: "x64", label: "Windows — x64", note: ".zip", asset: "Ollamax-windows-x64.zip", published: false },
-  { os: "linux", arch: "x64", label: "Linux — x64", note: ".tar.gz", asset: "Ollamax-linux-x64.tar.gz", published: false },
+  { os: "windows", arch: "x64", label: "Windows — x64", note: "Installer (.exe)", asset: "Ollamax-windows-x64-setup.exe", published: false },
+  { os: "linux", arch: "x64", label: "Linux — x64", note: "AppImage", asset: "Ollamax-linux-x64.AppImage", published: false },
 ];

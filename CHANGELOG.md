@@ -4,6 +4,47 @@ All notable changes to Ollama-Forge are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project does
 **not** yet follow semantic versioning — every 0.x release may break things.
 
+## [0.2.0]
+
+### Added
+
+- Added `forge team`: read-only architecture/test scouts, a read-only planner,
+  one controlled workspace writer, deterministic repository checks, bounded
+  repair, and an advisory reviewer. The writer is always single-lane; optional
+  parallelism is limited to read-only scouts.
+- Added local server `POST /api/team` plus Team mode in the VS Code extension
+  and standalone desktop app.
+- Added curated GitHub knowledge plugins via `forge plugins`. Installs save
+  capped, explicitly untrusted README documentation with repository policy,
+  commit provenance, SHA-256 integrity, registry binding, and no code execution.
+- Expanded the curated knowledge catalog across computer vision, ML, web/API,
+  TypeScript, browser testing, desktop apps, and Python testing.
+- Added local evaluation scenario validation and JSONL scoring/comparison with
+  `forge eval validate`, `report`, and `compare`.
+- Added the local browser console's Team mode and release-grade macOS/Windows/
+  Linux desktop packaging contracts, including native app icons.
+- Updated the desktop Electron/packager toolchain to current audited releases;
+  the desktop dependency audit is clean.
+- Hardened skill names, build-output paths, code-block extraction, plugin cache
+  provenance, and user-facing shell-sandbox wording.
+- Tightened Team status evidence, reviewer-model validation, cancellation,
+  intent-preview approval, Git diff safety, and Unix verifier process cleanup.
+- Pinned Agent/Team filesystem tools to a descriptor-relative workspace
+  capability, with regression coverage for outside symlinks, root-path swaps,
+  and FIFO/special-file blocking. Unix shell verification/review changes into
+  that directory by descriptor and fails closed if the visible root changed.
+- Disabled redirects for curated GitHub knowledge-document fetches and made the
+  macOS fuse/ad-hoc signing step fail packaging when its hardening checks fail.
+
+### Important limits
+
+- Shell commands are guardrailed host-shell commands, not OS/container sandboxed.
+- A Team `Verified` result requires a successful writer mutation and a passing
+  detected functional test; `ChecksPassed` still requires human acceptance.
+- Knowledge plugins are CLI-managed documentation references, not executable
+  marketplace extensions.
+- Evaluation commands score supplied evidence; they do not yet run benchmarks.
+
 ## [Unreleased]
 
 ### Added (session 7)

@@ -97,6 +97,74 @@ pub enum Commands {
         task: Vec<String>,
     },
 
+    #[command(
+        about = "Coordinate read-only local scouts, one workspace writer, deterministic verification, and an advisory review"
+    )]
+    Team {
+        #[arg(
+            short,
+            long,
+            help = "Model used by scouts and the controlled writer (defaults to the best installed local model)"
+        )]
+        model: Option<String>,
+
+        #[arg(
+            long,
+            help = "Optional smaller installed local model for read-only scouts. When omitted, Ollamax uses an installed configured execution model only when it is no larger than the writer; otherwise scouts use --model."
+        )]
+        scout_model: Option<String>,
+
+        #[arg(
+            long,
+            help = "Optional installed local model for the read-only scout synthesis/planning hand-off. Defaults to the configured planning model when installed, otherwise --model."
+        )]
+        planner_model: Option<String>,
+
+        #[arg(
+            long,
+            help = "Optional local model used only for the final read-only review (defaults to --model)"
+        )]
+        reviewer_model: Option<String>,
+
+        #[arg(
+            long,
+            default_value = "12",
+            help = "Maximum bounded tool rounds for each controlled writer pass"
+        )]
+        max_iterations: usize,
+
+        #[arg(
+            long,
+            default_value = "1",
+            help = "Maximum repair passes after failed deterministic verification"
+        )]
+        max_repair_rounds: usize,
+
+        #[arg(
+            long,
+            help = "Run the two read-only scouts concurrently; this uses more RAM/VRAM but never enables concurrent writers"
+        )]
+        parallel_scouts: bool,
+
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = AgentAutonomy::Confirm,
+            help = "Whether workspace writes and fixed verification commands need approval"
+        )]
+        autonomy: AgentAutonomy,
+
+        #[arg(
+            short = 'y',
+            long,
+            help = "Approve controlled writer actions and fixed verification commands without prompting"
+        )]
+        yes: bool,
+
+        #[arg(help = "Task for the local coding team to perform in the current directory")]
+        task: Vec<String>,
+    },
+
     #[command(about = "Analyze code and suggest improvements")]
     Analyze {
         #[arg(help = "File or directory to analyze")]
@@ -163,6 +231,22 @@ pub enum Commands {
     Skills {
         #[command(subcommand)]
         action: SkillsAction,
+    },
+
+    #[command(
+        about = "Manage curated GitHub knowledge plugins (documentation-only; repositories are never executed or installed as code)"
+    )]
+    Plugins {
+        #[command(subcommand)]
+        action: PluginsAction,
+    },
+
+    #[command(
+        about = "Validate local evaluation scenarios and score append-only local benchmark results"
+    )]
+    Eval {
+        #[command(subcommand)]
+        action: EvalAction,
     },
 
     #[command(
@@ -326,7 +410,9 @@ pub enum AnalysisType {
 pub enum AgentAutonomy {
     /// Show the proposed plan and ask before every file write or shell command.
     Confirm,
-    /// Run inside the current-directory sandbox without per-step prompts.
+    /// Run filesystem edits within the current workspace without per-step
+    /// prompts. Host-shell actions, including repository-defined test scripts,
+    /// run from that directory but are not OS-sandboxed.
     Auto,
     /// Inspect/search only; deny writes and shell commands.
     Readonly,
@@ -365,6 +451,58 @@ pub enum SkillsAction {
     Search {
         #[arg(help = "Search query")]
         query: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum PluginsAction {
+    /// Show the embedded curated catalog and whether each entry is installed.
+    List,
+    /// Fetch a curated repository README with provenance and policy checks.
+    Install {
+        #[arg(help = "Curated plugin id (see `forge plugins list`)")]
+        id: String,
+    },
+    /// Remove one locally cached knowledge plugin; no remote request is made.
+    Remove {
+        #[arg(help = "Installed plugin id")]
+        id: String,
+    },
+    /// Show which installed knowledge-plugin documents match a task, without running a model.
+    Context {
+        #[arg(help = "Task or query used for relevance matching")]
+        query: Vec<String>,
+
+        #[arg(long, default_value = "3", help = "Maximum matching plugins to show (1-5)")]
+        max_plugins: usize,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum EvalAction {
+    /// Validate a JSON or TOML scenario without running a model or command.
+    Validate {
+        #[arg(help = "Scenario .json or .toml file")]
+        scenario: PathBuf,
+    },
+    /// Score an append-only local JSONL evaluation log.
+    Report {
+        #[arg(help = "JSONL result log")]
+        results: PathBuf,
+
+        #[arg(long, help = "Emit the score report as JSON")]
+        json: bool,
+    },
+    /// Compare candidate local results against a baseline JSONL log.
+    Compare {
+        #[arg(help = "Baseline JSONL result log")]
+        baseline: PathBuf,
+
+        #[arg(help = "Candidate JSONL result log")]
+        candidate: PathBuf,
+
+        #[arg(long, help = "Emit the comparison as JSON")]
+        json: bool,
     },
 }
 

@@ -102,6 +102,22 @@ async fn malformed_chat_body_is_400() {
 }
 
 #[tokio::test]
+async fn build_rejects_an_output_path_outside_its_workspace_before_model_work() {
+    let addr = spawn_server().await;
+    let body = r#"{"id":"unsafe-build-output","task":"write a file","output_dir":"../escape"}"#;
+    let req = format!(
+        "POST /api/build HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n{API_TOKEN_HEADER}: {TEST_TOKEN}\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let resp = raw_request(addr, &req).await;
+    assert!(resp.contains("200 OK"), "got: {resp}");
+    assert!(resp.contains("text/event-stream"), "got: {resp}");
+    assert!(resp.contains("\"type\":\"error\""), "got: {resp}");
+    assert!(resp.contains("invalid build output_dir"), "got: {resp}");
+}
+
+#[tokio::test]
 async fn api_rejects_requests_without_the_private_capability() {
     let addr = spawn_server().await;
     let body = r#"{"id":"no-token"}"#;

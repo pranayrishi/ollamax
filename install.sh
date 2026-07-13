@@ -8,10 +8,16 @@
 
 set -euo pipefail
 
-FORGE_VERSION="0.1.0"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_VERSION="$(awk -F'"' '/^version = "/ { print $2; exit }' "$SCRIPT_DIR/Cargo.toml" 2>/dev/null || true)"
+FORGE_VERSION="${FORGE_VERSION:-${SOURCE_VERSION:-0.2.0}}"
 INSTALL_DIR="${FORGE_INSTALL_DIR:-${HOME}/.local/forge}"
 BIN_DIR="${INSTALL_DIR}/bin"
-RELEASE_REPO="${FORGE_RELEASE_REPO:-pranayrishi/ollamax}"
+# Release bundles are published from the private source repository to this
+# public companion repository. Accept the older plural spelling too because it
+# is used by the one-line desktop installers.
+RELEASE_REPO="${FORGE_RELEASE_REPO:-${FORGE_RELEASES_REPO:-pranayrishi/ollamax-releases}}"
+RELEASE_TAG="${FORGE_RELEASE_TAG:-v${FORGE_VERSION}}"
 
 DRY_RUN=0
 UPDATE_SHELL=0
@@ -33,7 +39,9 @@ Options:
 Environment:
   FORGE_INSTALL_DIR  Equivalent to --prefix.
   FORGE_RELEASE_REPO GitHub repo to fetch prebuilt binaries from
-                     (default: pranayrishi/ollamax).
+                     (default: pranayrishi/ollamax-releases).
+  FORGE_RELEASE_TAG  Release tag to fetch for --prebuilt
+                     (default: v<the version in Cargo.toml>).
 EOF
 }
 
@@ -66,40 +74,50 @@ err() {
 
 # ----- preflight -----
 
-# Detect host triple early so the prebuilt path can use it.
+# Detect the published bundle name early so the prebuilt path can use the same
+# release contract as .github/workflows/release.yml. These bundles are named by
+# platform label (not Rust target triple) and live in the public releases repo.
 HOST_OS="$(uname -s)"
 HOST_ARCH="$(uname -m)"
-TARGET_TRIPLE=""
+PREBUILT_PLATFORM=""
 case "${HOST_OS}-${HOST_ARCH}" in
-    Linux-x86_64)   TARGET_TRIPLE="x86_64-unknown-linux-gnu" ;;
-    Darwin-arm64)   TARGET_TRIPLE="aarch64-apple-darwin" ;;
-    Darwin-x86_64)  TARGET_TRIPLE="x86_64-apple-darwin" ;;
+    Linux-x86_64)   PREBUILT_PLATFORM="linux-x64" ;;
+    Darwin-arm64)   PREBUILT_PLATFORM="macos-arm64" ;;
+    # The release workflow deliberately does not publish an Intel macOS bundle.
+    # Leave this empty so --prebuilt takes the documented source-build fallback.
+    Darwin-x86_64)  ;;
     *) ;;
 esac
 
 # If --prebuilt was requested, try the release path first. Falls through to
 # source build if any step fails.
 PREBUILT_OK=0
-if [[ $PREFER_PREBUILT -eq 1 && -n "$TARGET_TRIPLE" ]]; then
+if [[ $PREFER_PREBUILT -eq 1 && -n "$PREBUILT_PLATFORM" ]]; then
     if command -v curl >/dev/null 2>&1; then
-        archive="forge-v${FORGE_VERSION}-${TARGET_TRIPLE}.tar.gz"
-        url="https://github.com/${RELEASE_REPO}/releases/download/v${FORGE_VERSION}/${archive}"
+        archive="ollama-forge-${PREBUILT_PLATFORM}.tar.gz"
+        if [[ "$RELEASE_TAG" == "latest" ]]; then
+            url="https://github.com/${RELEASE_REPO}/releases/latest/download/${archive}"
+        else
+            url="https://github.com/${RELEASE_REPO}/releases/download/${RELEASE_TAG}/${archive}"
+        fi
         echo "Trying prebuilt: $url"
         tmpdir="$(mktemp -d)"
         if curl -fsSL "$url" -o "$tmpdir/$archive" 2>/dev/null; then
             run "mkdir -p \"${BIN_DIR}\""
             run "tar -xzf \"$tmpdir/$archive\" -C \"$tmpdir\""
-            extracted="$tmpdir/forge-v${FORGE_VERSION}-${TARGET_TRIPLE}/forge"
-            if [[ -x "$extracted" ]]; then
+            extracted="$tmpdir/ollama-forge-${PREBUILT_PLATFORM}/forge"
+            if [[ -f "$extracted" ]]; then
                 run "install -m 0755 \"$extracted\" \"${BIN_DIR}/forge\""
                 PREBUILT_OK=1
                 echo "✅ Installed prebuilt binary"
             fi
         else
-            echo "(no prebuilt release for ${TARGET_TRIPLE} v${FORGE_VERSION}; falling back to source build)"
+            echo "(no prebuilt release for ${PREBUILT_PLATFORM} at ${RELEASE_TAG}; falling back to source build)"
         fi
         rm -rf "$tmpdir"
     fi
+elif [[ $PREFER_PREBUILT -eq 1 ]]; then
+    echo "(no prebuilt release for ${HOST_OS}/${HOST_ARCH}; falling back to source build)"
 fi
 
 if [[ $PREBUILT_OK -eq 0 ]]; then
