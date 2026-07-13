@@ -1,27 +1,29 @@
 import Link from "next/link";
 import { DesktopAppDownload } from "./DesktopAppDownload";
+import { SignupCounter } from "./SignupCounter";
 
 export function CTA() {
   return (
-    <section id="download" className="scroll-mt-20">
-      <div className="mx-auto max-w-3xl px-4 py-20">
-        <div className="relative overflow-hidden rounded-3xl border border-ink-700 bg-ink-900 p-6 sm:p-10">
-          <div className="glow pointer-events-none absolute inset-x-0 top-0 h-40" aria-hidden="true" />
-          <h2 className="text-center text-3xl font-bold tracking-tight text-zinc-50 sm:text-4xl">
+    <section id="download" className="scroll-mt-24">
+      <div className="mx-auto max-w-3xl px-6 py-24 sm:px-8 sm:py-32">
+        <div className="surface p-6 sm:p-10">
+          <h2 className="text-center font-display text-4xl leading-[0.98] tracking-[-0.04em] text-foreground sm:text-5xl">
             Get Ollamax
           </h2>
-          <p className="mx-auto mt-3 max-w-xl text-center text-zinc-400">
-            Free and open source. Requires a local Ollama daemon. Sign in once with GitHub to get
-            started — your code, prompts, and files still never leave your machine.
+          <p className="mx-auto mt-5 max-w-xl text-center leading-relaxed text-muted-foreground">
+            Free and open source. Requires a local Ollama daemon. Sign in with GitHub only when you
+            want account features — your code, prompts, and files still never leave your machine.
           </p>
 
           <div className="mt-8">
             <DesktopAppDownload />
           </div>
 
-          <p className="mt-5 text-center text-sm text-zinc-500">
+          <SignupCounter />
+
+          <p className="mt-5 text-center text-sm text-muted-foreground">
             Want it inside your own editor, or need checksums and all platforms?{" "}
-            <Link href="/download" className="text-ember-400 hover:underline">See all download options →</Link>
+            <Link href="/download" className="text-link">See all download options →</Link>
           </p>
 
           {/*

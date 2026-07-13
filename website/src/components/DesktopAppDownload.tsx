@@ -52,17 +52,17 @@ export function DesktopAppDownload() {
   const rest = DESKTOP_APPS.filter((b) => b !== primary);
 
   return (
-    <div className="rounded-2xl border border-ember-500/40 bg-ink-900/60 p-6">
+    <div className="surface">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-ember-400">
+        <h2 className="eyebrow">
           Recommended · the Ollamax app
         </h2>
-        {info && <span className="text-xs text-zinc-500">Detected: {info.label}</span>}
+        {info && <span className="text-xs text-muted-foreground">Detected: {info.label}</span>}
       </div>
-      <p className="mt-3 text-sm text-zinc-400">
+      <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
         The full desktop app — engine, on-device voice, and sign-in built in. Nothing else to set up
         but a local{" "}
-        <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" className="text-ember-400 hover:underline">
+        <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" className="text-link">
           Ollama
         </a>
         .
@@ -75,7 +75,7 @@ export function DesktopAppDownload() {
             <a
               href={assetUrl(primary.asset)}
               onClick={() => onDownload(primary.os)}
-              className="block rounded-xl bg-ember-500 px-6 py-3.5 text-center font-semibold text-ink-950 transition hover:bg-ember-400"
+              className="button-primary block w-full px-6 py-3.5 text-center"
             >
               Download Ollamax for {primary.label}
             </a>
@@ -83,18 +83,18 @@ export function DesktopAppDownload() {
               href={checksumUrl(primary.asset)}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-2 block text-center text-[11px] text-zinc-500 hover:text-ember-400"
+              className="mt-3 block text-center text-[11px] text-muted-foreground transition-colors hover:text-foreground"
             >
               SHA-256 checksum
             </a>
           </>
         ) : (
-          <div className="rounded-xl border border-ink-700 bg-ink-950/40 px-5 py-4 text-sm text-zinc-300">
+          <div className="surface-subtle px-5 py-4 text-sm text-foreground/85">
             The desktop app for{" "}
-            <strong className="text-zinc-100">{info?.label ?? "your platform"}</strong> is{" "}
-            <strong className="text-zinc-100">coming soon</strong>. Meanwhile, get the same Ollamax
+            <strong className="text-foreground">{info?.label ?? "your platform"}</strong> is{" "}
+            <strong className="text-foreground">coming soon</strong>. Meanwhile, get the same Ollamax
             experience in your own editor with the{" "}
-            <a href="#one-line" className="text-ember-400 hover:underline">one-line installer below</a>.
+            <a href="#one-line" className="text-link">one-line installer below</a>.
           </div>
         )}
       </div>
@@ -102,33 +102,33 @@ export function DesktopAppDownload() {
       {/* other platforms */}
       <div className="mt-5 grid gap-2 sm:grid-cols-3">
         {rest.map((b) => (
-          <div key={b.asset} className="rounded-xl border border-ink-700 bg-ink-900/50 px-3 py-2.5 text-xs">
-            <div className="font-medium text-zinc-200">{b.label}</div>
+          <div key={b.asset} className="surface-subtle px-4 py-3 text-xs">
+            <div className="font-medium text-foreground">{b.label}</div>
             {b.published ? (
               <a
                 href={assetUrl(b.asset)}
                 onClick={() => onDownload(b.os)}
-                className="mt-1 inline-block text-ember-400 hover:underline"
+                className="mt-2 inline-block text-foreground underline decoration-muted-foreground/60 underline-offset-4"
               >
                 Download
               </a>
             ) : (
-              <span className="mt-1 inline-block text-zinc-500">Coming soon</span>
+              <span className="mt-2 inline-block text-muted-foreground">Coming soon</span>
             )}
           </div>
         ))}
       </div>
 
-      <p className="mt-4 text-xs text-zinc-500">
+      <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
         Unsigned for now, so there&rsquo;s a{" "}
-        <Link href="#first-launch" className="text-ember-400 hover:underline">one-time step to open it</Link>{" "}
+        <Link href="#first-launch" className="text-link">one-time step to open it</Link>{" "}
         — it appears automatically when your download starts.
       </p>
 
       {/* post-download: first-launch steps, right when they're needed */}
       {startedOS && (
-        <div ref={panelRef} className="mt-6 scroll-mt-24 rounded-2xl border border-ember-500/40 bg-ember-500/[0.04] p-1">
-          <div className="mb-1 flex items-center gap-2 px-4 pt-3 text-sm font-semibold text-ember-300">
+        <div ref={panelRef} className="surface mt-6 scroll-mt-24 p-1">
+          <div className="mb-1 flex items-center gap-2 px-4 pt-3 text-sm font-medium text-foreground">
             <span aria-hidden="true">⬇</span> Your download is starting — here&rsquo;s how to open it
           </div>
           <FirstLaunchGuide defaultOS={startedOS} />

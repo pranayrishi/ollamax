@@ -61,9 +61,9 @@ export function ActivateForm() {
 
   if (step === "ok") {
     return (
-      <div className="mt-8 rounded-2xl border border-ember-500/40 bg-ember-500/10 p-6 text-center">
-        <p className="text-lg font-semibold text-zinc-100">✓ App linked</p>
-        <p className="mt-1 text-sm text-zinc-400">
+      <div className="surface mt-8 text-center">
+        <p className="text-2xl leading-none tracking-[-0.02em] text-foreground">✓ App linked</p>
+        <p className="mt-3 text-sm text-muted-foreground">
           Return to the desktop app — it will finish signing in automatically.
         </p>
       </div>
@@ -74,9 +74,9 @@ export function ActivateForm() {
     const when = info.createdAt ? new Date(info.createdAt).toLocaleTimeString() : "just now";
     return (
       <div className="mt-8 space-y-4">
-        <div className="rounded-xl border border-ink-700 bg-ink-900/70 p-4 text-sm">
-          <p className="text-zinc-300">A device is requesting access to your account:</p>
-          <ul className="mt-2 space-y-1 text-zinc-400">
+        <div className="surface-subtle p-5 text-sm">
+          <p className="text-foreground/85">A device is requesting access to your account:</p>
+          <ul className="mt-3 space-y-1 text-muted-foreground">
             <li>· Started: {when}</li>
             <li>· Requesting app: {info.userAgent || "unknown"}</li>
           </ul>
@@ -90,7 +90,7 @@ export function ActivateForm() {
           <button
             onClick={approve}
             disabled={busy}
-            className="flex-1 rounded-xl bg-ember-500 px-5 py-3 font-semibold text-ink-950 hover:bg-ember-400 disabled:opacity-60"
+            className="button-primary flex-1 px-5 py-3"
           >
             {busy ? "Linking…" : "Yes, this is my device — link it"}
           </button>
@@ -99,7 +99,7 @@ export function ActivateForm() {
               setStep("enter");
               setErr("");
             }}
-            className="rounded-xl border border-ink-600 bg-ink-800 px-4 py-3 text-sm text-zinc-300"
+            className="button-secondary px-5 py-3"
           >
             Cancel
           </button>
@@ -110,10 +110,10 @@ export function ActivateForm() {
 
   return (
     <form onSubmit={lookup} className="mt-8 space-y-4">
-      <p className="rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-3 text-xs text-amber-200/90">
+      <p className="rounded-2xl border border-amber-500/30 bg-amber-500/[0.06] p-4 text-xs text-amber-200/90">
         Type the code shown in <strong>your</strong> app. Don&rsquo;t enter a code someone gave you.
       </p>
-      <label htmlFor="user_code" className="block text-sm font-medium text-zinc-300">
+      <label htmlFor="user_code" className="block text-sm font-medium text-foreground/85">
         Device code
       </label>
       <input
@@ -124,14 +124,14 @@ export function ActivateForm() {
         placeholder="WXYZ-1234"
         autoComplete="off"
         autoCapitalize="characters"
-        className="w-full rounded-xl border border-ink-600 bg-ink-800 px-4 py-3 text-center font-mono text-lg tracking-widest text-zinc-100 placeholder:text-zinc-600 focus:border-ember-500"
+        className="w-full rounded-2xl border border-input bg-secondary px-4 py-3 text-center font-mono text-lg tracking-widest text-foreground placeholder:text-muted-foreground"
         required
       />
       {err && <p className="text-sm text-red-400">{err}</p>}
       <button
         type="submit"
         disabled={busy}
-        className="w-full rounded-xl bg-ember-500 px-5 py-3 font-semibold text-ink-950 hover:bg-ember-400 disabled:opacity-60"
+        className="button-primary w-full px-5 py-3"
       >
         {busy ? "Checking…" : "Continue"}
       </button>

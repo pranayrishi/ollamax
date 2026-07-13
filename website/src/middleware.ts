@@ -12,6 +12,7 @@ export function middleware(req: NextRequest) {
     "style-src 'self' 'unsafe-inline'",
     // Avatar hosts: GitHub + Google (Google serves from *.googleusercontent.com).
     "img-src 'self' https://avatars.githubusercontent.com https://*.googleusercontent.com data:",
+    "media-src 'self' https://d8j0ntlcm91z4.cloudfront.net",
     "connect-src 'self' https://github.com https://api.github.com",
     "font-src 'self'",
     "frame-ancestors 'none'",

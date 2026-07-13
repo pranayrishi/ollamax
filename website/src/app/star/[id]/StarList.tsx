@@ -24,32 +24,32 @@ export function StarList({ id, repos }: { id: string; repos: Repo[] }) {
 
   return (
     <div className="mt-8">
-      <div className="mb-3 flex items-center justify-between text-xs text-zinc-500">
+      <div className="mb-4 flex items-center justify-between text-xs text-muted-foreground">
         <span>{repos.length} repos in this package</span>
         <div className="flex gap-3">
-          <button onClick={() => setSelected(new Set(repos.map((r) => r.full_name)))} className="hover:text-zinc-200">
+          <button onClick={() => setSelected(new Set(repos.map((r) => r.full_name)))} className="transition-colors hover:text-foreground">
             Select all
           </button>
-          <button onClick={() => setSelected(new Set())} className="hover:text-zinc-200">
+          <button onClick={() => setSelected(new Set())} className="transition-colors hover:text-foreground">
             Clear
           </button>
         </div>
       </div>
 
-      <ul className="divide-y divide-ink-700/70 overflow-hidden rounded-2xl border border-ink-700">
+      <ul className="surface divide-y divide-border overflow-hidden p-0">
         {repos.map((r) => (
-          <li key={r.full_name} className="flex items-center gap-3 bg-ink-900/50 px-4 py-3">
+          <li key={r.full_name} className="flex items-center gap-3 bg-secondary/70 px-4 py-4">
             <input
               type="checkbox"
               checked={selected.has(r.full_name)}
               onChange={() => toggle(r.full_name)}
-              className="h-4 w-4 accent-ember-500"
+              className="h-4 w-4 accent-white"
               aria-label={`star ${r.full_name}`}
             />
-            <a href={r.html_url} className="flex-1 truncate text-sm text-zinc-200 hover:text-ember-400">
+            <a href={r.html_url} className="flex-1 truncate text-sm text-foreground transition-colors hover:text-muted-foreground">
               {r.full_name}
             </a>
-            <span className="text-xs text-zinc-500">{r.license_spdx || "no license"}</span>
+            <span className="text-xs text-muted-foreground">{r.license_spdx || "no license"}</span>
           </li>
         ))}
       </ul>
@@ -57,15 +57,15 @@ export function StarList({ id, repos }: { id: string; repos: Repo[] }) {
       <a
         href={chosen.length > 0 ? authorizeHref : undefined}
         aria-disabled={chosen.length === 0}
-        className={`mt-6 flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 font-semibold ${
+        className={`mt-7 flex min-h-11 w-full items-center justify-center gap-2 rounded-full px-5 py-3 font-medium transition-transform ${
           chosen.length > 0
-            ? "bg-ember-500 text-ink-950 hover:bg-ember-400"
-            : "cursor-not-allowed bg-ink-800 text-zinc-500"
+            ? "bg-primary text-primary-foreground hover:scale-[1.01]"
+            : "cursor-not-allowed bg-muted text-muted-foreground"
         }`}
       >
         Authorize GitHub & star selected ({chosen.length})
       </a>
-      <p className="mt-3 text-center text-xs text-zinc-600">
+      <p className="mt-4 text-center text-xs text-muted-foreground">
         No rewards, no unlocking — just credit to maintainers. You&rsquo;ll review GitHub&rsquo;s
         permission screen next.
       </p>

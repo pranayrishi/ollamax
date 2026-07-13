@@ -27,17 +27,17 @@ export function CopyCommand({ command, label }: { command: string; label?: strin
 
   return (
     <div>
-      {label && <div className="mb-1.5 text-xs font-medium text-zinc-400">{label}</div>}
+      {label && <div className="mb-2 text-xs font-medium text-muted-foreground">{label}</div>}
       <div className="flex items-stretch gap-2">
         <code
           id={"cmd-" + slug(command)}
-          className="flex-1 overflow-x-auto whitespace-nowrap rounded-lg border border-ink-700 bg-ink-950 px-3 py-2.5 font-mono text-xs text-zinc-200"
+          className="flex-1 overflow-x-auto whitespace-nowrap rounded-2xl border border-border bg-background px-4 py-3 font-mono text-xs text-foreground/85"
         >
           {command}
         </code>
         <button
           onClick={copy}
-          className="shrink-0 rounded-lg bg-ember-500 px-4 text-sm font-semibold text-ink-950 hover:bg-ember-400"
+          className="button-primary shrink-0 px-4"
           aria-label="Copy command"
         >
           {copied ? "Copied ✓" : "Copy"}

@@ -38,18 +38,18 @@ const faqs = [
 
 export function FAQ() {
   return (
-    <section id="faq" className="mx-auto max-w-3xl scroll-mt-20 px-4 py-20">
-      <SectionHeading eyebrow="FAQ" title="Questions, answered" />
-      <div className="mt-10 divide-y divide-ink-700/70 overflow-hidden rounded-2xl border border-ink-700">
+    <section id="faq" className="mx-auto max-w-3xl scroll-mt-24 px-6 py-24 sm:px-8 sm:py-32">
+      <SectionHeading eyebrow="A few questions" title="Questions, answered quietly." />
+      <div className="surface mt-12 divide-y divide-border overflow-hidden p-0">
         {faqs.map((f) => (
-          <details key={f.q} className="group bg-ink-900/40 open:bg-ink-900/70">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 font-medium text-zinc-200 marker:content-none">
+          <details key={f.q} className="group bg-secondary/70 open:bg-muted">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-5 text-foreground marker:content-none">
               {f.q}
-              <span className="text-ember-500 transition group-open:rotate-45" aria-hidden="true">
+              <span className="text-muted-foreground transition group-open:rotate-45" aria-hidden="true">
                 +
               </span>
             </summary>
-            <p className="px-5 pb-5 text-sm leading-relaxed text-zinc-400">{f.a}</p>
+            <p className="px-5 pb-5 text-sm leading-relaxed text-muted-foreground">{f.a}</p>
           </details>
         ))}
       </div>

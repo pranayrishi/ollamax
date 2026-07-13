@@ -55,14 +55,14 @@ export function DownloadGrid() {
   return (
     <div>
       {anyMatch && (
-        <p className="mb-4 text-sm text-zinc-400">
-          Detected: <span className="text-ember-400">{info!.label}</span> — the matching download is
+        <p className="mb-5 text-sm text-muted-foreground">
+          Detected: <span className="text-foreground">{info!.label}</span> — the matching download is
           highlighted. All options are listed; pick whichever you need.
         </p>
       )}
       {osOnly && (
-        <p className="mb-4 text-sm text-zinc-400">
-          Detected: <span className="text-ember-400">{info!.label}</span> — pick your chip below
+        <p className="mb-5 text-sm text-muted-foreground">
+          Detected: <span className="text-foreground">{info!.label}</span> — pick your chip below
           (Apple Silicon for M-series, Intel for older Macs). All options are listed.
         </p>
       )}
@@ -73,21 +73,19 @@ export function DownloadGrid() {
           return (
             <div
               key={b.asset}
-              className={`rounded-2xl border p-5 ${
-                match ? "border-ember-500 bg-ink-800" : "border-ink-700 bg-ink-900/60"
-              }`}
+              className={`surface-subtle p-5 ${match ? "bg-muted" : ""}`}
             >
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-zinc-100">{b.label}</span>
-                {match && <span className="text-xs text-ember-400">recommended</span>}
+                <span className="font-medium text-foreground">{b.label}</span>
+                {match && <span className="text-xs text-foreground">recommended</span>}
               </div>
-              <p className="mt-1 text-xs text-zinc-500">{b.note}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{b.note}</p>
               {b.published ? (
                 <>
                   <a
                     href={url}
                     onClick={() => onDownload(b.os)}
-                    className="mt-4 block rounded-lg bg-ember-500 px-4 py-2 text-center text-sm font-semibold text-ink-950 hover:bg-ember-400"
+                    className="button-primary mt-5 block w-full px-4 py-2 text-center"
                   >
                     Download
                   </a>
@@ -95,14 +93,14 @@ export function DownloadGrid() {
                     href={checksumUrl(b.asset)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="mt-2 block text-center text-[11px] text-zinc-500 hover:text-ember-400"
+                    className="mt-3 block text-center text-[11px] text-muted-foreground transition-colors hover:text-foreground"
                   >
                     SHA-256 checksum
                   </a>
                 </>
               ) : (
                 <span
-                  className="mt-4 block cursor-not-allowed rounded-lg bg-ink-800 px-4 py-2 text-center text-sm text-zinc-500"
+                  className="mt-5 block cursor-not-allowed rounded-full bg-muted px-4 py-2 text-center text-sm text-muted-foreground"
                   title="This build isn't published yet"
                 >
                   Coming soon
@@ -115,8 +113,8 @@ export function DownloadGrid() {
 
       {/* Post-download: the steps appear the instant a download starts. */}
       {startedOS && (
-        <div ref={panelRef} className="mt-6 scroll-mt-24 rounded-2xl border border-ember-500/40 bg-ember-500/[0.04] p-1">
-          <div className="mb-1 flex items-center gap-2 px-4 pt-3 text-sm font-semibold text-ember-300">
+        <div ref={panelRef} className="surface mt-6 scroll-mt-24 p-1">
+          <div className="mb-1 flex items-center gap-2 px-4 pt-3 text-sm font-medium text-foreground">
             <span aria-hidden="true">⬇</span> Your download is starting — here&rsquo;s how to open it
           </div>
           <FirstLaunchGuide defaultOS={startedOS} />

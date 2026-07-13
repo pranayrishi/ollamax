@@ -35,24 +35,25 @@ const features = [
 
 export function Features() {
   return (
-    <section id="features" className="mx-auto max-w-6xl scroll-mt-20 px-4 py-20 sm:py-24">
+    <section id="studio" className="mx-auto max-w-7xl scroll-mt-24 px-6 py-24 sm:px-8 sm:py-32">
+      <span id="features" className="relative -top-24 block" aria-hidden="true" />
       <SectionHeading
-        eyebrow="Features"
-        title="A real coding assistant — that runs on your machine"
+        eyebrow="The Ollamax studio"
+        title="A real coding assistant, held quietly on your own machine."
         subtitle="Everything a cloud assistant gives you, without your code ever leaving your hardware."
       />
       <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {features.map((f) => (
-          <div
+          <article
             key={f.title}
-            className="group rounded-2xl border border-ink-700 bg-ink-900/60 p-6 transition hover:border-ember-500/50 hover:bg-ink-900"
+            className="group surface-subtle p-6 transition-colors hover:bg-secondary"
           >
-            <div className="mb-4 grid h-11 w-11 place-items-center rounded-xl border border-ink-600 bg-ink-800 text-lg transition group-hover:border-ember-500/40 group-hover:text-ember-300">
+            <div className="liquid-glass mb-5 grid h-11 w-11 place-items-center rounded-2xl text-lg text-foreground">
               {f.icon}
             </div>
-            <h3 className="mb-2 font-semibold text-zinc-100">{f.title}</h3>
-            <p className="text-sm leading-relaxed text-zinc-400">{f.body}</p>
-          </div>
+            <h3 className="mb-3 text-2xl leading-none tracking-[-0.02em] text-foreground">{f.title}</h3>
+            <p className="text-sm leading-relaxed text-muted-foreground">{f.body}</p>
+          </article>
         ))}
       </div>
     </section>

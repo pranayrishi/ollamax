@@ -20,21 +20,21 @@ const steps = [
 
 export function HowItWorks() {
   return (
-    <section id="how" className="scroll-mt-20 border-y border-ink-700/60 bg-ink-900/40">
-      <div className="mx-auto max-w-6xl px-4 py-20">
+    <section id="how" className="scroll-mt-24 border-y border-border bg-secondary/65">
+      <div className="mx-auto max-w-7xl px-6 py-24 sm:px-8 sm:py-32">
         <SectionHeading
-          eyebrow="How it works"
-          title="Up and running in three steps"
+          eyebrow="A calmer way in"
+          title="Up and running in three considered steps."
         />
         <div className="mt-12 grid gap-6 md:grid-cols-3">
           {steps.map((s) => (
-            <div key={s.n} className="relative rounded-2xl border border-ink-700 bg-ink-900/70 p-6">
-              <div className="mb-4 grid h-9 w-9 place-items-center rounded-full border border-ember-500/40 bg-ember-500/10 font-semibold text-ember-400">
+            <article key={s.n} className="surface-subtle relative p-6 sm:p-7">
+              <div className="liquid-glass mb-5 grid h-10 w-10 place-items-center rounded-full text-sm font-medium text-foreground">
                 {s.n}
               </div>
-              <h3 className="mb-2 font-semibold text-zinc-100">{s.title}</h3>
-              <p className="text-sm leading-relaxed text-zinc-400">{s.body}</p>
-            </div>
+              <h3 className="mb-3 text-2xl leading-none tracking-[-0.02em] text-foreground">{s.title}</h3>
+              <p className="text-sm leading-relaxed text-muted-foreground">{s.body}</p>
+            </article>
           ))}
         </div>
       </div>

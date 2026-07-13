@@ -19,20 +19,20 @@ export function DownloadButtons({ compact = false }: { compact?: boolean }) {
           <a
             key={t.os}
             href={assetUrl(t.asset)}
-            className="flex items-center justify-between gap-3 rounded-xl border border-ink-600 bg-ink-800 px-4 py-3 text-sm transition hover:border-ember-500 hover:bg-ink-700"
+            className="surface-subtle flex items-center justify-between gap-3 px-4 py-3 text-sm transition-colors hover:bg-secondary"
           >
-            <span className="font-medium text-zinc-100">Download for {t.os}</span>
-            <span className="text-xs text-zinc-500">{t.sub}</span>
+            <span className="font-medium text-foreground">Download for {t.os}</span>
+            <span className="text-xs text-muted-foreground">{t.sub}</span>
           </a>
         ))}
       </div>
-      <p className="mt-3 text-xs text-zinc-500">
+      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
         These are direct (unsigned) downloads — there&rsquo;s a{" "}
-        <Link href="/download#first-launch" className="text-ember-400 hover:underline">one-time step to open it →</Link>.
+        <Link href="/download#first-launch" className="text-link">one-time step to open it →</Link>.
         For zero warnings, use the{" "}
-        <Link href="/download" className="text-ember-400 hover:underline">one-line installer</Link>{" "}
+        <Link href="/download" className="text-link">one-line installer</Link>{" "}
         · needs{" "}
-        <a href="https://ollama.com/download" className="text-zinc-400 hover:text-ember-400" target="_blank" rel="noopener noreferrer">Ollama</a>.
+        <a href="https://ollama.com/download" className="text-link" target="_blank" rel="noopener noreferrer">Ollama</a>.
       </p>
     </div>
   );

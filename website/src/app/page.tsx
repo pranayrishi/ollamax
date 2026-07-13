@@ -7,13 +7,17 @@ import { Privacy } from "@/components/Privacy";
 import { FAQ } from "@/components/FAQ";
 import { CTA } from "@/components/CTA";
 import { Footer } from "@/components/Footer";
+import { CinematicVideo } from "@/components/CinematicVideo";
 
 export default function Home() {
   return (
     <>
-      <Nav />
-      <main id="main">
-        <Hero />
+      <main id="main" className="site-page overflow-hidden">
+        <section className="relative min-h-screen overflow-hidden bg-background">
+          <CinematicVideo />
+          <Nav />
+          <Hero />
+        </section>
         <Features />
         <HowItWorks />
         <Comparison />

@@ -12,8 +12,8 @@ export async function SignupCounter() {
   }
   if (n <= 0) return null;
   return (
-    <p className="mt-6 text-sm text-zinc-500">
-      Joined by <span className="font-semibold text-zinc-300">{n.toLocaleString()}</span> developers
+    <p className="mt-6 text-center text-sm text-muted-foreground">
+      Joined by <span className="font-medium text-foreground">{n.toLocaleString()}</span> developers
     </p>
   );
 }

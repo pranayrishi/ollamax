@@ -16,32 +16,32 @@ const rows: { feature: string; forge: boolean | string; cloud: boolean | string 
 ];
 
 function Cell({ v }: { v: boolean | string }) {
-  if (v === true) return <span className="text-ember-400">✓</span>;
-  if (v === false) return <span className="text-zinc-600">—</span>;
-  return <span className="text-xs text-zinc-400">{v}</span>;
+  if (v === true) return <span className="text-foreground">✓</span>;
+  if (v === false) return <span className="text-muted-foreground">—</span>;
+  return <span className="text-xs text-muted-foreground">{v}</span>;
 }
 
 export function Comparison() {
   return (
-    <section className="mx-auto max-w-5xl px-4 py-20">
-      <SectionHeading eyebrow="Why local-first" title="A different trade-off" />
-      <div className="mt-10 overflow-hidden rounded-2xl border border-ink-700">
+    <section className="mx-auto max-w-5xl px-6 py-24 sm:px-8 sm:py-32">
+      <SectionHeading eyebrow="Why local-first" title="A different trade-off, deliberately made." />
+      <div className="surface mt-12 overflow-hidden p-0">
         <table className="w-full text-left text-sm">
-          <thead className="bg-ink-800 text-zinc-300">
+          <thead className="bg-muted text-foreground">
             <tr>
               <th scope="col" className="px-5 py-4 font-medium">Capability</th>
-              <th scope="col" className="px-5 py-4 text-center font-semibold text-ember-400">
+              <th scope="col" className="px-5 py-4 text-center font-medium text-foreground">
                 Ollamax
               </th>
-              <th scope="col" className="px-5 py-4 text-center font-medium text-zinc-400">
+              <th scope="col" className="px-5 py-4 text-center font-medium text-muted-foreground">
                 Typical cloud-only assistant
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-ink-700/70">
+          <tbody className="divide-y divide-border">
             {rows.map((r) => (
-              <tr key={r.feature} className="bg-ink-900/40">
-                <td className="px-5 py-3.5 text-zinc-300">{r.feature}</td>
+              <tr key={r.feature} className="bg-secondary/70">
+                <td className="px-5 py-3.5 text-foreground/85">{r.feature}</td>
                 <td className="px-5 py-3.5 text-center">
                   <Cell v={r.forge} />
                 </td>

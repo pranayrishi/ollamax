@@ -85,10 +85,10 @@ function DialogMock({ os }: { os: OS }) {
         <text x="20" y="29" fill="#fff" fontSize="13" fontWeight="700">Windows protected your PC</text>
         <text x="20" y="74" fill="#9fb0c3" fontSize="10.5">Microsoft Defender SmartScreen prevented an</text>
         <text x="20" y="90" fill="#9fb0c3" fontSize="10.5">unrecognized app from starting.</text>
-        <text x="20" y="118" fill="#f59e3c" fontSize="11" fontWeight="600" textDecoration="underline">More info</text>
-        <rect x="186" y="150" width="116" height="32" rx="6" fill="#f59e3c" />
-        <text x="244" y="171" fill="#1a1205" fontSize="12" fontWeight="700" textAnchor="middle">Run anyway</text>
-        <rect x="186" y="150" width="116" height="32" rx="6" fill="none" stroke="#ffd9a8" strokeWidth="2">
+        <text x="20" y="118" fill="#f5f5f5" fontSize="11" fontWeight="600" textDecoration="underline">More info</text>
+        <rect x="186" y="150" width="116" height="32" rx="6" fill="#f5f5f5" />
+        <text x="244" y="171" fill="#0a0a0a" fontSize="12" fontWeight="700" textAnchor="middle">Run anyway</text>
+        <rect x="186" y="150" width="116" height="32" rx="6" fill="none" stroke="#d4d4d4" strokeWidth="2">
           <animate attributeName="opacity" values="1;0.3;1" dur="1.8s" repeatCount="indefinite" />
         </rect>
       </svg>
@@ -101,8 +101,8 @@ function DialogMock({ os }: { os: OS }) {
         <rect x="0" y="0" width="320" height="34" rx="10" fill="#161d29" />
         <rect x="0" y="20" width="320" height="14" fill="#161d29" />
         <circle cx="18" cy="17" r="4" fill="#ff5f57" /><circle cx="32" cy="17" r="4" fill="#febc2e" /><circle cx="46" cy="17" r="4" fill="#28c840" />
-        <text x="20" y="70" fill="#7dd3a8" fontSize="12" fontFamily="monospace">$ chmod +x Ollamax</text>
-        <text x="20" y="96" fill="#7dd3a8" fontSize="12" fontFamily="monospace">$ ./Ollamax</text>
+        <text x="20" y="70" fill="#f5f5f5" fontSize="12" fontFamily="monospace">$ chmod +x Ollamax</text>
+        <text x="20" y="96" fill="#f5f5f5" fontSize="12" fontFamily="monospace">$ ./Ollamax</text>
         <text x="20" y="130" fill="#6b7a8d" fontSize="11">No signature prompt on Linux.</text>
       </svg>
     );
@@ -117,9 +117,9 @@ function DialogMock({ os }: { os: OS }) {
       <text x="160" y="114" fill="#9fb0c3" fontSize="10.5" textAnchor="middle">of “Ollamax”. Open it anyway?</text>
       <rect x="44" y="150" width="100" height="32" rx="7" fill="#2a3140" stroke="#3a4456" />
       <text x="94" y="171" fill="#c5cedb" fontSize="12" textAnchor="middle">Cancel</text>
-      <rect x="176" y="150" width="100" height="32" rx="7" fill="#f59e3c" />
-      <text x="226" y="171" fill="#1a1205" fontSize="12" fontWeight="700" textAnchor="middle">Open</text>
-      <rect x="176" y="150" width="100" height="32" rx="7" fill="none" stroke="#ffd9a8" strokeWidth="2">
+      <rect x="176" y="150" width="100" height="32" rx="7" fill="#f5f5f5" />
+      <text x="226" y="171" fill="#0a0a0a" fontSize="12" fontWeight="700" textAnchor="middle">Open</text>
+      <rect x="176" y="150" width="100" height="32" rx="7" fill="none" stroke="#d4d4d4" strokeWidth="2">
         <animate attributeName="opacity" values="1;0.3;1" dur="1.8s" repeatCount="indefinite" />
       </rect>
     </svg>
@@ -142,25 +142,25 @@ export function FirstLaunchGuide({ defaultOS }: { defaultOS?: OS }) {
   const guide = GUIDES.find((g) => g.os === active) ?? GUIDES[0];
 
   return (
-    <div className="rounded-2xl border border-ink-700 bg-ink-900/60 p-6 sm:p-8">
+    <div className="surface p-6 sm:p-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-zinc-100">Opening it the first time</h3>
-          <p className="mt-2 max-w-xl text-sm leading-relaxed text-zinc-400">
-            Because Ollamax is a new, independent app that <strong className="text-zinc-200">isn&rsquo;t code-signed yet</strong>,
-            your system shows a <strong className="text-zinc-200">one-time</strong> security prompt the first time you open it.
+          <h3 className="text-3xl leading-none tracking-[-0.02em] text-foreground">Opening it the first time</h3>
+          <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
+            Because Ollamax is a new, independent app that <strong className="text-foreground">isn&rsquo;t code-signed yet</strong>,
+            your system shows a <strong className="text-foreground">one-time</strong> security prompt the first time you open it.
             That&rsquo;s expected for new software — here&rsquo;s the single step to get past it. Signed installers are on the way.
           </p>
         </div>
         {/* OS switcher */}
-        <div className="flex shrink-0 gap-1 rounded-xl border border-ink-700 bg-ink-950/60 p-1 text-xs">
+        <div className="liquid-glass flex shrink-0 gap-1 rounded-full p-1 text-xs">
           {GUIDES.map((g) => (
             <button
               key={g.os}
               type="button"
               onClick={() => setActive(g.os)}
               className={`rounded-lg px-3 py-1.5 font-medium transition ${
-                active === g.os ? "bg-ember-500 text-ink-950" : "text-zinc-400 hover:text-zinc-100"
+                active === g.os ? "rounded-full bg-primary text-primary-foreground" : "rounded-full text-muted-foreground hover:text-foreground"
               }`}
             >
               {g.label}
@@ -169,37 +169,37 @@ export function FirstLaunchGuide({ defaultOS }: { defaultOS?: OS }) {
         </div>
       </div>
 
-      <p className="mt-5 text-sm font-medium text-ember-300">{guide.lead}</p>
+      <p className="mt-6 text-sm font-medium text-foreground">{guide.lead}</p>
 
       <div className="mt-4 grid gap-6 md:grid-cols-[1fr_300px] md:items-center">
         <ol className="space-y-4">
           {guide.steps.map((s) => (
             <li key={s.n} className="flex gap-3">
-              <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border border-ember-500/40 bg-ember-500/10 text-xs font-semibold text-ember-300">
+              <span className="liquid-glass mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-medium text-foreground">
                 {s.n}
               </span>
               <div>
-                <p className="text-sm font-semibold text-zinc-100">{s.title}</p>
-                <p className="text-sm leading-relaxed text-zinc-400">{s.body}</p>
+                <p className="text-sm font-medium text-foreground">{s.title}</p>
+                <p className="text-sm leading-relaxed text-muted-foreground">{s.body}</p>
               </div>
             </li>
           ))}
         </ol>
-        <div className="rounded-xl border border-ink-700 bg-ink-950/40 p-3">
+        <div className="surface-subtle p-3">
           <DialogMock os={active} />
-          <p className="mt-2 text-center text-[11px] text-zinc-600">Illustration — the actual dialog may vary by OS version.</p>
+          <p className="mt-2 text-center text-[11px] text-muted-foreground">Illustration — the actual dialog may vary by OS version.</p>
         </div>
       </div>
 
       {guide.fallback && (
-        <p className="mt-5 rounded-lg border border-ink-700 bg-ink-950/40 px-4 py-3 text-xs text-zinc-400">
-          <strong className="text-zinc-300">Recent macOS?</strong> {guide.fallback}
+        <p className="surface-subtle mt-5 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+          <strong className="text-foreground">Recent macOS?</strong> {guide.fallback}
         </p>
       )}
 
-      <p className="mt-4 text-xs text-zinc-500">
+      <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
         Prefer to verify your download? Every build ships a{" "}
-        <strong className="text-zinc-400">SHA-256 checksum</strong> next to it — compare it to be sure the file is intact.
+        <strong className="text-foreground">SHA-256 checksum</strong> next to it — compare it to be sure the file is intact.
         We don&rsquo;t claim the app is &ldquo;verified&rdquo;; the prompt simply means it isn&rsquo;t signed yet.
       </p>
     </div>

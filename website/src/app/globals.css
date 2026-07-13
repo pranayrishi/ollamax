@@ -3,32 +3,163 @@
 @tailwind utilities;
 
 :root {
-  /* System font stacks — no webfont fetch, so the build never depends on a
-     font CDN and first paint is instant. */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
+  --background: 201 100% 13%;
+  --foreground: 0 0% 100%;
+  --muted-foreground: 240 4% 66%;
+  --primary: 0 0% 100%;
+  --primary-foreground: 0 0% 4%;
+  --secondary: 0 0% 10%;
+  --muted: 0 0% 10%;
+  --accent: 0 0% 10%;
+  --border: 0 0% 18%;
+  --input: 0 0% 18%;
+  --ring: 0 0% 100%;
+
+  /* next/font supplies the same variables with self-hosted Google font files.
+     These values remain meaningful fallbacks during first paint. */
+  --font-display: "Instrument Serif", serif;
+  --font-body: "Inter", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
-html {
-  color-scheme: dark;
-  scroll-behavior: smooth;
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-body);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    font-weight: 400;
+  }
+
+  ::selection {
+    background: hsl(var(--foreground) / 0.22);
+    color: hsl(var(--foreground));
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
 }
 
-body {
-  @apply bg-ink-950 text-zinc-300 antialiased;
+@layer components {
+  .site-page {
+    @apply min-h-screen bg-background text-foreground;
+  }
+
+  .page-frame {
+    @apply mx-auto w-full max-w-4xl px-6 py-16 sm:px-8 sm:py-24;
+  }
+
+  .page-title {
+    @apply font-display text-4xl leading-[0.98] tracking-[-0.04em] text-foreground sm:text-5xl;
+  }
+
+  .page-lede {
+    @apply mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg;
+  }
+
+  .surface {
+    @apply rounded-[1.75rem] border border-border bg-secondary/85 p-6 shadow-[0_18px_60px_rgba(0,0,0,0.16)] backdrop-blur-sm;
+  }
+
+  .surface-subtle {
+    @apply rounded-[1.5rem] border border-border bg-muted/65;
+  }
+
+  .button-primary {
+    @apply inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-transform duration-200 hover:scale-[1.03] disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .button-secondary {
+    @apply inline-flex min-h-11 items-center justify-center rounded-full border border-border bg-secondary/75 px-5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .text-link {
+    @apply text-foreground underline decoration-muted-foreground/60 underline-offset-4 transition-colors hover:decoration-foreground;
+  }
+
+  .eyebrow {
+    @apply text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground;
+  }
 }
 
-/* Visible keyboard focus everywhere. */
-:focus-visible {
-  @apply outline-none ring-2 ring-ember-500 ring-offset-2 ring-offset-ink-950;
+/* A restrained, reusable glass treatment for navigation and pivotal actions. */
+.liquid-glass {
+  background: rgba(255, 255, 255, 0.01);
+  background-blend-mode: luminosity;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: none;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
 }
 
-/* Honor reduced-motion: kill animations/transitions and smooth-scroll. */
+.liquid-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.15) 20%,
+    rgba(255, 255, 255, 0) 40%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(255, 255, 255, 0.15) 80%,
+    rgba(255, 255, 255, 0.45) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+@keyframes fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-rise {
+  animation: fade-rise 0.8s ease-out both;
+}
+
+.animate-fade-rise-delay {
+  animation: fade-rise 0.8s ease-out 0.2s both;
+}
+
+.animate-fade-rise-delay-2 {
+  animation: fade-rise 0.8s ease-out 0.4s both;
+}
+
+/* Honor reduced-motion for page choreography. The video component also
+   pauses itself when this preference changes. */
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
   }
+
   *,
   *::before,
   *::after {
@@ -36,9 +167,4 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
-}
-
-/* Subtle radial glow used behind the hero. */
-.glow {
-  background: radial-gradient(60% 60% at 50% 0%, rgba(255, 140, 43, 0.12), transparent 70%);
 }
