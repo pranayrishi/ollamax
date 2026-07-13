@@ -146,7 +146,45 @@ jobs:
       # keeps the website's releases/latest/download/<asset> URLs working.
       - id: ver
         if: startsWith(github.ref, 'refs/tags/app-v')
+        shell: bash
         run: echo "tag=${GITHUB_REF_NAME#app-}" >> "$GITHUB_OUTPUT"
+
+      # A prior Windows shell interpreted the Bash parameter expansion above as
+      # an empty value and created `app-v*` in the public releases repository.
+      # Those tags must never be releases: `latest/download` is intentionally
+      # served from the base `v*` release. Clean up a stale app-prefixed release
+      # before each serialized native publisher runs, without touching its tag.
+      - name: Remove a stale app-prefixed public release
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        shell: bash
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          BASE_TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${RELEASES_REPO}/releases/tags/app-${BASE_TAG}"
+          response="$(mktemp)"
+          code="$(curl -sS -o "$response" -w '%{http_code}' \
+            -H "Authorization: Bearer ${RELEASES_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' "$api")"
+          case "$code" in
+            404) exit 0 ;;
+            200) ;;
+            *)
+              echo "could not inspect stale app-prefixed release (HTTP $code)" >&2
+              sed -n '1,80p' "$response" >&2
+              exit 1
+              ;;
+          esac
+          release_id="$(node -e 'const fs = require("fs"); const id = JSON.parse(fs.readFileSync(0, "utf8")).id; if (Number.isSafeInteger(id)) process.stdout.write(String(id));' < "$response")"
+          [[ "$release_id" =~ ^[0-9]+$ ]] || {
+            echo "stale app-prefixed release did not return a numeric id" >&2
+            exit 1
+          }
+          curl -fsS -X DELETE \
+            -H "Authorization: Bearer ${RELEASES_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${RELEASES_REPO}/releases/${release_id}"
 
       - name: Publish verified installers directly
         if: startsWith(github.ref, 'refs/tags/app-v')
