@@ -218,31 +218,65 @@ impl TaskRouter {
         task_type: &TaskType,
         available_models: &[ModelInfo],
     ) -> String {
-        let available: Vec<&str> = available_models.iter().map(|m| m.name.as_str()).collect();
+        // Parse real parameter counts out of the installed tags instead of
+        // substring-matching ("3b" used to match "235b", so a Simple task
+        // could grab a frontier MoE). Cloud tags are excluded up front — the
+        // same policy `route_to_model` applies. Models whose size can't be
+        // parsed (e.g. `llama4:scout`) stay reachable through
+        // `route_to_model`'s size-sorted walk.
+        let sized: Vec<(&str, f32)> = available_models
+            .iter()
+            .filter(|m| is_offline_ollama_tag(&m.name))
+            .filter_map(|m| tag_param_billions(&m.name).map(|b| (m.name.as_str(), b)))
+            .collect();
+        let smallest_in = |lo: f32, hi: f32| -> Option<&str> {
+            sized
+                .iter()
+                .filter(|(_, b)| *b >= lo && *b < hi)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(n, _)| *n)
+        };
+        let largest_in = |lo: f32, hi: f32| -> Option<&str> {
+            sized
+                .iter()
+                .filter(|(_, b)| *b >= lo && *b < hi)
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(n, _)| *n)
+        };
+        let largest_matching = |pred: &dyn Fn(&str) -> bool| -> Option<&str> {
+            sized
+                .iter()
+                .filter(|(n, _)| pred(n))
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(n, _)| *n)
+        };
 
         match task_type {
-            TaskType::Simple => available
-                .iter()
-                .find(|m| m.contains("3b") || m.contains("1b"))
-                .copied()
+            // Boilerplate tier: smallest genuinely-small model installed.
+            TaskType::Simple => smallest_in(0.0, 4.6)
+                .or_else(|| smallest_in(0.0, f32::MAX))
                 .unwrap_or(&self.model_config.small_model)
                 .to_string(),
-            TaskType::Medium => available
-                .iter()
-                .find(|m| m.contains("7b") || m.contains("qwen"))
-                .copied()
+            // Workhorse tier: a mid-size model, coder families first.
+            TaskType::Medium => largest_matching(&|n| is_coder_family(n) && in_size(n, 4.6, 16.0))
+                .or_else(|| largest_in(4.6, 16.0))
+                .or_else(|| smallest_in(4.6, f32::MAX))
                 .unwrap_or(&self.model_config.medium_model)
                 .to_string(),
-            TaskType::Complex => available
-                .iter()
-                .find(|m| m.contains("16b") || m.contains("coder"))
-                .copied()
-                .unwrap_or(&self.model_config.large_model)
-                .to_string(),
-            TaskType::Architect => available
-                .iter()
-                .find(|m| m.contains("70b") || m.contains("671b") || m.contains("llama3.3"))
-                .copied()
+            // Heavy tier: a big coder if one is installed, else the biggest model.
+            TaskType::Complex => {
+                largest_matching(&|n| is_coder_family(n) && in_size(n, 12.0, f32::MAX))
+                    .or_else(|| largest_in(12.0, f32::MAX))
+                    .or_else(|| largest_in(0.0, f32::MAX))
+                    .unwrap_or(&self.model_config.large_model)
+                    .to_string()
+            }
+            // Planning tier: reasoning-tilted families (DeepSeek-R1 distills,
+            // Gemma 4 thinking modes, QwQ) do measurably better at
+            // architecture work; fall back to the biggest installed model.
+            TaskType::Architect => largest_matching(&|n| is_reasoning_family(n))
+                .or_else(|| largest_in(20.0, f32::MAX))
+                .or_else(|| largest_in(0.0, f32::MAX))
                 .unwrap_or(&self.model_config.planner_model)
                 .to_string(),
         }
@@ -498,6 +532,50 @@ impl TaskRouter {
     }
 }
 
+/// Parse the parameter count (in billions) out of an Ollama tag, e.g.
+/// `qwen3.5:9b` → 9.0, `qwen3.5:0.8b` → 0.8, `deepseek-r1:70b` → 70.0,
+/// `gemma4:e4b` → 4.0 ("effective" MatFormer sizes), and for MoE tags like
+/// `qwen3-vl:235b-a22b` the TOTAL count (235.0) — total is what governs
+/// resident memory. Returns `None` when no size token exists
+/// (`llama4:scout`, `qwen3-coder-next`).
+pub(crate) fn tag_param_billions(tag: &str) -> Option<f32> {
+    let lower = tag.to_lowercase();
+    let mut best: Option<f32> = None;
+    for raw in lower.split(|c: char| !(c.is_ascii_alphanumeric() || c == '.')) {
+        // Gemma's "effective" sizes ship as `e2b` / `e4b`.
+        let tok = raw.strip_prefix('e').unwrap_or(raw);
+        if let Some(num) = tok.strip_suffix('b') {
+            if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit() || c == '.') {
+                if let Ok(v) = num.parse::<f32>() {
+                    best = Some(best.map_or(v, |b: f32| b.max(v)));
+                }
+            }
+        }
+    }
+    best
+}
+
+/// True for tags from code-specialized families.
+fn is_coder_family(tag: &str) -> bool {
+    let t = tag.to_lowercase();
+    ["coder", "codestral", "devstral", "codellama", "starcoder"]
+        .iter()
+        .any(|n| t.contains(n))
+}
+
+/// True for tags from reasoning-tilted families (chain-of-thought planners).
+fn is_reasoning_family(tag: &str) -> bool {
+    let t = tag.to_lowercase();
+    ["deepseek-r1", "qwq", "gemma4", "phi4"]
+        .iter()
+        .any(|n| t.contains(n))
+}
+
+/// True when the tag's parsed size is inside `[lo, hi)`.
+fn in_size(tag: &str, lo: f32, hi: f32) -> bool {
+    tag_param_billions(tag).is_some_and(|b| b >= lo && b < hi)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubTask {
     pub id: String,
@@ -682,5 +760,64 @@ mod tests {
         assert!(subtasks
             .iter()
             .all(|subtask| subtask.model_override.as_deref() != Some("qwen3.5:397b-cloud")));
+    }
+
+    #[test]
+    fn tag_param_billions_parses_2026_tag_shapes() {
+        assert_eq!(tag_param_billions("qwen3.5:9b"), Some(9.0));
+        assert_eq!(tag_param_billions("qwen3.5:0.8b"), Some(0.8));
+        assert_eq!(tag_param_billions("deepseek-r1:70b"), Some(70.0));
+        assert_eq!(tag_param_billions("gemma4:e4b"), Some(4.0));
+        assert_eq!(tag_param_billions("gemma4:26b"), Some(26.0));
+        assert_eq!(tag_param_billions("qwen3-vl:235b-a22b"), Some(235.0));
+        // Quant suffixes must not read as sizes.
+        assert_eq!(
+            tag_param_billions("qwen2.5-coder:7b-instruct-q4_K_M"),
+            Some(7.0)
+        );
+        // No size token at all.
+        assert_eq!(tag_param_billions("llama4:scout"), None);
+        assert_eq!(tag_param_billions("qwen3-coder-next"), None);
+        // The family version digits ("qwen2.5", "llama3.2") are NOT sizes.
+        assert_eq!(tag_param_billions("llama3.2:3b"), Some(3.0));
+    }
+
+    // The old substring matcher routed Simple tasks to `qwen3:235b` because
+    // "235b" contains "3b". The parsed-size matcher must not.
+    #[tokio::test]
+    async fn simple_tasks_never_route_to_a_frontier_moe() {
+        let router = TaskRouter::new(ModelConfig::default());
+        let models = vec![
+            mi("qwen3:235b", 140_000_000_000),
+            mi("qwen3.5:2b", 1_500_000_000),
+        ];
+        let c = router
+            .analyze_complexity("rename all .txt files to .md", &models)
+            .await
+            .unwrap();
+        assert_eq!(c.task_type, TaskType::Simple);
+        assert_eq!(c.suggested_model, "qwen3.5:2b");
+    }
+
+    // Architecture-tier work prefers a reasoning-tilted family when one is
+    // installed, even when a bigger plain model exists.
+    #[tokio::test]
+    async fn architect_tier_prefers_reasoning_family() {
+        let router = TaskRouter::new(ModelConfig::default());
+        let models = vec![
+            mi("deepseek-r1:32b", 20_000_000_000),
+            mi("qwen3.5:35b", 21_000_000_000),
+        ];
+        let c = router
+            .analyze_complexity(
+                "restructure the distributed microservices system for concurrent \
+                 parallel scale, hardening security and performance of the core \
+                 algorithm while we refactor and optimize every service",
+                &models,
+            )
+            .await
+            .unwrap();
+        assert_eq!(c.task_type, TaskType::Architect, "score={}", c.score);
+        assert_eq!(c.suggested_model, "deepseek-r1:32b");
     }
 }

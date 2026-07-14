@@ -4,6 +4,24 @@ All notable changes to Ollama-Forge are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project does
 **not** yet follow semantic versioning — every 0.x release may break things.
 
+## [0.3.0] - 2026-07-13
+
+### Added
+
+- Added the one free OFFLINE MiniMax install path to the curated catalog:
+  MiniMax M2.5 (230B MoE, 10B active, modified-MIT) as a direct Hugging Face
+  GGUF pull (`hf.co/unsloth/MiniMax-M2.5-GGUF:Q4_K_M`) — official `minimax-*`
+  Ollama tags are cloud-only and remain disclosed as such. The library
+  verifier now checks `hf.co/...` tags against the Hugging Face repo.
+
+### Changed
+
+- The task router now parses real parameter counts out of model tags instead
+  of substring matching ("3b" no longer matches "235b", so a Simple task can
+  never grab a frontier MoE), prefers coder families for workhorse/heavy
+  tiers, and routes architecture-tier work to reasoning-tilted families
+  (DeepSeek-R1 distills, Gemma 4) when one is installed.
+
 ## [0.2.1] - 2026-07-13
 
 ### Added

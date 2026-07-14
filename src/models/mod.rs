@@ -867,6 +867,24 @@ impl ModelRegistry {
                 &[],
             ),
             ModelSeed::ollama(
+                "MiniMax M2.5",
+                "hf.co/unsloth/MiniMax-M2.5-GGUF:Q4_K_M",
+                "230B total / 10B active (MoE)",
+                HighEnd,
+                139_000,
+                ModifiedMit,
+                "coding, agentic, tool use",
+            )
+            .details(
+                "MiniMaxAI/MiniMax-M2.5",
+                CAPS_REASONING,
+                None,
+                Some(139_000),
+                10,
+                "The only free OFFLINE MiniMax install path: Ollama pulls this community Q4_K_M GGUF (unsloth) straight from Hugging Face — official `minimax-*` Ollama tags are cloud-only. ~139 GB download; realistic on 192 GB-class unified memory or multi-GPU rigs only. Weights are modified-MIT (MiniMax-AI/MiniMax-M2.5 LICENSE).",
+                &["hf.co/unsloth/minimax-m2.5-gguf:q4_k_m"],
+            ),
+            ModelSeed::ollama(
                 "Qwen3",
                 "qwen3:235b",
                 "235B (MoE)",
@@ -1146,11 +1164,24 @@ fn tag_matches(seed: &str, installed: &str) -> bool {
 /// blocks the catalog). This check establishes library presence only; callers
 /// must use [`LocalAvailability`] to determine whether it is actually local.
 pub async fn verify_in_library(ollama_tag: &str) -> Option<bool> {
-    if ollama_tag.trim().is_empty() || ollama_tag.contains('/') {
+    if ollama_tag.trim().is_empty() {
         return None;
     }
-    let name = ollama_tag.split(':').next().unwrap_or(ollama_tag);
-    let url = format!("https://ollama.com/library/{name}");
+    // Two verifiable shapes: plain Ollama library tags, and `hf.co/org/repo`
+    // direct-pull tags (checked against the Hugging Face repo page). Anything
+    // else with a '/' (user namespaces etc.) stays "unverified" rather than
+    // guessed at.
+    let url = if let Some(hf_path) = ollama_tag.strip_prefix("hf.co/") {
+        // `hf.co/org/repo:Q4_K_M` → strip the quant suffix after the LAST
+        // colon (repo names themselves never contain a colon).
+        let repo = hf_path.rsplit_once(':').map(|(r, _)| r).unwrap_or(hf_path);
+        format!("https://huggingface.co/{repo}")
+    } else if ollama_tag.contains('/') {
+        return None;
+    } else {
+        let name = ollama_tag.split(':').next().unwrap_or(ollama_tag);
+        format!("https://ollama.com/library/{name}")
+    };
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(6))
         .user_agent("ollama-forge")
@@ -1436,5 +1467,28 @@ mod tests {
     #[test]
     fn empty_self_hosted_reference_never_matches_an_ollama_install() {
         assert!(!tag_matches("", "anything"));
+    }
+
+    // The one free OFFLINE MiniMax path: a direct Hugging Face GGUF pull.
+    // Official `minimax-*` Ollama tags are cloud-only, so this entry must be
+    // pullable, offline-eligible, and honestly licensed (modified MIT).
+    #[test]
+    fn offline_minimax_ships_as_a_direct_hf_gguf_pull() {
+        let reg = ModelRegistry::seed();
+        let m25 = reg
+            .all()
+            .iter()
+            .find(|m| m.family == "MiniMax M2.5")
+            .expect("MiniMax M2.5 must be curated as a local entry");
+        assert!(m25.ollama_tag.starts_with("hf.co/"));
+        assert!(m25.can_pull_from_ollama(), "hf.co GGUFs are valid pull targets");
+        assert!(is_offline_ollama_tag(&m25.ollama_tag));
+        assert_eq!(m25.tier, HardwareTier::HighEnd);
+        assert_eq!(m25.license, License::ModifiedMit);
+        assert!(m25.license.commercial_friendly());
+        assert!(
+            m25.caveat.to_lowercase().contains("cloud-only"),
+            "the caveat must warn that official Ollama MiniMax tags are cloud-only"
+        );
     }
 }

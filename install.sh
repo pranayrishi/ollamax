@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_VERSION="$(awk -F'"' '/^version = "/ { print $2; exit }' "$SCRIPT_DIR/Cargo.toml" 2>/dev/null || true)"
-FORGE_VERSION="${FORGE_VERSION:-${SOURCE_VERSION:-0.2.1}}"
+FORGE_VERSION="${FORGE_VERSION:-${SOURCE_VERSION:-0.3.0}}"
 INSTALL_DIR="${FORGE_INSTALL_DIR:-${HOME}/.local/forge}"
 BIN_DIR="${INSTALL_DIR}/bin"
 # Release bundles are published from the private source repository to this
