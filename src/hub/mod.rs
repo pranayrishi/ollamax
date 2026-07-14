@@ -113,7 +113,10 @@ pub fn package(slug: &str) -> Option<Package> {
             html_url: format!("https://github.com/{r}"),
         })
         .collect();
-    let counts = Counts { rules: c.conventions.len(), skills: skills.len() };
+    let counts = Counts {
+        rules: c.conventions.len(),
+        skills: skills.len(),
+    };
     Some(Package {
         slug: c.slug,
         name: c.name,
@@ -129,18 +132,45 @@ pub fn package(slug: &str) -> Option<Package> {
 /// domains. Returns the extra terms to OR into the query (empty for unknowns).
 fn expand(term: &str) -> &'static [&'static str] {
     match term {
-        "website" | "web" | "site" | "webpage" | "webapp" | "webapps" | "frontend" | "ui" | "html" => {
-            &["web", "frontend", "css", "html", "react", "spa", "javascript", "fullstack"]
-        }
-        "ml" | "ai" | "machine" | "learning" | "model" | "models" | "neural" | "deep" | "llm" => {
-            &["machine", "learning", "data", "science", "deep", "nlp", "ml", "ai", "pytorch", "tensorflow"]
-        }
-        "data" | "dataset" | "datasets" | "analytics" | "analysis" | "pipeline" => {
-            &["data", "science", "engineering", "analytics", "etl", "pandas"]
-        }
-        "game" | "games" | "gaming" | "gamedev" => {
-            &["game", "development", "unity", "godot", "unreal", "rendering"]
-        }
+        "website" | "web" | "site" | "webpage" | "webapp" | "webapps" | "frontend" | "ui"
+        | "html" => &[
+            "web",
+            "frontend",
+            "css",
+            "html",
+            "react",
+            "spa",
+            "javascript",
+            "fullstack",
+        ],
+        "ml" | "ai" | "machine" | "learning" | "model" | "models" | "neural" | "deep" | "llm" => &[
+            "machine",
+            "learning",
+            "data",
+            "science",
+            "deep",
+            "nlp",
+            "ml",
+            "ai",
+            "pytorch",
+            "tensorflow",
+        ],
+        "data" | "dataset" | "datasets" | "analytics" | "analysis" | "pipeline" => &[
+            "data",
+            "science",
+            "engineering",
+            "analytics",
+            "etl",
+            "pandas",
+        ],
+        "game" | "games" | "gaming" | "gamedev" => &[
+            "game",
+            "development",
+            "unity",
+            "godot",
+            "unreal",
+            "rendering",
+        ],
         "app" | "apps" | "mobile" | "ios" | "android" | "phone" => {
             &["mobile", "ios", "android", "react", "native", "flutter"]
         }
@@ -151,9 +181,15 @@ fn expand(term: &str) -> &'static [&'static str] {
             &["3d", "graphics", "modeling", "rendering", "real-time"]
         }
         "devops" | "infra" | "infrastructure" | "deploy" | "deployment" | "ci" | "cd" | "cloud"
-        | "kubernetes" | "k8s" | "docker" => {
-            &["devops", "infrastructure", "cloud", "native", "orchestration", "ci-cd", "pipelines"]
-        }
+        | "kubernetes" | "k8s" | "docker" => &[
+            "devops",
+            "infrastructure",
+            "cloud",
+            "native",
+            "orchestration",
+            "ci-cd",
+            "pipelines",
+        ],
         "security" | "sec" | "infosec" | "pentest" | "auth" | "authentication" => {
             &["security", "application", "identity", "auth"]
         }
@@ -285,7 +321,11 @@ pub fn search(query: &str, limit: usize) -> Vec<Category> {
             .then(b.1.cmp(&a.1))
             .then(a.2.cmp(&b.2))
     });
-    scored.into_iter().take(limit).map(|(_, _, _, c)| c).collect()
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(_, _, _, c)| c)
+        .collect()
 }
 
 #[cfg(test)]
@@ -303,9 +343,9 @@ mod tests {
         assert!(!r.is_empty(), "loose intent query must not dead-end");
         // The top hits should be web/frontend domains.
         assert!(
-            r.iter()
-                .take(3)
-                .any(|c| c.slug.contains("frontend") || c.slug.contains("web") || c.slug.contains("fullstack")),
+            r.iter().take(3).any(|c| c.slug.contains("frontend")
+                || c.slug.contains("web")
+                || c.slug.contains("fullstack")),
             "got: {:?}",
             r.iter().map(|c| &c.slug).collect::<Vec<_>>()
         );
@@ -327,7 +367,12 @@ mod tests {
 
     #[test]
     fn intent_queries_dont_dead_end() {
-        for q in ["make a game", "mobile app", "deploy to the cloud", "rest api backend"] {
+        for q in [
+            "make a game",
+            "mobile app",
+            "deploy to the cloud",
+            "rest api backend",
+        ] {
             assert!(!search(q, 5).is_empty(), "`{q}` should return categories");
         }
     }
@@ -348,7 +393,10 @@ mod tests {
         let p = package("game-development").expect("known slug");
         assert_eq!(p.slug, "game-development");
         assert!(p.rules.contains("best practices"));
-        assert!(p.counts.rules > 0 || p.counts.skills > 0, "package should carry steering");
+        assert!(
+            p.counts.rules > 0 || p.counts.skills > 0,
+            "package should carry steering"
+        );
         assert!(package("nope-not-a-slug").is_none());
     }
 
@@ -359,15 +407,22 @@ mod tests {
         let r = &p.references[0];
         assert!(r.full_name.contains('/'), "full_name like owner/repo");
         assert!(r.html_url.starts_with("https://github.com/"));
-        assert!(!p.description.is_empty(), "detail subtitle must not be blank");
+        assert!(
+            !p.description.is_empty(),
+            "detail subtitle must not be blank"
+        );
     }
 
     #[test]
     fn scoring_picks_specific_category_not_taxonomy_order() {
         // Single intent token must land its canonical category at the top, not
         // whichever incidental substring match comes first in the taxonomy.
-        assert!(search("ios app", 3).iter().take(3).any(|c|
-            c.slug.contains("ios") || c.slug.contains("react-native") || c.slug.contains("mobile")));
+        assert!(search("ios app", 3)
+            .iter()
+            .take(3)
+            .any(|c| c.slug.contains("ios")
+                || c.slug.contains("react-native")
+                || c.slug.contains("mobile")));
         assert!(search("database", 3)[0].slug.contains("database"));
         assert!(search("computer vision", 3)[0].slug.contains("vision"));
         // The dedupe-max must not let expansions drown the direct match.

@@ -78,7 +78,10 @@ fn parse_hhmm(s: &str) -> Option<(u32, u32)> {
 }
 
 fn first_number(words: &[&str]) -> Option<(i64, usize)> {
-    words.iter().enumerate().find_map(|(i, w)| w.parse::<i64>().ok().map(|n| (n, i)))
+    words
+        .iter()
+        .enumerate()
+        .find_map(|(i, w)| w.parse::<i64>().ok().map(|n| (n, i)))
 }
 
 /// Parse a natural-language schedule. Returns None if unrecognized.
@@ -89,7 +92,8 @@ pub fn parse_schedule(text: &str, now: i64) -> Option<Schedule> {
     // Time-of-day forms first: "every day at HH", "daily at HH", "at HH".
     for marker in [" at ", "at "] {
         if let Some(idx) = lc.find(marker) {
-            let is_daily = lc.contains("every day") || lc.contains("daily") || lc.starts_with("at ");
+            let is_daily =
+                lc.contains("every day") || lc.contains("daily") || lc.starts_with("at ");
             if is_daily {
                 let after = &lc[idx + marker.len()..];
                 if let Some((h, m)) = parse_hhmm(after) {
@@ -105,7 +109,9 @@ pub fn parse_schedule(text: &str, now: i64) -> Option<Schedule> {
     if words.first() == Some(&"in") {
         if let Some((n, i)) = first_number(&words) {
             if let Some(u) = words.get(i + 1).and_then(|w| unit_secs(w)) {
-                return Some(Schedule::Once { at: now + n.max(0) * u });
+                return Some(Schedule::Once {
+                    at: now + n.max(0) * u,
+                });
             }
         }
     }
@@ -114,7 +120,9 @@ pub fn parse_schedule(text: &str, now: i64) -> Option<Schedule> {
     if words.first() == Some(&"every") {
         if let Some((n, i)) = first_number(&words) {
             if let Some(u) = words.get(i + 1).and_then(|w| unit_secs(w)) {
-                return Some(Schedule::EverySecs { secs: (n.max(1)) * u });
+                return Some(Schedule::EverySecs {
+                    secs: (n.max(1)) * u,
+                });
             }
         }
     }
@@ -128,11 +136,17 @@ pub fn compute_next(s: &Schedule, now: i64) -> i64 {
         Schedule::Once { at } => *at,
         Schedule::EverySecs { secs } => now + (*secs).max(1),
         Schedule::DailyAt { hour, min } => {
-            let now_dt = Local.timestamp_opt(now, 0).single().unwrap_or_else(Local::now);
+            let now_dt = Local
+                .timestamp_opt(now, 0)
+                .single()
+                .unwrap_or_else(Local::now);
             let today: NaiveDate = now_dt.date_naive();
             let at = |d: NaiveDate| -> Option<i64> {
                 let ndt = d.and_hms_opt(*hour, *min, 0)?;
-                Local.from_local_datetime(&ndt).single().map(|dt| dt.timestamp())
+                Local
+                    .from_local_datetime(&ndt)
+                    .single()
+                    .map(|dt| dt.timestamp())
             };
             match at(today) {
                 Some(ts) if ts > now => ts,
@@ -217,7 +231,10 @@ impl Scheduler {
 
     /// Tasks that are enabled and due (next_run <= now).
     pub fn due(&self, now: i64) -> Vec<ScheduledTask> {
-        self.list().into_iter().filter(|t| t.enabled && t.next_run <= now).collect()
+        self.list()
+            .into_iter()
+            .filter(|t| t.enabled && t.next_run <= now)
+            .collect()
     }
 
     /// Record a run: advance `next_run` (or disable a one-shot), store result.
@@ -244,21 +261,48 @@ mod tests {
     #[test]
     fn parses_relative_and_recurring() {
         let now = 1_000_000;
-        assert_eq!(parse_schedule("in 5 minutes", now), Some(Schedule::Once { at: now + 300 }));
-        assert_eq!(parse_schedule("in 2 hours", now), Some(Schedule::Once { at: now + 7200 }));
-        assert_eq!(parse_schedule("every 30 seconds", now), Some(Schedule::EverySecs { secs: 30 }));
-        assert_eq!(parse_schedule("every 15 minutes", now), Some(Schedule::EverySecs { secs: 900 }));
+        assert_eq!(
+            parse_schedule("in 5 minutes", now),
+            Some(Schedule::Once { at: now + 300 })
+        );
+        assert_eq!(
+            parse_schedule("in 2 hours", now),
+            Some(Schedule::Once { at: now + 7200 })
+        );
+        assert_eq!(
+            parse_schedule("every 30 seconds", now),
+            Some(Schedule::EverySecs { secs: 30 })
+        );
+        assert_eq!(
+            parse_schedule("every 15 minutes", now),
+            Some(Schedule::EverySecs { secs: 900 })
+        );
         assert_eq!(parse_schedule("flibbertigibbet", now), None);
     }
 
     #[test]
     fn parses_daily_times() {
         let now = 0;
-        assert_eq!(parse_schedule("every day at 9:30", now), Some(Schedule::DailyAt { hour: 9, min: 30 }));
-        assert_eq!(parse_schedule("daily at 14:00", now), Some(Schedule::DailyAt { hour: 14, min: 0 }));
-        assert_eq!(parse_schedule("at 9am", now), Some(Schedule::DailyAt { hour: 9, min: 0 }));
-        assert_eq!(parse_schedule("at 9pm", now), Some(Schedule::DailyAt { hour: 21, min: 0 }));
-        assert_eq!(parse_schedule("at 12am", now), Some(Schedule::DailyAt { hour: 0, min: 0 }));
+        assert_eq!(
+            parse_schedule("every day at 9:30", now),
+            Some(Schedule::DailyAt { hour: 9, min: 30 })
+        );
+        assert_eq!(
+            parse_schedule("daily at 14:00", now),
+            Some(Schedule::DailyAt { hour: 14, min: 0 })
+        );
+        assert_eq!(
+            parse_schedule("at 9am", now),
+            Some(Schedule::DailyAt { hour: 9, min: 0 })
+        );
+        assert_eq!(
+            parse_schedule("at 9pm", now),
+            Some(Schedule::DailyAt { hour: 21, min: 0 })
+        );
+        assert_eq!(
+            parse_schedule("at 12am", now),
+            Some(Schedule::DailyAt { hour: 0, min: 0 })
+        );
     }
 
     #[test]

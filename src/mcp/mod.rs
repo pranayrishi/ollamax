@@ -137,7 +137,8 @@ impl Conn {
     }
 
     async fn notify(&mut self, method: &str, params: Value) -> Result<()> {
-        let line = serde_json::to_string(&json!({"jsonrpc":"2.0","method":method,"params":params}))?;
+        let line =
+            serde_json::to_string(&json!({"jsonrpc":"2.0","method":method,"params":params}))?;
         self.stdin.write_all(line.as_bytes()).await?;
         self.stdin.write_all(b"\n").await?;
         self.stdin.flush().await?;
@@ -159,10 +160,17 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        let mut child = cmd.spawn().map_err(|e| anyhow!("spawn {}: {e}", cfg.command))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow!("spawn {}: {e}", cfg.command))?;
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
-        let mut conn = Conn { child, stdin, stdout: BufReader::new(stdout), next_id: 1 };
+        let mut conn = Conn {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            next_id: 1,
+        };
         // initialize handshake
         conn.request(
             "initialize",
@@ -174,19 +182,37 @@ impl McpClient {
         )
         .await?;
         conn.notify("notifications/initialized", json!({})).await?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// `tools/list` → (name, description, input_schema) triples.
     pub async fn list_tools(&self) -> Result<Vec<(String, String, Value)>> {
-        let res = self.conn.lock().await.request("tools/list", json!({})).await?;
-        let tools = res.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default();
+        let res = self
+            .conn
+            .lock()
+            .await
+            .request("tools/list", json!({}))
+            .await?;
+        let tools = res
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default();
         Ok(tools
             .into_iter()
             .filter_map(|t| {
                 let name = t.get("name")?.as_str()?.to_string();
-                let desc = t.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string();
-                let schema = t.get("inputSchema").cloned().unwrap_or_else(|| json!({"type":"object"}));
+                let desc = t
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let schema = t
+                    .get("inputSchema")
+                    .cloned()
+                    .unwrap_or_else(|| json!({"type":"object"}));
                 Some((name, desc, schema))
             })
             .collect())
@@ -231,7 +257,11 @@ impl Tool for McpTool {
                 ok: true,
                 content: truncate_for_model(&text),
             }),
-            Err(e) => Ok(ToolResult { tool: self.full_name.clone(), ok: false, content: e.to_string() }),
+            Err(e) => Ok(ToolResult {
+                tool: self.full_name.clone(),
+                ok: false,
+                content: e.to_string(),
+            }),
         }
     }
 }

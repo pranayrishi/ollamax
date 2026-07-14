@@ -1481,7 +1481,10 @@ mod tests {
             .find(|m| m.family == "MiniMax M2.5")
             .expect("MiniMax M2.5 must be curated as a local entry");
         assert!(m25.ollama_tag.starts_with("hf.co/"));
-        assert!(m25.can_pull_from_ollama(), "hf.co GGUFs are valid pull targets");
+        assert!(
+            m25.can_pull_from_ollama(),
+            "hf.co GGUFs are valid pull targets"
+        );
         assert!(is_offline_ollama_tag(&m25.ollama_tag));
         assert_eq!(m25.tier, HardwareTier::HighEnd);
         assert_eq!(m25.license, License::ModifiedMit);

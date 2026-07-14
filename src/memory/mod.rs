@@ -58,7 +58,12 @@ pub struct MemoryEntry {
 
 impl MemoryEntry {
     pub fn new(kind: MemoryKind, text: impl Into<String>, ts: i64) -> Self {
-        Self { kind, text: text.into(), ts, tags: Vec::new() }
+        Self {
+            kind,
+            text: text.into(),
+            ts,
+            tags: Vec::new(),
+        }
     }
     pub fn approx_tokens(&self) -> usize {
         approx_tokens(&self.text)
@@ -91,7 +96,9 @@ impl MemoryStore {
             h ^= *b as u64;
             h = h.wrapping_mul(0x100000001b3);
         }
-        Self { path: base.join(format!("{h:016x}.jsonl")) }
+        Self {
+            path: base.join(format!("{h:016x}.jsonl")),
+        }
     }
 
     /// Explicit path (tests / custom locations).
@@ -181,8 +188,8 @@ impl MemoryStore {
                 let et: std::collections::HashSet<String> = tokenize(&e.text).into_iter().collect();
                 let overlap = qterms.iter().filter(|t| et.contains(*t)).count() as f32;
                 let recency = 0.2 + 0.8 * ((e.ts - oldest) as f32 / span); // 0.2..1.0
-                // Even with no keyword overlap, recent preferences/decisions are
-                // mildly useful at session start, so base score stays > 0.
+                                                                           // Even with no keyword overlap, recent preferences/decisions are
+                                                                           // mildly useful at session start, so base score stays > 0.
                 let base = (overlap + 0.25) * e.kind.weight() * recency;
                 (base, e)
             })
@@ -209,7 +216,8 @@ impl MemoryStore {
         if picked.is_empty() {
             return String::new();
         }
-        let mut s = String::from("Relevant memory from past sessions (on-device; you may use it):\n");
+        let mut s =
+            String::from("Relevant memory from past sessions (on-device; you may use it):\n");
         for e in &picked {
             let tag = match e.kind {
                 MemoryKind::Preference => "preference",
@@ -228,7 +236,10 @@ impl MemoryStore {
 /// A natural feeder alongside `instincts` (which mines repeated patterns from the
 /// replay log). `ts` is caller-supplied.
 pub fn summarize_session(messages: &[(String, String)], ts: i64) -> Option<MemoryEntry> {
-    let first_user = messages.iter().find(|(role, _)| role == "user").map(|(_, c)| c.clone())?;
+    let first_user = messages
+        .iter()
+        .find(|(role, _)| role == "user")
+        .map(|(_, c)| c.clone())?;
     let turns = messages.iter().filter(|(r, _)| r == "user").count();
     let head: String = first_user.chars().take(140).collect();
     Some(MemoryEntry::new(
@@ -251,7 +262,10 @@ mod tests {
     use super::*;
 
     fn tmp_store(name: &str) -> MemoryStore {
-        let p = std::env::temp_dir().join(format!("forge-mem-test-{name}-{}.jsonl", std::process::id()));
+        let p = std::env::temp_dir().join(format!(
+            "forge-mem-test-{name}-{}.jsonl",
+            std::process::id()
+        ));
         let _ = std::fs::remove_file(&p);
         MemoryStore::with_path(p)
     }
@@ -259,8 +273,18 @@ mod tests {
     #[test]
     fn store_and_read_roundtrip() {
         let s = tmp_store("roundtrip");
-        s.remember(&MemoryEntry::new(MemoryKind::Preference, "prefers Rust and pytest", 100)).unwrap();
-        s.remember(&MemoryEntry::new(MemoryKind::Decision, "chose Postgres over SQLite", 200)).unwrap();
+        s.remember(&MemoryEntry::new(
+            MemoryKind::Preference,
+            "prefers Rust and pytest",
+            100,
+        ))
+        .unwrap();
+        s.remember(&MemoryEntry::new(
+            MemoryKind::Decision,
+            "chose Postgres over SQLite",
+            200,
+        ))
+        .unwrap();
         assert_eq!(s.all().len(), 2);
         s.clear().unwrap();
         assert!(s.all().is_empty());
@@ -270,11 +294,19 @@ mod tests {
     fn retrieve_respects_token_budget() {
         let s = tmp_store("budget");
         for i in 0..20 {
-            s.remember(&MemoryEntry::new(MemoryKind::Summary, format!("summary number {i} about auth and login flows"), 100 + i)).unwrap();
+            s.remember(&MemoryEntry::new(
+                MemoryKind::Summary,
+                format!("summary number {i} about auth and login flows"),
+                100 + i,
+            ))
+            .unwrap();
         }
         let picked = s.retrieve("auth login", 30); // tiny budget
         let total: usize = picked.iter().map(|e| e.approx_tokens()).sum();
-        assert!(total <= 30, "retrieval must respect the token budget (got {total})");
+        assert!(
+            total <= 30,
+            "retrieval must respect the token budget (got {total})"
+        );
         assert!(!picked.is_empty());
         s.clear().unwrap();
     }
@@ -282,9 +314,24 @@ mod tests {
     #[test]
     fn retrieve_ranks_relevant_and_recent_higher() {
         let s = tmp_store("rank");
-        s.remember(&MemoryEntry::new(MemoryKind::Summary, "old talk about kubernetes", 1)).unwrap();
-        s.remember(&MemoryEntry::new(MemoryKind::Preference, "user prefers tabs over spaces", 1000)).unwrap();
-        s.remember(&MemoryEntry::new(MemoryKind::Summary, "discussed the login and auth code", 1001)).unwrap();
+        s.remember(&MemoryEntry::new(
+            MemoryKind::Summary,
+            "old talk about kubernetes",
+            1,
+        ))
+        .unwrap();
+        s.remember(&MemoryEntry::new(
+            MemoryKind::Preference,
+            "user prefers tabs over spaces",
+            1000,
+        ))
+        .unwrap();
+        s.remember(&MemoryEntry::new(
+            MemoryKind::Summary,
+            "discussed the login and auth code",
+            1001,
+        ))
+        .unwrap();
         let picked = s.retrieve("auth login", 1000);
         // The auth summary should rank above the unrelated kubernetes one.
         let auth_pos = picked.iter().position(|e| e.text.contains("login"));
@@ -306,8 +353,18 @@ mod tests {
     #[test]
     fn forget_removes_matching_entries() {
         let s = tmp_store("forget");
-        s.remember(&MemoryEntry::new(MemoryKind::Fact, "secret project codename Falcon", 1)).unwrap();
-        s.remember(&MemoryEntry::new(MemoryKind::Preference, "likes dark mode", 2)).unwrap();
+        s.remember(&MemoryEntry::new(
+            MemoryKind::Fact,
+            "secret project codename Falcon",
+            1,
+        ))
+        .unwrap();
+        s.remember(&MemoryEntry::new(
+            MemoryKind::Preference,
+            "likes dark mode",
+            2,
+        ))
+        .unwrap();
         let removed = s.forget_matching("falcon").unwrap();
         assert_eq!(removed, 1);
         assert_eq!(s.all().len(), 1);
@@ -328,14 +385,23 @@ mod tests {
     #[test]
     fn summarize_session_stores_summary_not_transcript() {
         let convo = vec![
-            ("user".to_string(), "Help me refactor the auth module to use JWT".to_string()),
-            ("assistant".to_string(), "<a very long answer that should NOT be stored verbatim>".repeat(50)),
+            (
+                "user".to_string(),
+                "Help me refactor the auth module to use JWT".to_string(),
+            ),
+            (
+                "assistant".to_string(),
+                "<a very long answer that should NOT be stored verbatim>".repeat(50),
+            ),
             ("user".to_string(), "now add tests".to_string()),
         ];
         let e = summarize_session(&convo, 42).unwrap();
         assert_eq!(e.kind, MemoryKind::Summary);
         assert!(e.text.contains("refactor the auth module"));
-        assert!(!e.text.contains("very long answer"), "must store a summary, not the transcript");
+        assert!(
+            !e.text.contains("very long answer"),
+            "must store a summary, not the transcript"
+        );
         assert!(e.approx_tokens() < 60);
     }
 }
