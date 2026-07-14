@@ -7,7 +7,7 @@ const rows: { feature: string; forge: boolean | string; cloud: boolean | string 
   { feature: "Runs fully offline (local models)", forge: true, cloud: false },
   { feature: "Your code stays on your machine", forge: true, cloud: "Sent to provider" },
   { feature: "Agent edits files behind a diff you approve", forge: true, cloud: "Varies" },
-  { feature: "On-device voice navigation (audio stays local)", forge: true, cloud: false },
+  { feature: "Voice + screen companion (audio and screenshots stay local)", forge: true, cloud: false },
   { feature: "Hardware-aware model selection", forge: true, cloud: "n/a" },
   { feature: "Built-in secret scanner before send", forge: true, cloud: false },
   { feature: "Reproducible local replay/audit log", forge: true, cloud: false },

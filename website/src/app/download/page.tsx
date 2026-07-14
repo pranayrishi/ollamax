@@ -21,8 +21,8 @@ export default function DownloadPage() {
         <h1 className="page-title">Download Ollamax</h1>
         <p className="page-lede">
           Free and open source. Get the <strong className="text-foreground">Ollamax desktop app</strong>{" "}
-          below — engine, on-device voice, and sign-in built in — or use the same experience inside
-          your own editor with the one-line installer.
+          below — engine, the voice + screen companion, and sign-in built in — or use the same
+          experience inside your own editor with the one-line installer.
         </p>
 
         {/* PRIMARY: the standalone desktop app */}

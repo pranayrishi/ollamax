@@ -1,6 +1,6 @@
 [package]
 name = "ollama-forge"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Pranay Rishi Nalem"]
 description = "Harness optimization layer for local coding agents running on Ollama"

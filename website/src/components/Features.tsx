@@ -12,23 +12,23 @@ const features = [
     icon: "✎",
   },
   {
-    title: "Voice navigation, on-device",
-    body: "Press a key, speak, and jump straight to the code you mean. Speech-to-text runs locally with a bundled whisper.cpp model — your audio never leaves the machine.",
+    title: "A companion that sees your screen",
+    body: "Press a hotkey, speak, and a small overlay companion answers out loud — it reads your screen with a local vision model, points at the exact button or menu it means, and never sends a pixel off your machine. Whisper for ears, your Ollama model for brains, free system voices for speech.",
     icon: "🎙",
   },
   {
-    title: "Per-project memory",
-    body: "Each project keeps its own context and chat history on your device, so the assistant remembers what you're working on without ever syncing your code to a server.",
-    icon: "◉",
+    title: "Circle anything, then ask",
+    body: "Draw a quick circle around any region of your screen — a search bar, a chart, a layout you like — and tell the companion what to do with it. Ask it to explain, or say “replicate this in my project” and it hands a ready-to-run task, screenshot attached, to the coding agent.",
+    icon: "◯",
   },
   {
-    title: "Hardware-aware model selection",
-    body: "Detects your RAM/VRAM and recommends an Ollama model that actually fits, with context-window and capability hints. Pick any installed model from the picker.",
+    title: "The 2026 open-model lineup, curated",
+    body: "Qwen 3.6, Gemma 4, DeepSeek R1 and V3.1, MiniMax M2.5, Qwen3-VL vision models — hardware-aware selection picks what actually fits your RAM/VRAM, and heterogeneous teams put reasoning models on planning and coder models on writing, in parallel.",
     icon: "⚙",
   },
   {
     title: "Private by design",
-    body: "A built-in secret scanner catches keys before they reach a model, an optional replay log makes sessions reproducible, and inference runs locally. Open source, MIT-licensed.",
+    body: "A built-in secret scanner catches keys before they reach a model, per-project memory and chat history stay on your device, an optional replay log makes sessions reproducible, and inference runs locally. Open source, MIT-licensed.",
     icon: "🛡",
   },
 ];

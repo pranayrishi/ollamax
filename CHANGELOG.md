@@ -4,6 +4,54 @@ All notable changes to Ollama-Forge are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). This project does
 **not** yet follow semantic versioning — every 0.x release may break things.
 
+## [0.3.0]
+
+### Added
+
+- **Voice + screen companion in the desktop app.** A transparent always-on-top
+  overlay beside the cursor: toggle push-to-talk (default `Ctrl+Shift+Space`)
+  records the mic, transcribes with local whisper.cpp, captures the screen(s),
+  and streams a spoken answer from an installed Ollama vision model. Replies
+  can point — `[POINT:x,y:label]` tags fly the overlay cursor to the referenced
+  UI element, with multi-monitor coordinate mapping. Text-to-speech is free and
+  offline (Piper if configured, else the OS voice, else Chromium's built-in
+  voices). Audio and screenshots go only to `127.0.0.1`.
+- **Spatial context ("circle anything, then ask").** A second hotkey (default
+  `Ctrl+Shift+D`) turns the overlay into a drawing surface: circle any region
+  with the mouse, and the next voice instruction is about exactly that region
+  (the crop travels with the full screenshot). Asking to *build or replicate*
+  what was circled makes the model emit a `[TASK: …]` handoff, which prefills
+  the Ollamax chat with the task plus the cropped screenshot for review —
+  never auto-submitted.
+- **July-2026 model catalog.** Curated registry now includes Gemma 4
+  (Apache-2.0, multimodal, e2b→31b), DeepSeek R1 distills (8b→70b) and
+  DeepSeek-V3.1, MiniMax M2.5 via a direct Hugging Face GGUF pull (official
+  Ollama tags are cloud-only), Qwen 3.5/3.6, Qwen3-Coder-Next, and Qwen3-VL
+  vision models. Every tag verified against the live registries at curation
+  time; `hf.co/...` tags are now understood by the library verifier.
+- **Vision-aware auto-routing.** When a chat turn carries images and the
+  selected model can't see, Auto mode hops to an installed vision-capable
+  model (curated registry first, live capability probe second) and discloses
+  the switch; manual picks still only warn.
+- **Role-affine heterogeneous teams.** The registry can pick the best
+  *installed* model per team role — reasoning families (DeepSeek-R1, Gemma 4)
+  for the planner, coder families (Qwen 3.6, Devstral) for the writer, the
+  smallest fitting model for read-only scouts — so `forge team` runs different
+  model families in parallel instead of one writer model everywhere.
+- `POST /api/chat` accepts a caller `system` persona, prepended ahead of user
+  rules and memory.
+
+### Changed
+
+- Router parses real parameter counts out of model tags ("3b" no longer
+  substring-matches "235b") and prefers reasoning families for
+  architecture-tier work.
+- Default model ladder modernized: `qwen3.5:9b` default / `qwen3.6:27b`
+  planning; the hardware ladder now tops out at `qwen3-coder-next` (64 GB+)
+  and `deepseek-r1:70b` (48 GB+).
+- Orchestrator self-correct/audit and the executor merge steps use the
+  configured planning model instead of pinned tags the user may not have.
+
 ## [0.2.0]
 
 ### Added

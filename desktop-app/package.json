@@ -1,7 +1,7 @@
 {
   "name": "ollama-forge-app",
   "productName": "Ollamax",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local-first AI coding — a standalone desktop app with Agent and controlled Team workflows on your own hardware via local Ollama.",
   "author": "Ollamax",
   "license": "MIT",

@@ -4,12 +4,14 @@
 
 > [简体中文](README.zh.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Português](README.pt.md)
 
-> **Status: pre-alpha (v0.2.0).** The CLI ships hardware detection, bundled
+> **Status: pre-alpha (v0.3.0).** The CLI ships hardware detection, bundled
 > skill recipes, a security/secret scanner, controlled local Agent/Team
 > workspace editing, curated documentation-only GitHub knowledge plugins, and
-> local evaluation records. The legacy parallel build path remains text-oriented;
-> worktrees, executable plugins, and an evaluation runner are not yet shipped.
-> See [Roadmap](#roadmap) for current limits. PRs welcome —
+> local evaluation records. The desktop app adds a fully local voice + screen
+> companion (whisper.cpp STT, Ollama vision models, free offline TTS) with a
+> circle-to-select spatial-context mode. The legacy parallel build path remains
+> text-oriented; worktrees, executable plugins, and an evaluation runner are
+> not yet shipped. See [Roadmap](#roadmap) for current limits. PRs welcome —
 > [good-first-issue label](https://github.com/pranayrishi/ollamax/labels/good%20first%20issue).
 
 ---
@@ -112,8 +114,8 @@ the legacy text-only build workflow:
 
 ```bash
 forge team "Add an authenticated health endpoint and its tests"
-forge team --parallel-scouts --scout-model qwen2.5-coder:1.5b \
-  --planner-model qwen2.5-coder:7b --yes "Refactor the API boundary"
+forge team --parallel-scouts --scout-model qwen3.5:2b \
+  --planner-model deepseek-r1:14b --yes "Refactor the API boundary"
 ```
 
 The default topology is intentionally conservative: two read-only scouts, a
@@ -132,6 +134,32 @@ repositories.
 The local server exposes the same workflow at `POST /api/team`; the VS Code
 extension, standalone app, and browser console include a Team mode with
 streamed role and verification events.
+
+## Voice + screen companion (desktop app)
+
+The standalone desktop app includes a companion that lives in a transparent
+overlay beside your cursor — think "a local teacher that can see your screen
+and talk", with zero paid APIs:
+
+- **Push-to-talk** (default `Ctrl+Shift+Space`): speak, and the companion
+  answers out loud. Speech-to-text is local **whisper.cpp** (OpenAI's
+  open-source Whisper models); understanding is your installed **Ollama vision
+  model** (Gemma 4, Qwen3-VL, …); speech output is free and offline — Piper if
+  you install a voice, otherwise the operating system's speech engine.
+- **Element pointing**: when the answer refers to something on screen, the
+  overlay cursor flies to it (the model emits `[POINT:x,y:label]` tags with
+  multi-monitor mapping).
+- **Spatial context** (default `Ctrl+Shift+D`): circle any region of the
+  screen with the mouse — a search bar, a chart, a layout — then speak. The
+  companion sees exactly that region. Ask "what is this?" for an explanation,
+  or "replicate this search bar in my project" and it emits a `[TASK: …]`
+  handoff that prefills the Ollamax coding agent with the task plus the
+  cropped screenshot. You review before anything runs.
+
+Privacy: mic audio and screenshots go only to `127.0.0.1` (`forge serve` →
+your local Ollama). Whisper needs a one-time setup if not bundled: install
+whisper.cpp (`brew install whisper-cpp` on macOS) and drop a `ggml-*.bin`
+model in the companion models folder (the overlay tells you where).
 
 ## Curated GitHub knowledge plugins
 
@@ -342,8 +370,8 @@ version = "1.0"
 
 [ollama]
 url = "http://127.0.0.1:11434"
-default_model = "llama3.2:3b"
-planning_model = "qwen2.5-coder:7b"
+default_model = "qwen3.5:9b"
+planning_model = "qwen3.6:27b"
 
 [execution]
 parallel_workers = 4

@@ -60,8 +60,8 @@ export function DesktopAppDownload() {
         {info && <span className="text-xs text-muted-foreground">Detected: {info.label}</span>}
       </div>
       <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        The full desktop app — engine, on-device voice, and sign-in built in. Nothing else to set up
-        but a local{" "}
+        The full desktop app — engine, the voice + screen companion, and sign-in built in. Nothing
+        else to set up but a local{" "}
         <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" className="text-link">
           Ollama
         </a>
