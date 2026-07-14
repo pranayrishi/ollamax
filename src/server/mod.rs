@@ -756,6 +756,12 @@ struct ChatReq {
     /// server discloses this in the `meta` event.
     #[serde(default)]
     tools: Option<bool>,
+    /// Caller-supplied persona/system prompt, prepended before the user's
+    /// always-rules and memory. The desktop companion uses this to install
+    /// its spoken-answer + element-pointing protocol without the server
+    /// hardcoding client personas.
+    #[serde(default)]
+    system: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1243,13 +1249,13 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     // Policy: Auto only ever picks from *installed local* Ollama models — it
     // never escalates to a paid cloud provider (cloud requires an explicit
     // manual pick). A manual selection always overrides Auto.
-    let (model, routing) = if requested.eq_ignore_ascii_case("auto") {
+    let (mut model, mut routing) = if requested.eq_ignore_ascii_case("auto") {
         let ollama = OllamaProvider::new(&state.config.ollama_url);
         let installed = ollama.list_models().await.unwrap_or_default();
         let task_text = latest_user_text(&req.messages, req.prompt.as_deref());
         route_auto(&task_text, &installed, &state.config.default_model).await
     } else {
-        (requested, Value::Null)
+        (requested.clone(), Value::Null)
     };
 
     // Reload rules per request so `forge rules edit` takes effect live.
@@ -1264,10 +1270,24 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
             rules_suffix = format!("{rules_suffix}\n\n{mem}");
         }
     }
-    let system = if rules_suffix.is_empty() {
-        None
-    } else {
-        Some(rules_suffix)
+    // Persona (if the caller sent one) leads the system prompt; user
+    // always-rules and memory follow so they still apply to persona turns.
+    let system = {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(persona) = req.system.as_deref() {
+            let persona = persona.trim();
+            if !persona.is_empty() {
+                parts.push(persona.to_string());
+            }
+        }
+        if !rules_suffix.is_empty() {
+            parts.push(rules_suffix);
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n\n"))
+        }
     };
 
     // Secret-scan attached context *before* it reaches the model. We surface
@@ -1305,12 +1325,40 @@ async fn handle_chat(mut w: OwnedWriteHalf, state: &Arc<ServerState>, body: &str
     if !images.is_empty() {
         let probe = OllamaProvider::new(&state.config.ollama_url);
         if !probe.supports_vision(&model).await {
-            vision_warning = Some(json!({
-                "severity": "warning",
-                "rule": "vision_model_required",
-                "file": "",
-                "message": format!("`{model}` can't read images. Pick a vision model (e.g. one tagged `vision` in the model list) to analyze the attached image."),
-            }));
+            // Auto mode owns the model choice, so it may hop to an installed
+            // vision-capable model rather than failing the image turn. A
+            // manual pick is respected (warn, don't override).
+            let auto = requested.eq_ignore_ascii_case("auto");
+            let switched = if auto {
+                pick_vision_model(&state.config, &probe).await
+            } else {
+                None
+            };
+            match switched {
+                Some(vision_model) => {
+                    routing = json!({
+                        "auto": true, "available": true, "model": vision_model,
+                        "reasoning": format!(
+                            "Auto: image attached and `{model}` can't read images → {vision_model}"
+                        ),
+                    });
+                    vision_warning = Some(json!({
+                        "severity": "info",
+                        "rule": "vision_model_autoswitch",
+                        "file": "",
+                        "message": format!("Switched to `{vision_model}` for this turn — `{model}` can't read images."),
+                    }));
+                    model = vision_model;
+                }
+                None => {
+                    vision_warning = Some(json!({
+                        "severity": "warning",
+                        "rule": "vision_model_required",
+                        "file": "",
+                        "message": format!("`{model}` can't read images. Pick a vision model (e.g. one tagged `vision` in the model list) to analyze the attached image."),
+                    }));
+                }
+            }
         }
     }
     if let Some(vw) = vision_warning {
@@ -2711,6 +2759,40 @@ fn budget_messages(
     let dropped = messages.len() - kept_rev.len();
     kept_rev.reverse();
     (kept_rev, dropped)
+}
+
+/// Pick an **installed** vision-capable model for an image turn. Two passes:
+/// the curated registry's vision entries first (no per-model probes needed),
+/// then a live `/api/show` capability probe over the remaining installed
+/// models (largest first) so community/uncurated vision models still work.
+/// Returns `None` when nothing installed can see images — the caller then
+/// surfaces the existing "pick a vision model" warning instead of guessing.
+async fn pick_vision_model(config: &Config, ollama: &OllamaProvider) -> Option<String> {
+    let installed = ollama.list_models().await.ok()?;
+    if installed.is_empty() {
+        return None;
+    }
+    let installed_names: Vec<String> = installed.iter().map(|m| m.name.clone()).collect();
+
+    let sentinel = VramSentinel::new(config.min_free_vram_mb, false);
+    let free_vram_mb = sentinel.detect_hardware().await.free_vram_mb;
+
+    let registry = crate::models::ModelRegistry::seed();
+    if let Some(model) = registry
+        .best_installed_for_role(crate::models::ModelRole::Vision, free_vram_mb, &installed_names)
+    {
+        return Some(model);
+    }
+
+    // Registry miss: probe installed models directly, biggest first.
+    let mut by_size: Vec<&ModelInfo> = installed.iter().collect();
+    by_size.sort_by_key(|m| std::cmp::Reverse(m.size));
+    for m in by_size {
+        if ollama.supports_vision(&m.name).await {
+            return Some(m.name.clone());
+        }
+    }
+    None
 }
 
 /// Pick the model to run when the request didn't specify one: prefer the
