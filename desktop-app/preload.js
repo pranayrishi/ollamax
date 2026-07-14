@@ -47,4 +47,16 @@ contextBridge.exposeInMainWorld("forgeNative", {
     onData: (cb) => ipcRenderer.on("pty:data", (_e, d) => cb(d)),
     onExit: (cb) => ipcRenderer.on("pty:exit", () => cb()),
   },
+  // Voice + screen-context companion: settings/health for a future panel, and
+  // the [TASK:...] handoff → chat prefill (user reviews before sending).
+  companion: {
+    settings: () => ipcRenderer.invoke("companion:settings:get"),
+    setSettings: (next) => ipcRenderer.invoke("companion:settings:set", next),
+    onTask: (cb) => {
+      if (typeof cb !== "function") return () => {};
+      const listener = (_e, payload) => cb(payload);
+      ipcRenderer.on("companion:task", listener);
+      return () => ipcRenderer.removeListener("companion:task", listener);
+    },
+  },
 });

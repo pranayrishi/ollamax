@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data:; media-src blob: data:" />
+  <style>
+    html, body {
+      margin: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      user-select: none;
+      cursor: default;
+    }
+    #draw-canvas {
+      position: fixed;
+      inset: 0;
+      display: none;
+      cursor: crosshair;
+    }
+    body.drawing #draw-canvas { display: block; }
+    body.drawing { background: rgba(10, 12, 18, 0.08); }
+
+    /* The companion pointer — a small rounded triangle that flies to targets. */
+    #pointer {
+      position: fixed;
+      width: 26px;
+      height: 26px;
+      left: 0;
+      top: 0;
+      opacity: 0;
+      transition: opacity 240ms ease;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+      pointer-events: none;
+      z-index: 40;
+    }
+    #pointer.visible { opacity: 1; }
+    #pointer svg { display: block; }
+
+    #point-label {
+      position: fixed;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      opacity: 0;
+      transform: translate(-50%, 0);
+      transition: opacity 200ms ease;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 41;
+    }
+    #point-label.visible { opacity: 1; }
+
+    /* Status / response bubble anchored near the pointer. */
+    #bubble {
+      position: fixed;
+      max-width: 420px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(17, 20, 28, 0.92);
+      color: #e8ecf4;
+      font-size: 13.5px;
+      line-height: 1.5;
+      box-shadow: 0 10px 34px rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 200ms ease, transform 200ms ease;
+      pointer-events: none;
+      z-index: 42;
+      backdrop-filter: blur(8px);
+    }
+    #bubble.visible { opacity: 1; transform: translateY(0); }
+    #bubble .who {
+      font-size: 10.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #7aa2ff;
+      margin-bottom: 4px;
+      font-weight: 700;
+    }
+    #bubble .heard { color: #9aa4b8; font-style: italic; }
+
+    /* Waveform while listening. */
+    #wave {
+      display: none;
+      align-items: flex-end;
+      gap: 3px;
+      height: 22px;
+      margin-top: 8px;
+    }
+    #bubble.listening #wave { display: flex; }
+    #wave span {
+      width: 4px;
+      min-height: 4px;
+      border-radius: 2px;
+      background: #4f7cff;
+    }
+
+    /* Thinking spinner dots. */
+    #dots { display: none; margin-top: 6px; }
+    #bubble.thinking #dots { display: inline-block; }
+    #dots i {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 4px;
+      border-radius: 50%;
+      background: #7aa2ff;
+      animation: pulse 1s infinite ease-in-out;
+    }
+    #dots i:nth-child(2) { animation-delay: 0.16s; }
+    #dots i:nth-child(3) { animation-delay: 0.32s; }
+    @keyframes pulse {
+      0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Task hand-off chip (the one clickable element in the overlay). */
+    #task-chip {
+      position: fixed;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 12px;
+      background: #1d4ed8;
+      color: #fff;
+      font-size: 12.5px;
+      font-weight: 600;
+      box-shadow: 0 8px 28px rgba(29, 78, 216, 0.5);
+      cursor: pointer;
+      z-index: 43;
+      max-width: 380px;
+    }
+    #task-chip .dismiss {
+      opacity: 0.7;
+      font-weight: 400;
+      padding-left: 4px;
+    }
+    #task-chip .dismiss:hover { opacity: 1; }
+
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: 48px;
+      transform: translateX(-50%);
+      padding: 9px 16px;
+      border-radius: 999px;
+      background: rgba(17, 20, 28, 0.94);
+      color: #dbe3f0;
+      font-size: 12.5px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      opacity: 0;
+      transition: opacity 220ms ease;
+      pointer-events: none;
+      z-index: 44;
+    }
+    #toast.visible { opacity: 1; }
+
+    #draw-hint {
+      position: fixed;
+      top: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 8px 16px;
+      border-radius: 999px;
+      background: rgba(17, 20, 28, 0.94);
+      color: #dbe3f0;
+      font-size: 12.5px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      display: none;
+      z-index: 44;
+      pointer-events: none;
+    }
+    body.drawing #draw-hint { display: block; }
+
+    #region-ring {
+      position: fixed;
+      border: 2px solid #4f7cff;
+      border-radius: 10px;
+      box-shadow: 0 0 0 4000px rgba(8, 10, 16, 0.12);
+      display: none;
+      pointer-events: none;
+      z-index: 39;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="draw-canvas"></canvas>
+  <div id="region-ring"></div>
+  <div id="pointer">
+    <svg width="26" height="26" viewBox="0 0 26 26">
+      <path d="M4 2 L22 12 L13 14.5 L9.5 23 Z" fill="#2563eb" stroke="#ffffff" stroke-width="1.6" stroke-linejoin="round"/>
+    </svg>
+  </div>
+  <div id="point-label"></div>
+  <div id="bubble">
+    <div class="who">ollamax companion</div>
+    <div id="bubble-text"></div>
+    <div id="wave"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    <div id="dots"><i></i><i></i><i></i></div>
+  </div>
+  <div id="task-chip">
+    <span id="task-text"></span>
+    <span id="task-accept">build it ↵</span>
+    <span class="dismiss" id="task-dismiss">✕</span>
+  </div>
+  <div id="draw-hint">circle something with the mouse — esc to cancel</div>
+  <div id="toast"></div>
+  <script src="companion-overlay.js"></script>
+</body>
+</html>

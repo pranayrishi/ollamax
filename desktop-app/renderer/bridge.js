@@ -58,6 +58,18 @@
     window.forgeNative.onConfigChanged(applyConfig);
   }
 
+  // Companion [TASK:...] handoff → prefill the chat input and attach the
+  // relevant screenshot. Deliberately NOT auto-sent: the user reviews it.
+  if (
+    window.forgeNative &&
+    window.forgeNative.companion &&
+    typeof window.forgeNative.companion.onTask === "function"
+  ) {
+    window.forgeNative.companion.onTask(({ text, items } = {}) => {
+      post({ type: "prefill", text: text || "", items: items || [] });
+    });
+  }
+
   async function getJson(path) {
     const target = baseUrl;
     if (!target) throw new Error("local engine not running");

@@ -7,7 +7,7 @@
 // + Hub UI, which talks to that local server. Inference stays local
 // (app → forge serve → Ollama). Modeled on the Sattva AI desktop app.
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -17,8 +17,11 @@ const http = require("http");
 const https = require("https");
 const { URL } = require("url");
 
+const { Companion } = require("./companion/companion");
+
 const isDev = !app.isPackaged;
 let mainWindow = null;
+let companion = null;
 let forgeProc = null;
 let baseUrl = null;
 // A chat-only server may run before a folder is chosen. Once a workspace is
@@ -234,7 +237,17 @@ function createWindow() {
   });
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   if (isDev) mainWindow.webContents.openDevTools({ mode: "detach" });
-  mainWindow.on("closed", () => (mainWindow = null));
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+    // The companion's overlay windows stay alive, so "window-all-closed"
+    // never fires once the companion exists. Treat the MAIN window closing
+    // as the app closing on Windows/Linux (macOS keeps the companion
+    // available from the dock, matching platform conventions).
+    if (process.platform !== "darwin") {
+      shutdown();
+      app.quit();
+    }
+  });
 }
 
 // --- IPC: things the renderer can't do itself (Node/Electron only) --------
@@ -716,12 +729,38 @@ app.whenReady().then(async () => {
     dialog.showErrorBox("Ollamax", `Could not start the local engine:\n${e.message}`);
   }
   createWindow();
+  // The voice + screen-context companion (transparent overlay, push-to-talk,
+  // circle-to-select). Fully local: whisper.cpp STT, Ollama vision models,
+  // OS/Piper TTS. It talks to the same `forge serve` this shell manages.
+  try {
+    companion = new Companion({
+      getBaseUrl: () => baseUrl,
+      getApiToken: () => forgeApiToken,
+      getMainWindow: () => mainWindow,
+      resourcesBinDir: isDev
+        ? path.resolve(__dirname, "bin")
+        : path.join(process.resourcesPath, "bin"),
+    });
+    companion.start();
+  } catch (e) {
+    logFile(`companion failed to start: ${e.message}`);
+  }
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    // Overlay windows are always alive, so count only the main window.
+    if (!mainWindow) createWindow();
   });
 });
 
 function shutdown() {
+  if (companion) {
+    try {
+      companion.stop();
+    } catch (_) {}
+    companion = null;
+  }
+  try {
+    globalShortcut.unregisterAll();
+  } catch (_) {}
   if (forgeProc) {
     try {
       forgeProc.kill();

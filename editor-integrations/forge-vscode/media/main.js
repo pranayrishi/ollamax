@@ -1191,6 +1191,16 @@
       case "context":
         addContext(msg.items || []);
         break;
+      case "prefill":
+        // Companion → chat handoff: put the proposed task in the input and
+        // attach its context (e.g. the circled-region screenshot). The user
+        // reviews and sends deliberately — never auto-submitted.
+        if (Array.isArray(msg.items) && msg.items.length) addContext(msg.items);
+        if (typeof msg.text === "string" && msg.text) {
+          inputEl.value = msg.text;
+          inputEl.focus();
+        }
+        break;
       case "restoreHistory":
         // #3 Re-render this project's saved chat history on reopen.
         if (Array.isArray(msg.messages) && msg.messages.length) {
