@@ -72,7 +72,7 @@ if (Get-Command ollama -ErrorAction SilentlyContinue) {
     Say "If you use a custom host or port, set OLLAMA_HOST before launching Ollamax."
   }
   $rec = (& (Join-Path $dest "forge.exe") models 2>$null | Select-String -Pattern 'ollama pull \S+' | Select-Object -First 1).Matches.Value
-  if (-not $rec) { $rec = "ollama pull qwen2.5-coder:7b" }
+  if (-not $rec) { $rec = "ollama pull qwen3.5:9b" }
   Say "Recommended model - run:  $rec"
 } else {
   Say "Ollama not found (needed for local models) - install: https://ollama.com/download"

@@ -98,7 +98,7 @@ fi
 # --- 6. Ollama prerequisite + recommended model --------------------------
 if command -v ollama >/dev/null 2>&1; then
   rec="$("$BIN_DIR/forge" models 2>/dev/null | grep -oE 'ollama pull [^ ]+' | head -1 || true)"
-  [ -n "$rec" ] || rec="ollama pull qwen2.5-coder:7b"
+  [ -n "$rec" ] || rec="ollama pull qwen3.5:9b"
   # Prompt only with a real terminal attached (true even for `curl … | sh`,
   # since only stdin is the pipe). Otherwise just print the command.
   if [ -t 1 ] && [ -r /dev/tty ]; then

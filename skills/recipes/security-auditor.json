@@ -11,7 +11,7 @@
     "review": "Perform deep security review of code changes, identify potential attack vectors, and suggest security improvements."
   },
   "settings": {
-    "model": "deepseek-coder-v2:16b",
+    "model": "deepseek-r1:14b",
     "temperature": 0.3,
     "max_tokens": 4096,
     "tools": ["semgrep", "gitleaks", "bandit", "trivy"]

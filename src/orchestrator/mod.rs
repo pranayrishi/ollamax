@@ -48,11 +48,11 @@ pub struct OrchestratorConfig {
 impl Default for OrchestratorConfig {
     fn default() -> Self {
         // Must agree with `Config::default` in lib.rs and `STARTER_FORGE_TOML`
-        // in main.rs. Single source of truth via the qwen2.5-coder ladder.
+        // in main.rs. Single source of truth via the qwen3.5/qwen3.6 ladder.
         Self {
             ollama_url: crate::providers::ollama::DEFAULT_OLLAMA_ENDPOINT.to_string(),
-            default_model: "qwen2.5-coder:7b".to_string(),
-            planning_model: "qwen2.5-coder:7b".to_string(),
+            default_model: "qwen3.5:9b".to_string(),
+            planning_model: "qwen3.6:27b".to_string(),
             max_parallel_workers: 4,
             security_enabled: true,
             tdd_enforced: false,
@@ -307,7 +307,9 @@ impl Orchestrator {
         );
 
         let opts = GenerateOptions {
-            model: "deepseek-coder-v2:16b".to_string(),
+            // Self-correction is planning-grade code work — use the configured
+            // planning model instead of a pinned tag the user may not have.
+            model: self.config.planning_model.clone(),
             prompt: correction_prompt,
             system: Some(
                 "You are a code debugging expert. Fix the error and return corrected code."
@@ -330,7 +332,10 @@ impl Orchestrator {
         );
 
         let opts = GenerateOptions {
-            model: "llama3.3:70b".to_string(),
+            // Model-on-model audit reviews another model's output — route it
+            // to the configured planning model (ideally a different family
+            // than the writer) rather than a pinned 70B most users lack.
+            model: self.config.planning_model.clone(),
             prompt: audit_prompt,
             system: Some(
                 "You are a senior code auditor. Review thoroughly and provide actionable feedback."

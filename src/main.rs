@@ -360,7 +360,7 @@ async fn async_main() -> Result<()> {
                 println!("\n📦 Pulled models");
                 match ollama.list_models().await {
                     Ok(model_list) if model_list.is_empty() => {
-                        println!("   (none — try `ollama pull qwen2.5-coder:7b`)");
+                        println!("   (none — try `ollama pull qwen3.5:9b`)");
                     }
                     Ok(model_list) => {
                         for model in model_list {
@@ -2052,8 +2052,8 @@ version = "1.0"
 
 [ollama]
 url = "http://127.0.0.1:11434"
-default_model = "qwen2.5-coder:7b"
-planning_model = "qwen2.5-coder:7b"
+default_model = "qwen3.5:9b"
+planning_model = "qwen3.6:27b"
 
 [execution]
 parallel_workers = 4
@@ -2167,9 +2167,34 @@ async fn pick_team_scout_model(
         // Prefer the strongest smaller model rather than arbitrarily choosing
         // the tiniest one: scouts still have to understand an unfamiliar repo.
         .max_by_key(|model| model.size);
-    Ok(candidate
-        .map(|model| model.name.clone())
-        .unwrap_or_else(|| writer_model.to_string()))
+    if let Some(candidate) = candidate {
+        return Ok(candidate.name.clone());
+    }
+    // Nothing in the configured ladder is installed — ask the curated registry
+    // for the best installed scout (smallest fitting model) before falling all
+    // the way back to the writer. This keeps heterogeneous teams heterogeneous
+    // on machines whose installed models don't match the config ladder.
+    let installed_names: Vec<String> = installed.iter().map(|m| m.name.clone()).collect();
+    if let Some(scout) = ollama_forge::models::ModelRegistry::seed().best_installed_for_role(
+        ollama_forge::models::ModelRole::Scout,
+        free_vram_mb_best_effort(config).await,
+        &installed_names,
+    ) {
+        if scout != writer_model {
+            eprintln!("   ℹ️  scout role: using installed `{scout}` for read-only reconnaissance.");
+            return Ok(scout);
+        }
+    }
+    Ok(writer_model.to_string())
+}
+
+/// Best-effort free-VRAM probe for role-affinity picks. `0` (unknown) makes
+/// the registry conservative (Modest tier only), which is the safe direction.
+async fn free_vram_mb_best_effort(config: &Config) -> usize {
+    VramSentinel::new(config.min_free_vram_mb, false)
+        .detect_hardware()
+        .await
+        .free_vram_mb
 }
 
 /// Resolve the read-only planning/synthesis model. A configured planning model
@@ -2194,7 +2219,27 @@ async fn pick_team_planner_model(
         Ok(_) if requested.is_some() => anyhow::bail!(
             "requested planner model `{candidate}` is not installed. Run `ollama list` or omit --planner-model."
         ),
-        Ok(_) => {
+        Ok(installed) => {
+            // Configured planning model isn't installed. Before settling for
+            // the writer, ask the curated registry for an installed
+            // reasoning-tilted model — planning is where chain-of-thought
+            // families earn their keep in a heterogeneous team.
+            let installed_names: Vec<String> =
+                installed.iter().map(|m| m.name.clone()).collect();
+            if let Some(planner) = ollama_forge::models::ModelRegistry::seed()
+                .best_installed_for_role(
+                    ollama_forge::models::ModelRole::Planner,
+                    free_vram_mb_best_effort(config).await,
+                    &installed_names,
+                )
+            {
+                if planner != writer_model {
+                    eprintln!(
+                        "   ℹ️  configured planning model `{candidate}` is not installed; using installed `{planner}` for planning."
+                    );
+                    return Ok(planner);
+                }
+            }
             eprintln!(
                 "   ⚠️  configured planning model `{candidate}` is not installed; using writer model `{writer_model}` for planning."
             );

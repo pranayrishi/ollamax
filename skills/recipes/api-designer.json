@@ -11,7 +11,7 @@
     "review": "Review API design for consistency, performance, and security."
   },
   "settings": {
-    "model": "qwen2.5-coder:7b",
+    "model": "qwen3.5:9b",
     "temperature": 0.5,
     "max_tokens": 2048,
     "tools": ["openapi", "swagger", "postman"]

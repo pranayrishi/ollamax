@@ -17,7 +17,7 @@ signing yet — it's planned). Here's how to get past it and set up in ~2 minute
 Ollama runs the models locally on your machine. Install it from
 **https://ollama.com/download**, then pull a model:
 
-    ollama pull qwen2.5-coder:7b
+    ollama pull qwen3.5:9b
 
 ## Quick setup
 - **macOS / Linux** — in a terminal in this folder:  `./install.sh`

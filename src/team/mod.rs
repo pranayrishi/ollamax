@@ -193,7 +193,7 @@ pub struct TeamConfig {
 impl Default for TeamConfig {
     fn default() -> Self {
         Self {
-            model: "qwen2.5-coder:7b".to_string(),
+            model: "qwen3.5:9b".to_string(),
             scout_model: None,
             planner_model: None,
             reviewer_model: None,

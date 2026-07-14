@@ -148,15 +148,21 @@ impl VramSentinel {
 /// [library]: https://ollama.com/library
 pub fn suggest_model(free_vram_mb: usize) -> &'static str {
     match free_vram_mb {
-        v if v >= 48_000 => "llama3.3:70b",
-        v if v >= 24_000 => "qwen2.5-coder:32b",
-        v if v >= 16_000 => "qwen2.5-coder:14b",
-        v if v >= 10_000 => "qwen2.5-coder:7b",
-        v if v >= 6_000 => "qwen2.5-coder:3b",
-        v if v >= 3_000 => "qwen2.5-coder:1.5b",
+        // 80B-A3B MoE — ~52 GB resident at Q4; the strongest local coder
+        // for 64 GB+ unified-memory Macs and multi-GPU rigs.
+        v if v >= 64_000 => "qwen3-coder-next",
+        // 70B R1 distill — ~43 GB at Q4; reasoning + coding.
+        v if v >= 48_000 => "deepseek-r1:70b",
+        // Best open dense coder of the Qwen 3.6 generation — ~17 GB at Q4.
+        v if v >= 24_000 => "qwen3.6:27b",
+        // Gemma 4 12B — ~8 GB at Q4 with 256K context and image input.
+        v if v >= 16_000 => "gemma4:12b",
+        v if v >= 10_000 => "qwen3.5:9b",
+        v if v >= 6_000 => "qwen3.5:4b",
+        v if v >= 3_000 => "qwen3.5:2b",
         // No GPU detected (or tiny): the user is going to suffer either way,
-        // but a 1.5B is at least usable on CPU. Don't lie about 7B being viable.
-        _ => "qwen2.5-coder:1.5b",
+        // but a sub-1B is at least usable on CPU. Don't lie about 9B being viable.
+        _ => "qwen3.5:0.8b",
     }
 }
 
@@ -333,7 +339,7 @@ fn generate_recommendations(profile: &HardwareProfile, vram_status: ResourceStat
     if profile.gpu_kind == GpuKind::Cpu {
         out.push(
             "no GPU detected — running on CPU. Expect ~5-15 tok/s on a small \
-             model. Pull `qwen2.5-coder:1.5b` and use `--num_ctx 4096`."
+             model. Pull `qwen3.5:0.8b` and use `--num_ctx 4096`."
                 .to_string(),
         );
         return out;

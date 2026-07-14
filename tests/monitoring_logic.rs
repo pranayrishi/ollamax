@@ -10,27 +10,28 @@ use ollama_forge::monitoring::{calculate_gpu_layers, calculate_optimal_context, 
 
 #[test]
 fn suggest_model_picks_smallest_for_cpu_only() {
-    // 0 free VRAM = no GPU detected. Don't lie about a 7B being viable.
-    assert_eq!(suggest_model(0), "qwen2.5-coder:1.5b");
-    assert_eq!(suggest_model(2_999), "qwen2.5-coder:1.5b");
+    // 0 free VRAM = no GPU detected. Don't lie about a 9B being viable.
+    assert_eq!(suggest_model(0), "qwen3.5:0.8b");
+    assert_eq!(suggest_model(2_999), "qwen3.5:0.8b");
 }
 
 #[test]
 fn suggest_model_tier_boundaries_are_inclusive_lower() {
     // Each tier's lower bound should jump to the next size.
-    assert_eq!(suggest_model(3_000), "qwen2.5-coder:1.5b");
-    assert_eq!(suggest_model(6_000), "qwen2.5-coder:3b");
-    assert_eq!(suggest_model(10_000), "qwen2.5-coder:7b");
-    assert_eq!(suggest_model(16_000), "qwen2.5-coder:14b");
-    assert_eq!(suggest_model(24_000), "qwen2.5-coder:32b");
-    assert_eq!(suggest_model(48_000), "llama3.3:70b");
+    assert_eq!(suggest_model(3_000), "qwen3.5:2b");
+    assert_eq!(suggest_model(6_000), "qwen3.5:4b");
+    assert_eq!(suggest_model(10_000), "qwen3.5:9b");
+    assert_eq!(suggest_model(16_000), "gemma4:12b");
+    assert_eq!(suggest_model(24_000), "qwen3.6:27b");
+    assert_eq!(suggest_model(48_000), "deepseek-r1:70b");
+    assert_eq!(suggest_model(64_000), "qwen3-coder-next");
 }
 
 #[test]
 fn suggest_model_does_not_recommend_70b_on_3060() {
     // RTX 3060 12GB — the most common r/LocalLLaMA card. Must NOT route to a
-    // 70B (would OOM hard). Must route to a 7B-class.
-    assert_eq!(suggest_model(11_000), "qwen2.5-coder:7b");
+    // 70B (would OOM hard). Must route to a 9B-class.
+    assert_eq!(suggest_model(11_000), "qwen3.5:9b");
 }
 
 #[test]

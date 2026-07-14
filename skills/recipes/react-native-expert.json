@@ -18,7 +18,7 @@
     "review": "Review mobile code for performance issues, platform-specific bugs, and accessibility compliance."
   },
   "settings": {
-    "model": "qwen2.5-coder:14b",
+    "model": "qwen3.6:27b",
     "temperature": 0.7,
     "max_tokens": 4096,
     "tools": ["expo", "xcode", "android-studio", "react-native-cli"]

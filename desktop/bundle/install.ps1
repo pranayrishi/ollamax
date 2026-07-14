@@ -30,7 +30,7 @@ if ($vsix -and (Get-Command code -ErrorAction SilentlyContinue)) {
 
 # 3) Ollama prerequisite
 if (Get-Command ollama -ErrorAction SilentlyContinue) {
-  Write-Host "Ollama detected - pull a model, e.g.:  ollama pull qwen2.5-coder:7b"
+  Write-Host "Ollama detected - pull a model, e.g.:  ollama pull qwen3.5:9b"
 } else {
   Write-Host "Ollama NOT found - install from https://ollama.com/download (required)."
 }

@@ -61,7 +61,7 @@ pub struct GenerateOptions {
 impl Default for GenerateOptions {
     fn default() -> Self {
         Self {
-            model: "llama3.2:3b".to_string(),
+            model: "qwen3.5:2b".to_string(),
             prompt: String::new(),
             system: None,
             temperature: Some(0.7),

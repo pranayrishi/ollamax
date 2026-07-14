@@ -439,11 +439,25 @@ impl ParallelExecutor {
 
 pub struct MergingAgent {
     provider: Arc<dyn LlmProvider>,
+    /// Model used for reconcile/conflict passes. Defaults to the canonical
+    /// planning-grade coder; override with [`MergingAgent::with_model`] to
+    /// match what's actually installed.
+    model: String,
 }
 
 impl MergingAgent {
     pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
-        Self { provider }
+        Self {
+            provider,
+            model: "qwen3.6:27b".to_string(),
+        }
+    }
+
+    pub fn with_model(provider: Arc<dyn LlmProvider>, model: impl Into<String>) -> Self {
+        Self {
+            provider,
+            model: model.into(),
+        }
     }
 
     pub async fn reconcile(&self, outputs: Vec<&str>, language: Option<&str>) -> Result<String> {
@@ -467,7 +481,7 @@ impl MergingAgent {
         );
 
         let opts = GenerateOptions {
-            model: "deepseek-coder-v2:16b".to_string(),
+            model: self.model.clone(),
             prompt: merge_prompt,
             system: Some(
                 "You are an expert code reviewer and merger. Produce clean, well-structured, \
@@ -497,7 +511,7 @@ impl MergingAgent {
         );
 
         let opts = GenerateOptions {
-            model: "qwen2.5-coder:7b".to_string(),
+            model: self.model.clone(),
             prompt: conflict_prompt,
             system: Some(
                 "Analyze the conflicting code versions and produce the correct merged output. \

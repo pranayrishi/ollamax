@@ -119,7 +119,7 @@ pub struct AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            model: "qwen2.5-coder:7b".to_string(),
+            model: "qwen3.5:9b".to_string(),
             num_ctx: 16_384,
             keep_alive: "1h".to_string(),
             max_iterations: DEFAULT_CODING_MAX_ITERATIONS,

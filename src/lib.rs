@@ -245,16 +245,19 @@ impl Default for Config {
     fn default() -> Self {
         // These three model defaults must agree with each other AND with
         // STARTER_FORGE_TOML in main.rs AND with OrchestratorConfig::default
-        // in orchestrator/mod.rs. The qwen2.5-coder family is the canonical
-        // ladder — see monitoring::suggest_model and the rationale there.
+        // in orchestrator/mod.rs. The qwen3.5/qwen3.6 pair is the canonical
+        // July-2026 ladder — see monitoring::suggest_model and the rationale
+        // there (qwen3.5:9b runs on ~8 GB machines; qwen3.6:27b is the
+        // planning-grade coder for 24 GB machines, and every selection path
+        // prefers an *installed* model over these fallbacks).
         Self {
             ollama_url: DEFAULT_OLLAMA_ENDPOINT.to_string(),
-            default_model: "qwen2.5-coder:7b".to_string(),
-            planning_model: "qwen2.5-coder:7b".to_string(),
+            default_model: "qwen3.5:9b".to_string(),
+            planning_model: "qwen3.6:27b".to_string(),
             execution_models: vec![
-                "qwen2.5-coder:1.5b".to_string(),
-                "qwen2.5-coder:7b".to_string(),
-                "qwen2.5-coder:14b".to_string(),
+                "qwen3.5:2b".to_string(),
+                "qwen3.5:9b".to_string(),
+                "qwen3.6:27b".to_string(),
             ],
             max_context_tokens: 16384,
             enable_parallel: true,
