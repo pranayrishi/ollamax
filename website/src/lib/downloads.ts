@@ -24,14 +24,12 @@ export type Bundle = {
 
 // Each download is a BUNDLE (forge CLI + VS Code panel .vsix + install script),
 // NOT a one-click app — labelled honestly in the UI. `published` reflects which
-// assets exist on the latest release. The currently public v0.2.0 assets
-// predate the local voice/spatial/model work, so all links stay disabled until
-// the verified v0.2.1 release is published.
+// assets exist on the latest release. v0.3.0 ships all platforms.
 export const BUNDLES: Bundle[] = [
-  { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · CLI + VS Code panel", asset: "ollama-forge-macos-arm64.tar.gz", published: false },
+  { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · CLI + VS Code panel", asset: "ollama-forge-macos-arm64.tar.gz", published: true },
   { os: "macos", arch: "x64", label: "macOS — Intel", note: "x86_64 · CLI + VS Code panel", asset: "ollama-forge-macos-x64.tar.gz", published: false },
-  { os: "windows", arch: "x64", label: "Windows — x64", note: "CLI + VS Code panel", asset: "ollama-forge-windows-x64.zip", published: false },
-  { os: "linux", arch: "x64", label: "Linux — x64", note: "CLI + VS Code panel", asset: "ollama-forge-linux-x64.tar.gz", published: false },
+  { os: "windows", arch: "x64", label: "Windows — x64", note: "CLI + VS Code panel", asset: "ollama-forge-windows-x64.zip", published: true },
+  { os: "linux", arch: "x64", label: "Linux — x64", note: "CLI + VS Code panel", asset: "ollama-forge-linux-x64.tar.gz", published: true },
 ];
 
 export function assetUrl(asset: string): string {
@@ -52,13 +50,11 @@ export const allReleasesUrl = `${RELEASES_REPO}/releases/latest`;
 //
 // Asset names are the exact electron-builder output contract in
 // desktop-app/package.json. `published` reflects assets verified on the current
-// public latest release. The current public v0.2.0 installers are deliberately
-// disabled because they predate these features; enable an asset only after its
-// matching v0.2.1 installer has been uploaded and verified.
+// public latest release. v0.3.0 ships macOS arm64, Windows x64, and Linux x64.
 export type DesktopApp = Bundle;
 export const DESKTOP_APPS: DesktopApp[] = [
-  { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · .dmg", asset: "Ollamax-macos-arm64.dmg", published: false },
+  { os: "macos", arch: "arm64", label: "macOS — Apple Silicon", note: "M-series · .dmg", asset: "Ollamax-macos-arm64.dmg", published: true },
   { os: "macos", arch: "x64", label: "macOS — Intel", note: "x86_64 · .dmg", asset: "Ollamax-macos-x64.dmg", published: false },
-  { os: "windows", arch: "x64", label: "Windows — x64", note: "Installer (.exe)", asset: "Ollamax-windows-x64-setup.exe", published: false },
-  { os: "linux", arch: "x64", label: "Linux — x64", note: "AppImage", asset: "Ollamax-linux-x64.AppImage", published: false },
+  { os: "windows", arch: "x64", label: "Windows — x64", note: "Installer (.exe)", asset: "Ollamax-windows-x64-setup.exe", published: true },
+  { os: "linux", arch: "x64", label: "Linux — x64", note: "AppImage", asset: "Ollamax-linux-x64.AppImage", published: true },
 ];

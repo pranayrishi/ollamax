@@ -1,11 +1,6 @@
 node_modules/
 release/
 bin/
-# UI files copied from the extension's media/ by scripts/prepare.mjs
-renderer/main.js
-renderer/main.css
-renderer/hub.js
-renderer/hub.css
 # IDE editor/terminal assets staged from node_modules by prepare.mjs
 renderer/vs/
 renderer/xterm.css
