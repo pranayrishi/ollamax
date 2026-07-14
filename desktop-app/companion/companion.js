@@ -656,9 +656,16 @@ class Companion {
                 if (!trimmed.startsWith("data:")) continue;
                 try {
                   const ev = JSON.parse(trimmed.slice(5).trim());
-                  if (ev.type === "text" && typeof ev.content === "string") {
-                    text += ev.content;
-                    onDelta(ev.content, text);
+                  // The engine streams {"type":"token","text":"…"} chunks,
+                  // then {"type":"done"}. "thinking" chunks are dropped —
+                  // they'd be nonsense spoken aloud.
+                  if (ev.type === "token" && typeof ev.text === "string") {
+                    text += ev.text;
+                    onDelta(ev.text, text);
+                  } else if (ev.type === "done") {
+                    resolve(text);
+                    req.destroy();
+                    return;
                   } else if (ev.type === "error") {
                     reject(new Error(ev.message || "engine error"));
                     req.destroy();
